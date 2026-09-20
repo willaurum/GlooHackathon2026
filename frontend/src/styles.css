@@ -1,0 +1,104 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbfa;
+  --fg: #1c1b1a;
+  --muted: #6b6a68;
+  --line: #e3e2df;
+  --card: #ffffff;
+  --accent: #b05730;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a19;
+    --fg: #f0efec;
+    --muted: #9a9895;
+    --line: #333230;
+    --card: #232322;
+    --accent: #d97757;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main { max-width: 520px; margin: 0 auto; padding: 32px 16px 64px; }
+
+h1 { font-size: 24px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+
+.sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+.error { color: #c0392b; font-size: 14px; }
+.empty { color: var(--muted); font-style: italic; }
+
+.tag {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+ul { list-style: none; margin: 0 0 12px; padding: 0; }
+
+li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 15px;
+}
+
+label { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 1; }
+.done { text-decoration: line-through; color: var(--muted); }
+
+.remove {
+  background: none;
+  color: var(--muted);
+  padding: 0 6px;
+  font-size: 18px;
+  line-height: 1;
+}
+.remove:hover { color: var(--accent); }
+
+form { display: flex; gap: 8px; }
+
+input[type="text"], input:not([type]) {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+}
+
+button {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+button:disabled { opacity: .5; cursor: default; }
