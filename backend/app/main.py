@@ -1,4 +1,4 @@
-"""FastAPI app: a little CRUD over the SQL table."""
+"""Belong prototype API with persistent ministries and connections."""
 
 from contextlib import asynccontextmanager
 

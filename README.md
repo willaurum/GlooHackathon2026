@@ -26,7 +26,7 @@ change the database credentials.
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | The whole UI: a task list talking to `/api`. |
+| `frontend/src/App.jsx` | The Belong dashboard, matching form, and saved connections. |
 | `frontend/nginx.conf` | Serves the built bundle, sends `/api` to the backend. |
 | `backend/app/main.py` | The HTTP routes — list, add, toggle, delete. |
 | `backend/app/db.py` | Connection pool and the SQL queries. |
@@ -42,10 +42,18 @@ change the database credentials.
 - Changing `db/init.sql` after the first start does nothing until you drop that
   volume — it only runs on an empty data directory.
 
-## Belong frontend prototype
+## Belong prototype
 
-The frontend is an interactive church volunteer engagement mockup, using fictional data independently of the API. It includes ministry coverage, search and priority filters, team responsibilities and contacts, member matching, session-only saved connections, and a project vision summary.
+The React frontend now uses FastAPI and Postgres. Six fictional ministries are seeded from `backend/app/ministries.json` on first backend startup. Startup creates the new tables on existing volumes without deleting data; existing ministry records are not overwritten by subsequent seed runs.
 
-Matching currently uses local rules for skills, serving style, availability, and team needs. The planned backend integration will use Gloo AI. Sample contacts use example.com; no introductions are sent by the app.
+- `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
+- `POST /api/matches`: member name, skills, serving style, and availability; returns the top three open ministries.
+- `GET /api/connections`: saved connections shared across this prototype workspace.
+- `POST /api/connections`: save `{ "ministry_id": 1, "member": "Jamie" }`; repeated saves are deduplicated by ministry and member name.
+- `DELETE /api/connections/{connection_id}`: remove a saved connection.
 
-For frontend-only development, run npm install and npm run dev from the frontend directory. The existing Docker Compose command also serves the mockup.
+Matching currently uses simple backend rules, not Gloo AI. Replacing that ranking with Gloo is the next integration step. Sample contacts use example.com; no introductions are sent. This is a single shared demo workspace without login or user isolation. Members with the same name are treated as the same person for duplicate saves.
+
+Saved connections survive page refreshes and container restarts through the existing Postgres volume. Removing the volume deletes them. There is no ministry editor yet; seed content is starter data, while the database is the runtime source of truth.
+
+Run `docker compose up --build -d`, then open http://localhost:3000. For frontend development, keep the backend and database running and run `npm install` and `npm run dev` in `frontend`; Vite proxies API calls to port 8000.
