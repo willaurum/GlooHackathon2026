@@ -3,7 +3,8 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Literal
 
 from . import db
 
@@ -12,11 +13,68 @@ from . import db
 async def lifespan(app: FastAPI):
     db.pool.open()
     db.pool.wait(timeout=30)
-    yield
-    db.pool.close()
+    try:
+        db.initialize()
+        yield
+    finally:
+        db.pool.close()
 
 
-app = FastAPI(title="Gloo demo API", lifespan=lifespan)
+app = FastAPI(title="Belong API", lifespan=lifespan)
+
+
+class MatchRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(default='', max_length=100)
+    skills: list[Literal['Hospitality', 'Teaching', 'Technology', 'Creativity', 'Music', 'Organization', 'Listening', 'Encouragement']] = Field(default_factory=list, max_length=8)
+    style: Literal['Working with people', 'Behind the scenes', 'Hands-on service']
+    day: Literal['Sunday mornings', 'Saturday mornings', 'Weekday evenings']
+
+
+class ConnectionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    ministry_id: int = Field(ge=0)
+    member: str = Field(min_length=1, max_length=100)
+
+
+@app.get('/api/ministries')
+def ministries():
+    return db.list_ministries()
+
+
+@app.post('/api/matches')
+def matches(body: MatchRequest):
+    # Deliberately simple placeholder: replace this ranking with Gloo AI later.
+    ranked = []
+    for ministry in db.list_ministries():
+        if ministry['filled'] >= ministry['total']:
+            continue
+        overlap = sorted(set(body.skills).intersection(ministry['skills']))
+        score = len(overlap) * 3 + (3 if ministry['style'] == body.style else 0) + (4 if ministry['day'] == body.day else 0)
+        score += (ministry['total'] - ministry['filled']) / ministry['total']
+        ranked.append({**ministry, 'overlap': overlap, 'score': score})
+    ranked.sort(key=lambda m: (-m['score'], m['id']))
+    return {'name': body.name or 'this member', 'style': body.style, 'day': body.day,
+            'engine': 'rules', 'matches': ranked[:3]}
+
+
+@app.get('/api/connections')
+def connections():
+    return db.list_connections()
+
+
+@app.post('/api/connections', status_code=201)
+def save_connection(body: ConnectionRequest):
+    result = db.save_connection(body.ministry_id, body.member)
+    if result is None:
+        raise HTTPException(status_code=404, detail='Ministry not found')
+    return result
+
+
+@app.delete('/api/connections/{connection_id}', status_code=204)
+def remove_connection(connection_id: int):
+    if not db.remove_connection(connection_id):
+        raise HTTPException(status_code=404, detail='Connection not found')
 
 
 class NewItem(BaseModel):

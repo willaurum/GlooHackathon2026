@@ -41,3 +41,11 @@ change the database credentials.
   wipes it and re-runs `db/init.sql` on the next start.
 - Changing `db/init.sql` after the first start does nothing until you drop that
   volume — it only runs on an empty data directory.
+
+## Belong frontend prototype
+
+The frontend is an interactive church volunteer engagement mockup, using fictional data independently of the API. It includes ministry coverage, search and priority filters, team responsibilities and contacts, member matching, session-only saved connections, and a project vision summary.
+
+Matching currently uses local rules for skills, serving style, availability, and team needs. The planned backend integration will use Gloo AI. Sample contacts use example.com; no introductions are sent by the app.
+
+For frontend-only development, run npm install and npm run dev from the frontend directory. The existing Docker Compose command also serves the mockup.

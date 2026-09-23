@@ -1,0 +1,110 @@
+[
+  {
+    "name": "Kids & families",
+    "category": "Next generation",
+    "icon": "☀",
+    "filled": 32,
+    "total": 48,
+    "description": "Welcome families, lead activities, and help children feel known in a safe Sunday environment.",
+    "skills": [
+      "Teaching",
+      "Encouragement"
+    ],
+    "style": "Working with people",
+    "day": "Sunday mornings",
+    "head": "Sarah Mitchell",
+    "note": "Background check and onboarding required.",
+    "id": 0,
+    "email": "sarah.mitchell@example.com"
+  },
+  {
+    "name": "Welcome team",
+    "category": "Hospitality",
+    "icon": "✳",
+    "filled": 24,
+    "total": 32,
+    "description": "Greet guests, help with check-in, and make introductions that turn a first visit into belonging.",
+    "skills": [
+      "Hospitality",
+      "Encouragement"
+    ],
+    "style": "Working with people",
+    "day": "Sunday mornings",
+    "head": "David Chen",
+    "note": "Training provided. A friendly face is a great place to start.",
+    "id": 1,
+    "email": "david.chen@example.com"
+  },
+  {
+    "name": "Production & media",
+    "category": "Creative & worship",
+    "icon": "◈",
+    "filled": 12,
+    "total": 20,
+    "description": "Help every message be seen and heard. Support live sound, cameras, slides, and the online service.",
+    "skills": [
+      "Technology",
+      "Creativity"
+    ],
+    "style": "Behind the scenes",
+    "day": "Sunday mornings",
+    "head": "Marcus Reed",
+    "note": "Shadow an experienced team member before your first service.",
+    "id": 2,
+    "email": "marcus.reed@example.com"
+  },
+  {
+    "name": "Community outreach",
+    "category": "Local impact",
+    "icon": "♡",
+    "filled": 26,
+    "total": 36,
+    "description": "Prepare food boxes, support local partners, and care for our neighbors at community events.",
+    "skills": [
+      "Hospitality",
+      "Organization"
+    ],
+    "style": "Hands-on service",
+    "day": "Saturday mornings",
+    "head": "Elena Brooks",
+    "note": "Flexible opportunities for individuals and families.",
+    "id": 3,
+    "email": "elena.brooks@example.com"
+  },
+  {
+    "name": "Worship collective",
+    "category": "Creative & worship",
+    "icon": "♫",
+    "filled": 18,
+    "total": 22,
+    "description": "Create space for worship. Join vocalists and instrumentalists for rehearsals and Sunday services.",
+    "skills": [
+      "Music",
+      "Creativity"
+    ],
+    "style": "Working with people",
+    "day": "Sunday mornings",
+    "head": "Jordan Ellis",
+    "note": "Audition and midweek rehearsal required.",
+    "id": 4,
+    "email": "jordan.ellis@example.com"
+  },
+  {
+    "name": "Care & connection",
+    "category": "Pastoral care",
+    "icon": "⌘",
+    "filled": 14,
+    "total": 24,
+    "description": "Make follow-up calls, coordinate meals, and walk alongside people through life’s changes.",
+    "skills": [
+      "Listening",
+      "Encouragement"
+    ],
+    "style": "Working with people",
+    "day": "Weekday evenings",
+    "head": "Rachel Adams",
+    "note": "Care training and confidentiality orientation required.",
+    "id": 5,
+    "email": "rachel.adams@example.com"
+  }
+]
