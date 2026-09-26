@@ -1,0 +1,39 @@
+{
+  "info": {
+    "name": "Grace Community Church",
+    "address": "410 Maple Ridge Road, Springfield (fictional)",
+    "phone": "(555) 010-0140",
+    "email": "hello@gracecommunity.example.com",
+    "office_hours": "Tuesday to Friday, 9am to 4pm",
+    "services": [
+      {"day": "Sunday", "time": "9:00am", "note": "Traditional worship with choir. Kids programs for newborns to 5th grade."},
+      {"day": "Sunday", "time": "11:00am", "note": "Contemporary worship with the band. Kids programs for newborns to 5th grade. Also streamed online."},
+      {"day": "Wednesday", "time": "6:30pm", "note": "Midweek prayer and a short teaching in the chapel."}
+    ],
+    "first_visit": "Services last about 75 minutes. Come as you are; most people dress casually. Greeters at the main entrance can walk you to kids check-in and save you a seat. Free coffee is in the lobby.",
+    "care_team": "The care team offers prayer, hospital visits, meals after a new baby or surgery, and pastoral conversations. Staff respond within one business day."
+  },
+  "faqs": [
+    {"id": 0, "question": "Where do I park?", "answer": "The main lot is off Maple Ridge Road. First-time guest parking is marked with green signs right by the main entrance. Overflow parking is across the street at Springfield Elementary with a shuttle every 10 minutes."},
+    {"id": 1, "question": "How does kids check-in work?", "answer": "Stop at the Kids Welcome desk left of the lobby. A volunteer registers your child and prints a matching name tag and pickup tag. Only the adult holding the pickup tag can collect the child."},
+    {"id": 2, "question": "Is there something for teenagers?", "answer": "Students in grades 6 to 12 meet Wednesdays at 6:30pm in the Student Center, and join the 11:00am Sunday service with their families."},
+    {"id": 3, "question": "Is the building accessible?", "answer": "Yes. All entrances are step-free, there are elevators to the balcony, reserved seating near the front, and hearing assist devices at the Welcome desk."},
+    {"id": 4, "question": "How do I become a member?", "answer": "Start with the Discover Grace class, offered the first Sunday of each month after the 11:00am service. It covers what the church believes and how to get involved. Lunch and childcare are provided."},
+    {"id": 5, "question": "Can I watch online?", "answer": "The 11:00am Sunday service streams live on the church website and stays available to watch afterward."}
+  ],
+  "events": [
+    {"id": 0, "name": "Discover Grace class", "when": "First Sunday of each month, 12:30pm to 2:00pm", "where": "Room 104", "description": "A friendly introduction to the church, its beliefs, and how to get connected. Lunch and childcare provided.", "audience": "Newcomers"},
+    {"id": 1, "name": "Serve Day", "when": "Saturday, October 17, 8:30am to 12:30pm", "where": "Meet in the main parking lot", "description": "Teams spread out to help local schools, a food pantry, and elderly neighbors with yard work. All ages welcome.", "audience": "Everyone"},
+    {"id": 2, "name": "Fall family picnic", "when": "Sunday, October 25, after the 11:00am service", "where": "Church lawn", "description": "Food trucks, games, and a bounce house. A great first event to meet people.", "audience": "Families"},
+    {"id": 3, "name": "Volunteer training: Welcome team", "when": "Sunday, October 11, 12:30pm", "where": "Lobby", "description": "A 45-minute training for new greeters and guest services volunteers.", "audience": "New volunteers"},
+    {"id": 4, "name": "Worship night", "when": "Friday, November 6, 7:00pm", "where": "Main auditorium", "description": "An evening of music and prayer led by the worship collective.", "audience": "Everyone"}
+  ],
+  "groups": [
+    {"id": 0, "name": "Young adults", "when": "Tuesdays, 7:00pm", "where": "Coffee shop room", "description": "People in their 20s and early 30s studying a book of the Bible together.", "audience": "Ages 20 to 35"},
+    {"id": 1, "name": "Parents of little ones", "when": "Sundays, 5:00pm", "where": "A home near downtown (address shared after sign-up)", "description": "Dinner and conversation for parents of kids under 6. Childcare provided.", "audience": "Parents"},
+    {"id": 2, "name": "Men's breakfast", "when": "Saturdays, 7:00am", "where": "Fellowship hall", "description": "Breakfast, a short study, and prayer.", "audience": "Men"},
+    {"id": 3, "name": "Women's evening study", "when": "Thursdays, 7:00pm", "where": "Room 210", "description": "A weekly Bible study with small discussion tables.", "audience": "Women"},
+    {"id": 4, "name": "GriefShare", "when": "Mondays, 6:30pm", "where": "Chapel", "description": "A support group for anyone grieving the loss of a loved one. Led by trained care team volunteers.", "audience": "Anyone grieving"},
+    {"id": 5, "name": "Empty nesters", "when": "Wednesdays, 10:00am", "where": "Room 104", "description": "Study and friendship for adults whose children have grown.", "audience": "Adults 50+"}
+  ]
+}

@@ -1,12 +1,15 @@
 """Belong prototype API with persistent ministries and connections."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
-from . import db
+from . import chat, db, matching
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -45,17 +48,9 @@ def ministries():
 @app.post('/api/matches')
 def matches(body: MatchRequest):
     # Deliberately simple placeholder: replace this ranking with Gloo AI later.
-    ranked = []
-    for ministry in db.list_ministries():
-        if ministry['filled'] >= ministry['total']:
-            continue
-        overlap = sorted(set(body.skills).intersection(ministry['skills']))
-        score = len(overlap) * 3 + (3 if ministry['style'] == body.style else 0) + (4 if ministry['day'] == body.day else 0)
-        score += (ministry['total'] - ministry['filled']) / ministry['total']
-        ranked.append({**ministry, 'overlap': overlap, 'score': score})
-    ranked.sort(key=lambda m: (-m['score'], m['id']))
+    ranked = matching.rank(db.list_ministries(), body.skills, body.style, body.day)
     return {'name': body.name or 'this member', 'style': body.style, 'day': body.day,
-            'engine': 'rules', 'matches': ranked[:3]}
+            'engine': 'rules', 'matches': ranked}
 
 
 @app.get('/api/connections')
@@ -75,6 +70,59 @@ def save_connection(body: ConnectionRequest):
 def remove_connection(connection_id: int):
     if not db.remove_connection(connection_id):
         raise HTTPException(status_code=404, detail='Connection not found')
+
+
+class ChatMessage(BaseModel):
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+
+
+class RequestStatus(BaseModel):
+    status: Literal['approved', 'declined']
+
+
+@app.get('/api/chat/status')
+def chat_status():
+    return chat.status()
+
+
+@app.post('/api/chat')
+def chat_turn(body: ChatRequest):
+    if body.messages[-1].role != 'user':
+        raise HTTPException(status_code=400, detail='The last message must come from the user')
+    # Keep recent history, starting on a user turn; some models reject a leading assistant turn.
+    messages = [m.model_dump() for m in body.messages][-20:]
+    while messages[0]['role'] != 'user':
+        messages.pop(0)
+    try:
+        return chat.run(messages, body.session_id)
+    except Exception:
+        log.exception('chat turn failed')
+        db.log_chat(body.session_id, 'error', {})
+        raise HTTPException(status_code=502, detail='The assistant is unavailable right now. Please try again in a moment.')
+
+
+@app.get('/api/chat/log/{session_id}')
+def chat_log(session_id: str):
+    return db.get_chat_log(session_id)
+
+
+@app.get('/api/requests')
+def requests():
+    return db.list_requests()
+
+
+@app.patch('/api/requests/{request_id}')
+def update_request(request_id: int, body: RequestStatus):
+    row = db.set_request_status(request_id, body.status)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Request not found')
+    return row
 
 
 class NewItem(BaseModel):

@@ -37,11 +37,104 @@ def initialize():
         for ministry in json.loads(Path(__file__).with_name('ministries.json').read_text(encoding='utf-8')):
             conn.execute("INSERT INTO ministries VALUES (%s, %s) ON CONFLICT DO NOTHING",
                          (ministry['id'], Jsonb(ministry)))
+        # Church info, FAQs, events and small groups the chat agent can look up.
+        conn.execute("""CREATE TABLE IF NOT EXISTS church_content (
+            kind TEXT NOT NULL,
+            id INTEGER NOT NULL,
+            data JSONB NOT NULL,
+            PRIMARY KEY (kind, id)
+        )""")
+        church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
+        conn.execute("INSERT INTO church_content VALUES ('info', 0, %s) ON CONFLICT DO NOTHING", (Jsonb(church['info']),))
+        for kind in ('faqs', 'events', 'groups'):
+            for item in church[kind]:
+                conn.execute("INSERT INTO church_content VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                             (kind, item['id'], Jsonb(item)))
+        # Requests filed by the chat agent. Nothing happens until staff approve them.
+        conn.execute("""CREATE TABLE IF NOT EXISTS requests (
+            request_id SERIAL PRIMARY KEY,
+            kind TEXT NOT NULL,
+            ministry_id INTEGER REFERENCES ministries(id),
+            name TEXT NOT NULL,
+            contact TEXT NOT NULL DEFAULT '',
+            details TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )""")
+        # Audit log of every chat turn and tool call.
+        conn.execute("""CREATE TABLE IF NOT EXISTS chat_log (
+            id SERIAL PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            data JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )""")
 
 
 def list_ministries():
     with pool.connection() as conn:
         return [row['data'] for row in conn.execute("SELECT data FROM ministries ORDER BY id").fetchall()]
+
+
+def get_ministry(ministry_id):
+    with pool.connection() as conn:
+        row = conn.execute("SELECT data FROM ministries WHERE id = %s", (ministry_id,)).fetchone()
+        return row['data'] if row else None
+
+
+def get_church_info():
+    with pool.connection() as conn:
+        return conn.execute("SELECT data FROM church_content WHERE kind = 'info'").fetchone()['data']
+
+
+def list_content(kind):
+    with pool.connection() as conn:
+        rows = conn.execute("SELECT data FROM church_content WHERE kind = %s ORDER BY id", (kind,)).fetchall()
+        return [row['data'] for row in rows]
+
+
+def create_request(kind, name, contact='', details='', ministry_id=None):
+    with pool.connection() as conn:
+        return conn.execute("""INSERT INTO requests (kind, ministry_id, name, contact, details)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING request_id, kind, ministry_id, name, contact, details, status, created_at""",
+            (kind, ministry_id, name, contact, details)).fetchone()
+
+
+def find_pending_request(kind, ministry_id, name):
+    with pool.connection() as conn:
+        return conn.execute("""SELECT request_id FROM requests WHERE kind = %s AND ministry_id IS NOT DISTINCT FROM %s
+            AND lower(name) = lower(%s) AND status = 'pending'""", (kind, ministry_id, name)).fetchone()
+
+
+def list_requests():
+    with pool.connection() as conn:
+        rows = conn.execute("""SELECT r.*, m.data->>'name' AS ministry_name FROM requests r
+            LEFT JOIN ministries m ON m.id = r.ministry_id ORDER BY r.request_id DESC""").fetchall()
+        return rows
+
+
+def set_request_status(request_id, status):
+    """Approving a connection request also adds it to saved connections."""
+    with pool.connection() as conn:
+        row = conn.execute("UPDATE requests SET status = %s WHERE request_id = %s RETURNING *",
+                           (status, request_id)).fetchone()
+        if row and status == 'approved' and row['kind'] == 'connection':
+            conn.execute("""INSERT INTO connections (ministry_id, member) VALUES (%s, %s)
+                ON CONFLICT (ministry_id, member) DO NOTHING""", (row['ministry_id'], row['name']))
+        return row
+
+
+def log_chat(session_id, kind, data):
+    with pool.connection() as conn:
+        conn.execute("INSERT INTO chat_log (session_id, kind, data) VALUES (%s, %s, %s)",
+                     (session_id, kind, Jsonb(data)))
+
+
+def get_chat_log(session_id):
+    with pool.connection() as conn:
+        return conn.execute("SELECT kind, data, created_at FROM chat_log WHERE session_id = %s ORDER BY id",
+                            (session_id,)).fetchall()
 
 
 def list_connections():
