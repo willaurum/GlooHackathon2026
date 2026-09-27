@@ -58,6 +58,20 @@ Saved connections survive page refreshes and container restarts through the exis
 
 Run `docker compose up --build -d`, then open http://localhost:3000. For frontend development, keep the backend and database running and run `npm install` and `npm run dev` in `frontend`; Vite proxies API calls to port 8000.
 
+## First-time guests
+
+A guest opens "Plan your visit" (service times, what to expect, parking/kids/accessibility FAQs, a map, and upcoming newcomer events), then fills out "Let us know you're coming." On the day, tapping **"I'm here"** flips their visit to `arrived`; the "Welcome team" screen shows them in the waiting queue. A greeter taps **"On my way"** to claim them (status `on_the_way`), which updates the guest's own screen to "<host> is coming to meet you at the main entrance." The greeter then taps **"Met them"** to clear them (status `met`).
+
+- `GET /api/church`: church info, FAQs, and events for the visit page.
+- `POST /api/visits`: sign up `{ name, contact, service, party_size, kids, wants_host }`; returns the visit with a `token` used to check its own status (no login).
+- `GET /api/visits/{token}`: a guest's own visit by token.
+- `POST /api/visits/{token}/arrive`: mark `arrived` (409 if not `planned`).
+- `GET /api/visits`: staff queue — `{ waiting: [...arrived/on_the_way], planned: [...upcoming] }`, no tokens included.
+- `POST /api/visits/{visit_id}/claim`: a greeter claims a waiting guest with `{ host }` (409 if not `arrived`).
+- `POST /api/visits/{visit_id}/met`: clear a guest once they've been greeted (409 if invalid).
+
+The map uses keyless Google Maps embed and directions URLs (no API key), built from `map_query` in `backend/app/church.json`; the church address is fictional. The guest's screen updating when a greeter claims them is done by polling `GET /api/visits/{token}` every few seconds — real SMS/push notifications are future work.
+
 ## Website chat agent
 
 The "Ask Belong" widget (bottom right) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
