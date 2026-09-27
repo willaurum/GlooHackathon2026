@@ -47,6 +47,8 @@ def initialize():
         )""")
         church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
         conn.execute("INSERT INTO church_content VALUES ('info', 0, %s) ON CONFLICT DO NOTHING", (Jsonb(church['info']),))
+        # Add fields introduced to church.json later; values already in the database win.
+        conn.execute("UPDATE church_content SET data = %s || data WHERE kind = 'info'", (Jsonb(church['info']),))
         for kind in ('faqs', 'events', 'groups'):
             for item in church[kind]:
                 conn.execute("INSERT INTO church_content VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",

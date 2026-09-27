@@ -123,7 +123,7 @@ export default function VisitPage() {
     <section className="panel visit-section">
       <div className="eyebrow">FIND US</div>
       <h2>Map & directions</h2>
-      <ChurchMap query={info.map_query ?? info.address.replace(/\s*\(fictional\)/i, '')} address={info.address} />
+      <ChurchMap query={info.map_query} address={info.address} />
     </section>
 
     {nextSteps.length > 0 && <section className="panel visit-section">
