@@ -7,10 +7,13 @@ model answers in plain text. Every step is written to the chat_log table.
 """
 
 import json
+import logging
 import os
 import re
 
 from . import db, matching
+
+log = logging.getLogger(__name__)
 
 # Each provider speaks the OpenAI chat-completions format. AI_PROVIDER is tried
 # first; if it has no key or a call fails, AI_FALLBACK takes over.
@@ -202,10 +205,146 @@ def complete(clients, convo, session_id):
                 raise
 
 
+# Demo mode: with no AI key, answer by keyword matching and a single tool call.
+DEMO_MENU = ("I can help with upcoming events, small groups, ministries, or connecting you with the church team. "
+             "What sounds good?")
+DEMO_ERROR = "Sorry, something went wrong looking that up. Can you rephrase?"
+DEMO_CRISIS = ("If you're in danger or thinking about harming yourself, please call or text 988 "
+               "(Suicide & Crisis Lifeline, US) right now, or call 911 in an emergency.")
+CRISIS_WORDS = ['suicid', 'kill myself', 'hurt myself', 'end my life', 'self-harm', 'want to die']
+# Checked in order; the first intent with a matching keyword wins.
+DEMO_INTENTS = [
+    ('list_events', ['event', 'coming', 'upcoming', 'schedule', "what's on"]),
+    ('list_small_groups', ['small group', 'group', 'community', 'connect with people']),
+    ('search_ministries', ['ministry', 'volunteer', 'help', 'serve', 'music', 'kids', 'youth', 'teach', 'worship']),
+    ('get_church_info', ['info', 'about', 'who are you', 'what is this', 'tell me']),
+    ('hand_off_to_staff', ['talk to', 'someone', 'struggling', 'crisis', 'help me', 'worried', 'sad']),
+    ('request_connection', ['connect', 'sign me up', 'request', 'join', 'interested']),
+]
+DEMO_SKILLS = {
+    'Music': ['music', 'sing', 'guitar', 'band', 'piano', 'worship'],
+    'Teaching': ['teach', 'kids', 'youth', 'children'],
+    'Technology': ['tech', 'sound', 'video', 'camera', 'computer'],
+    'Hospitality': ['greet', 'welcome', 'hospitality', 'coffee'],
+    'Creativity': ['art', 'design', 'creative', 'photo'],
+    'Organization': ['organiz', 'admin', 'plan'],
+    'Listening': ['listen'],
+    'Encouragement': ['encourag'],
+}
+DEMO_DAYS = {'Sunday mornings': ['sunday'], 'Saturday mornings': ['saturday'],
+             'Weekday evenings': ['weekday', 'evening', 'weeknight', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday']}
+
+
+def demo_tools(session_id, actions):
+    """The chat tools with keyword-friendly arguments for demo_reply. Calls are logged like the AI path,
+    and filed requests are added to `actions`."""
+    def use(tool, **args):
+        result = call_tool(tool, json.dumps(args))
+        db.log_chat(session_id, 'tool', {'name': tool, 'arguments': args, 'result': result, 'provider': 'demo'})
+        if 'request_id' in result:
+            actions.append({'tool': tool, 'request_id': result['request_id'], 'status': result['status']})
+        return result
+
+    def search(query):
+        text = query.lower()
+        skills = [skill for skill, words in DEMO_SKILLS.items() if any(w in text for w in words)]
+        day = next((d for d, words in DEMO_DAYS.items() if any(w in text for w in words)), None)
+        result = use('search_ministries', skills=skills, day=day)
+        return result.get('matches', result.get('ministries', []))
+
+    def hand_off(reason):
+        kind = 'crisis' if any(w in reason.lower() for w in CRISIS_WORDS) else 'pastoral_care'
+        return use('hand_off_to_staff', reason=kind, summary=reason[:500])
+
+    def connect(name, details):
+        text = details.lower()
+        ministry = next((m for m in db.list_ministries() if m['name'].lower() in text), None)
+        contact = re.search(r'[\w.+-]+@[\w-]+\.[\w.]+|\+?\d[\d\s().-]{6,}\d', details)
+        given = re.search(r"(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)", details)
+        if ministry is None or contact is None:
+            return {'message': "Happy to connect you! Tell me which ministry you're interested in, "
+                               "plus your name and an email or phone number."}
+        return use('request_connection', ministry_id=ministry['id'], name=given.group(1) if given else name,
+                   contact=contact.group(0), note=details[:500])
+
+    return {
+        'get_church_info': lambda: use('get_church_info'),
+        'list_events': lambda: use('list_events')['events'],
+        'list_small_groups': lambda: use('list_small_groups')['groups'],
+        'search_ministries': search,
+        'hand_off_to_staff': hand_off,
+        'request_connection': connect,
+    }
+
+
+def describe(item):
+    """One line for a list result: its name plus the most useful detail."""
+    if 'open_spots' in item:
+        detail = f"{item['day']}, {item['open_spots']} open spots"
+    else:
+        detail = ', '.join(item[key] for key in ('when', 'where') if item.get(key))
+    return f"• {item.get('name') or item.get('title')}" + (f': {detail}' if detail else '')
+
+
+def format_demo_result(result):
+    if isinstance(result, list):
+        if not result:
+            return "I couldn't find anything for that right now."
+        return f'Here are {len(result)} results:\n' + '\n'.join(describe(item) for item in result)
+    if 'church' in result:
+        info = result['church']
+        services = ', '.join(f"{s['day']} {s['time']}" for s in info['services'])
+        return (f"{info['name']} is at {info['address']}. Services are {services}. "
+                f"You can reach the office at {info['phone']} or {info['email']} ({info['office_hours']}).")
+    if 'error' in result:
+        return result['error']
+    return result.get('message', DEMO_MENU)
+
+
+def demo_reply(message: str, tools: dict) -> str:
+    """Answer without an AI model: match the message to an intent, run that tool, and format the result."""
+    try:
+        text = message.lower()
+        # Safety first: crisis language always gets 988/911 and a staff hand-off.
+        if any(w in text for w in CRISIS_WORDS):
+            tools['hand_off_to_staff'](reason=message)
+            return f"{DEMO_CRISIS} I've also let our staff know."
+        intent = next((name for name, words in DEMO_INTENTS if any(w in text for w in words)), None)
+        if intent is None:
+            return DEMO_MENU
+        if intent == 'search_ministries':
+            result = tools[intent](query=message)
+        elif intent == 'hand_off_to_staff':
+            result = tools[intent](reason=message)
+        elif intent == 'request_connection':
+            result = tools[intent](name='Guest', details=message)
+        else:
+            result = tools[intent]()
+        reply = format_demo_result(result)
+        if intent == 'search_ministries' and result:
+            reply += ("\nIf one sounds good, tell me which one plus your name and an email or phone, "
+                      "and I'll ask staff to connect you.")
+        if intent == 'hand_off_to_staff' and 'request_id' in result:
+            reply = f"I'm sorry you're going through that. I've passed this to our care team. {reply}"
+        if intent == 'request_connection' and 'request_id' in result:
+            reply = (f"Thanks! I've asked staff to connect you with {result['ministry']}. "
+                     "A staff member reviews every request before anyone reaches out.")
+        return reply
+    except Exception:
+        log.exception('demo reply failed')
+        return DEMO_ERROR
+
+
 def run(messages, session_id, clients=None):
     """Answer the latest user message. `messages` is the visible user/assistant history.
     `clients` is [(name, model, extra_body, client), ...]; tests pass fakes here."""
     db.log_chat(session_id, 'user', messages[-1])
+    # Demo mode: no key configured, use local intent-matching
+    if clients is None and not os.environ.get("GLOO_API_KEY") and not os.environ.get("OPENAI_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY"):
+        actions = []
+        reply = demo_reply(messages[-1]['content'], demo_tools(session_id, actions))
+        db.log_chat(session_id, 'assistant', {'content': reply, 'provider': 'demo'})
+        return {'reply': reply, 'configured': False, 'actions': actions, 'provider': 'demo'}
     clients = list(clients if clients is not None else make_clients())
     if not clients:
         db.log_chat(session_id, 'not_configured', {})
