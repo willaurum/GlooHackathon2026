@@ -37,7 +37,10 @@ export default function VisitPage() {
         const token = readToken();
         if (token) {
           try { setVisit(await api('/visits/' + token)); }
-          catch { writeToken(null); }
+          catch (err) {
+            if (err.status === 404) writeToken(null);
+            else setError('Could not load your visit. Refresh to try again.');
+          }
         }
       } catch (err) { setError('Could not load church info. ' + err.message); }
       finally { setLoading(false); }
@@ -46,10 +49,14 @@ export default function VisitPage() {
 
   useEffect(() => {
     if (!visit || (visit.status !== 'arrived' && visit.status !== 'on_the_way')) return;
+    let cancelled = false;
     const poll = setInterval(async () => {
-      try { setVisit(await api('/visits/' + visit.token)); } catch { /* keep last known state */ }
+      try {
+        const latest = await api('/visits/' + visit.token);
+        if (!cancelled) setVisit(latest);
+      } catch { /* keep last known state */ }
     }, 5000);
-    return () => clearInterval(poll);
+    return () => { cancelled = true; clearInterval(poll); };
   }, [visit?.token, visit?.status]);
 
   async function signUp(e) {
@@ -68,7 +75,11 @@ export default function VisitPage() {
   async function imHere() {
     setBusy(true); setError('');
     try { setVisit(await api('/visits/' + visit.token + '/arrive', { method: 'POST' })); }
-    catch (err) { setError(err.message); }
+    catch (err) {
+      // 409: already checked in from another tab; show where the visit actually is.
+      if (err.status === 409) setVisit(await api('/visits/' + visit.token).catch(() => visit));
+      else setError(err.message);
+    }
     finally { setBusy(false); }
   }
 
@@ -127,7 +138,7 @@ export default function VisitPage() {
       </div>
     </section>}
 
-    <section className="panel visit-section" aria-live="polite">
+    <section className="panel visit-section">
       {!visit ? <>
         <div className="eyebrow">LET US KNOW YOU'RE COMING</div>
         <h2>Plan your visit</h2>
@@ -155,18 +166,24 @@ export default function VisitPage() {
           </label>
           <button className="primary wide" disabled={busy}>{busy ? 'Working…' : "I'm coming →"}</button>
         </form>
-      </> : <div className="visit-status">
+      </> : <div className="visit-status" aria-live="polite">
         {visit.status === 'planned' && <>
           <div className="eyebrow">YOU'RE ON THE LIST</div>
           <h2>See you {visit.service}, {visit.name}</h2>
-          <p>When you arrive, tap the button below and the welcome team will be looking for you.</p>
+          <p>{visit.wants_host
+            ? 'When you arrive, tap the button below and the welcome team will be looking for you.'
+            : 'When you arrive, tap the button below so we know you made it.'}</p>
           <button className="primary wide" disabled={busy} onClick={imHere}>{busy ? 'Working…' : "I'm here"}</button>
         </>}
-        {visit.status === 'arrived' && <>
+        {visit.status === 'arrived' && (visit.wants_host ? <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>The welcome team has been notified…</h2>
           <p>Hang tight — someone will come find you at the main entrance shortly.</p>
-        </>}
+        </> : <>
+          <div className="eyebrow">YOU'RE HERE</div>
+          <h2>Thanks for letting us know. Enjoy the service!</h2>
+          <p>If you need anything, stop by the Welcome desk in the lobby.</p>
+        </>)}
         {visit.status === 'on_the_way' && <>
           <div className="eyebrow">ON THE WAY</div>
           <h2>{visit.host} is coming to meet you at the main entrance.</h2>
@@ -175,7 +192,7 @@ export default function VisitPage() {
           <div className="eyebrow">WELCOME</div>
           <h2>Welcome! We're glad you're here.</h2>
         </>}
-        <a href="#" className="plan-another" onClick={e => { e.preventDefault(); planAnother(); }}>Plan a different visit</a>
+        <button type="button" className="plan-another" onClick={planAnother}>Plan a different visit</button>
       </div>}
     </section>
   </div>;

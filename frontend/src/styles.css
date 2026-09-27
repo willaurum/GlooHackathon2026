@@ -24,7 +24,7 @@
 .field.checkbox{display:flex;align-items:center;gap:9px;font-weight:500}
 .field.checkbox input{width:auto;margin:0}
 .visit-status h2{margin-top:8px}
-.plan-another{display:inline-block;margin-top:16px;font-size:11px;color:#69875e}
+.plan-another{display:block;margin-top:16px;padding:0;border:0;background:none;font-size:11px;color:#69875e;text-decoration:underline;cursor:pointer}
 .guest-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px}
 .guest-card{padding:16px 18px}
 .guest-card.just-arrived{border-color:#c9dcc0;box-shadow:0 0 0 2px #eaf2eb}
@@ -33,4 +33,4 @@
 .guest-card p{font-size:11px;margin-top:6px}
 .guest-card button{margin-top:12px}
 @media(max-width:850px){.service-cards{grid-template-columns:1fr}.guest-list{grid-template-columns:1fr}}
-@media(max-width:600px){.visit-section{padding:20px}.church-map iframe{height:260px}.map-links{flex-direction:column;align-items:stretch}.map-links a{text-align:center}}
+@media(max-width:600px){.header-right{gap:8px}.header-right .demo{display:none}.visit-section{padding:20px}.church-map iframe{height:260px}.map-links{flex-direction:column;align-items:stretch}.map-links a{text-align:center}}

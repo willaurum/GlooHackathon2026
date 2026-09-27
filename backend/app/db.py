@@ -224,27 +224,32 @@ def mark_arrived(token):
             WHERE token = %s AND status = 'planned' RETURNING *""", (token,)).fetchone()
 
 
+# Staff-facing queries return these columns only; the token belongs to the guest.
+STAFF_VISIT_COLUMNS = """visit_id, name, contact, service, party_size, kids, wants_host, status, host,
+    created_at, arrived_at"""
+
+
 def list_visits(statuses):
     with pool.connection() as conn:
-        return conn.execute("""SELECT visit_id, name, contact, service, party_size, kids, wants_host, status, host,
-            created_at, arrived_at FROM visits WHERE status = ANY(%s) ORDER BY arrived_at NULLS LAST, created_at""",
-            (list(statuses),)).fetchall()
+        return conn.execute(f"""SELECT {STAFF_VISIT_COLUMNS} FROM visits
+            WHERE status = ANY(%s) ORDER BY arrived_at NULLS LAST, created_at""", (list(statuses),)).fetchall()
 
 
 def list_planned_visits(limit=20):
     with pool.connection() as conn:
-        return conn.execute("""SELECT visit_id, name, contact, service, party_size, kids, wants_host, status, host,
-            created_at, arrived_at FROM visits WHERE status = 'planned' ORDER BY created_at DESC LIMIT %s""",
-            (limit,)).fetchall()
+        return conn.execute(f"""SELECT {STAFF_VISIT_COLUMNS} FROM visits
+            WHERE status = 'planned' AND created_at > now() - interval '7 days'
+            ORDER BY created_at DESC LIMIT %s""", (limit,)).fetchall()
 
 
 def set_visit_host(visit_id, host):
     with pool.connection() as conn:
-        return conn.execute("""UPDATE visits SET status = 'on_the_way', host = %s
-            WHERE visit_id = %s AND status = 'arrived' RETURNING *""", (host, visit_id)).fetchone()
+        return conn.execute(f"""UPDATE visits SET status = 'on_the_way', host = %s
+            WHERE visit_id = %s AND status = 'arrived' RETURNING {STAFF_VISIT_COLUMNS}""", (host, visit_id)).fetchone()
 
 
 def mark_met(visit_id):
     with pool.connection() as conn:
-        return conn.execute("""UPDATE visits SET status = 'met'
-            WHERE visit_id = %s AND status IN ('arrived', 'on_the_way') RETURNING *""", (visit_id,)).fetchone()
+        return conn.execute(f"""UPDATE visits SET status = 'met'
+            WHERE visit_id = %s AND status IN ('arrived', 'on_the_way') RETURNING {STAFF_VISIT_COLUMNS}""",
+            (visit_id,)).fetchone()
