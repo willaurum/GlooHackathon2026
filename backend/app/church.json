@@ -2,6 +2,7 @@
   "info": {
     "name": "Grace Community Church",
     "address": "410 Maple Ridge Road, Springfield (fictional)",
+    "map_query": "Springfield, Illinois",
     "phone": "(555) 010-0140",
     "email": "hello@gracecommunity.example.com",
     "office_hours": "Tuesday to Friday, 9am to 4pm",
