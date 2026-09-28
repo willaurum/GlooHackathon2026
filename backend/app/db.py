@@ -7,6 +7,7 @@ The database is a SQLite Durable Object. It's reached over HTTP at CHURCH_DB_URL
 
 import os
 import json
+import secrets
 from pathlib import Path
 
 import httpx
@@ -101,6 +102,21 @@ def initialize():
             embedding TEXT NOT NULL,
             PRIMARY KEY (note_id, idx)
         )""", ()),
+        # First-time guest sign-ups and their day-of arrival status.
+        (f"""CREATE TABLE IF NOT EXISTS visits (
+            visit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            contact TEXT NOT NULL DEFAULT '',
+            service TEXT NOT NULL,
+            party_size INTEGER NOT NULL DEFAULT 1,
+            kids TEXT NOT NULL DEFAULT '',
+            wants_host INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'planned',
+            host TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT {NOW},
+            arrived_at TEXT
+        )""", ()),
         # Church info, FAQs, events and small groups the chat agent can look up.
         ("""CREATE TABLE IF NOT EXISTS church_content (
             kind TEXT NOT NULL,
@@ -147,6 +163,12 @@ def initialize():
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
     run(*statements)
+    # Backfill new seed fields into the existing info row without overwriting.
+    _row = one("SELECT data FROM church_content WHERE kind = 'info'")
+    if _row:
+        _existing = _data(_row)
+        _merged = {**church['info'], **_existing}
+        run(("UPDATE church_content SET data = ? WHERE kind = 'info'", (json.dumps(_merged),)))
 
 
 def list_ministries():
@@ -358,3 +380,49 @@ def create_event(title, category, date, time, location, description, ministry_na
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
                (title, category, date, time, location, ministry_name, description, ai_summary))
+
+
+# --- First-time guest visits ---
+
+STAFF_VISIT_COLUMNS = "visit_id, name, contact, service, party_size, kids, wants_host, status, host, created_at, arrived_at"
+
+
+def create_visit(name, contact, service, party_size, kids, wants_host):
+    token = secrets.token_urlsafe(16)
+    return one(f"""INSERT INTO visits (token, name, contact, service, party_size, kids, wants_host)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        RETURNING *""", (token, name, contact, service, party_size, kids, int(wants_host)))
+
+
+def get_visit_by_token(token):
+    return one("SELECT * FROM visits WHERE token = ?", (token,))
+
+
+def mark_arrived(token):
+    return one(f"""UPDATE visits SET status = 'arrived', arrived_at = {NOW}
+        WHERE token = ? AND status = 'planned'
+        RETURNING *""", (token,))
+
+
+def list_visits(statuses):
+    placeholders = ', '.join('?' * len(statuses))
+    return query(f"""SELECT {STAFF_VISIT_COLUMNS} FROM visits
+        WHERE status IN ({placeholders}) ORDER BY arrived_at, created_at""", tuple(statuses))
+
+
+def list_planned_visits(limit=20):
+    return query(f"""SELECT {STAFF_VISIT_COLUMNS} FROM visits
+        WHERE status = 'planned' AND created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')
+        ORDER BY created_at DESC LIMIT ?""", (limit,))
+
+
+def set_visit_host(visit_id, host):
+    return one(f"""UPDATE visits SET status = 'on_the_way', host = ?
+        WHERE visit_id = ? AND status = 'arrived'
+        RETURNING {STAFF_VISIT_COLUMNS}""", (host, visit_id))
+
+
+def mark_met(visit_id):
+    return one(f"""UPDATE visits SET status = 'met'
+        WHERE visit_id = ? AND status IN ('arrived', 'on_the_way')
+        RETURNING {STAFF_VISIT_COLUMNS}""", (visit_id,))

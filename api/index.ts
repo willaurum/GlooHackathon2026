@@ -37,9 +37,12 @@ const AI_PROVIDER_HOSTS = ['platform.ai.gloo.com', 'api.openai.com', 'api.anthro
 
 // Belong routes are public, like the church website they sit on. Sermon notes keep the API key.
 const PUBLIC_ROUTES: [string, RegExp][] = [
-	['GET', /^\/api\/(health|church|info|ministries|connections|requests|events|chat\/status|ai\/status|ollama\/status)$/],
+	['GET', /^\/api\/(health|church|info|ministries|connections|requests|events|chat\/status|ai\/status|ollama\/status|visits)$/],
+	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
 	['GET', /^\/api\/events\/\d+$/],
-	['POST', /^\/api\/(matches|connections|chat|events)$/],
+	['POST', /^\/api\/(matches|connections|chat|events|visits)$/],
+	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
+	['POST', /^\/api\/visits\/\d+\/(claim|met)$/],
 	['POST', /^\/api\/events\/\d+\/summarize$/],
 	['POST', /^\/api\/(events\/summarize-all|ai\/model|ollama\/model)$/],
 	['DELETE', /^\/api\/connections\/\d+$/],

@@ -173,6 +173,76 @@ def delete_item(item_id: int):
     if not db.delete_item(item_id):
         raise HTTPException(status_code=404, detail="no such item")
 
+# --- First-time guest visits ---
+
+
+class VisitRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=100)
+    contact: str = Field(default='', max_length=200)
+    service: str
+    party_size: int = Field(ge=1, le=20)
+    kids: str = Field(default='', max_length=200)
+    wants_host: bool = True
+
+
+class ClaimRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    host: str = Field(min_length=1, max_length=60)
+
+
+@app.get('/api/church')
+def church():
+    return {'info': db.get_church_info(), 'faqs': db.list_content('faqs'), 'events': db.list_content('events')}
+
+
+@app.post('/api/visits', status_code=201)
+def create_visit(body: VisitRequest):
+    services = {f"{s['day']} {s['time']}" for s in db.get_church_info()['services']}
+    if body.service not in services:
+        raise HTTPException(status_code=400, detail='Unknown service time')
+    return db.create_visit(body.name, body.contact, body.service, body.party_size, body.kids, body.wants_host)
+
+
+@app.get('/api/visits/{token}')
+def get_visit(token: str):
+    visit = db.get_visit_by_token(token)
+    if visit is None:
+        raise HTTPException(status_code=404, detail='Visit not found')
+    return visit
+
+
+@app.post('/api/visits/{token}/arrive')
+def arrive_visit(token: str):
+    visit = db.mark_arrived(token)
+    if visit is None:
+        if db.get_visit_by_token(token) is None:
+            raise HTTPException(status_code=404, detail='Visit not found')
+        raise HTTPException(status_code=409, detail='This visit already checked in')
+    return visit
+
+
+@app.get('/api/visits')
+def visits_queue():
+    return {'waiting': db.list_visits(['arrived', 'on_the_way']), 'planned': db.list_planned_visits()}
+
+
+@app.post('/api/visits/{visit_id}/claim')
+def claim_visit(visit_id: int, body: ClaimRequest):
+    visit = db.set_visit_host(visit_id, body.host)
+    if visit is None:
+        raise HTTPException(status_code=409, detail='This guest is not waiting to be claimed')
+    return visit
+
+
+@app.post('/api/visits/{visit_id}/met')
+def met_visit(visit_id: int):
+    visit = db.mark_met(visit_id)
+    if visit is None:
+        raise HTTPException(status_code=409, detail='This guest cannot be marked met right now')
+    return visit
+
+
 # --- Calendar events + AI summaries (ported to the Durable-Object stack) ---
 
 

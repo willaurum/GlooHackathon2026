@@ -23,6 +23,7 @@ export default function Home({ go, onAsk }) {
       <p>Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.</p>
       <div className="hero-actions">
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
+        <button className="secondary" onClick={() => go('guests/plan')}>Planning your first visit?<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
       </div>
       <div className="hero-art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /></div>

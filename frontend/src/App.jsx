@@ -6,8 +6,10 @@ import { PageHeader, Sidebar, TabBar, TopBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
+import VisitPage from './VisitPage.jsx';
+import WelcomeTeam from './WelcomeTeam.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome'];
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
@@ -62,6 +64,11 @@ export default function App() {
         {section === 'calendar' && <div className="page">
           <PageHeader eyebrow="Calendar" title="Church life & gatherings." text="Every service, class, and outreach — with optional AI summaries. Add the next thing on the calendar." />
           <Calendar />
+        </div>}
+        {section === 'guests' && <div className="page">
+          <PageHeader eyebrow="Guests" title={route === 'guests/plan' ? 'Plan your visit.' : 'Welcome team.'} text={route === 'guests/plan' ? 'Everything a first-time guest needs, and a way to let us know they’re coming.' : 'See who has arrived and get them to the right person.'} />
+          {route === 'guests/plan' && <VisitPage />}
+          {route === 'guests/welcome' && <WelcomeTeam />}
         </div>}
         <footer className="site-footer">
           <b>belong.</b>

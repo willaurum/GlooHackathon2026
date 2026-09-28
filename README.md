@@ -21,6 +21,20 @@ An **Ask Belong** chat assistant is available on every page.
 
 Both APIs accept a comma-separated `ALLOWED_ORIGIN` list, so several frontend previews can share them.
 
+## First-time guests
+
+A guest opens "Plan your visit" (service times, what to expect, parking/kids/accessibility FAQs, a map, and upcoming newcomer events), then fills out "Let us know you're coming." On the day, tapping **"I'm here"** flips their visit to `arrived`; the "Welcome team" screen shows them in the waiting queue. A greeter taps **"On my way"** to claim them (status `on_the_way`), which updates the guest's own screen to "<host> is coming to meet you at the main entrance." The greeter then taps **"Met them"** to clear them (status `met`). Guests who untick "I'd like someone to meet me" still tap "I'm here"; greeters see them as "Prefers not to be met" and just tap **"Got it"**.
+
+- `GET /api/church`: church info, FAQs, and events for the visit page.
+- `POST /api/visits`: sign up; returns the visit with a `token` used to check its own status (no login). 400 if `service` isn't one of the church's service times.
+- `GET /api/visits/{token}`: a guest's own visit by token.
+- `POST /api/visits/{token}/arrive`: mark `arrived` (409 if not `planned`).
+- `GET /api/visits`: staff queue — `{ waiting: [...arrived/on_the_way], planned: [...last 7 days] }`. Staff endpoints never return guest tokens.
+- `POST /api/visits/{visit_id}/claim`: a greeter claims a waiting guest with `{ host }` (409 if not `arrived`).
+- `POST /api/visits/{visit_id}/met`: clear a guest once greeted (409 if invalid).
+
+The map uses keyless Google Maps embed and directions URLs (no API key), built from `map_query` in `backend/app/church.json`. New `church.json` info fields are added to existing databases on startup without overwriting existing values.
+
 ## Repo layout
 
 | Path | What's in it |

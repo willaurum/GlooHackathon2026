@@ -312,7 +312,6 @@ def timestamp(seconds):
     return f'{h}:{rest // 60:02d}:{rest % 60:02d}' if h else f'{rest // 60:02d}:{rest % 60:02d}'
 
 
-@router.get('/api/church')
 @router.get('/api/config')
 def church():
     return db.get_config()

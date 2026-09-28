@@ -537,3 +537,31 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .events-search { max-width: none; }
   .form-row { grid-template-columns: 1fr; }
 }
+
+/* --- First-time guest visit pages --- */
+.visit-page,.welcome-team{display:flex;flex-direction:column;gap:18px}
+.visit-section{padding:24px 26px}
+.visit-section h2{margin-top:6px}
+.visit-section p{font-size:12px;margin-top:10px}
+.service-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}
+.service-card{background:var(--green-50);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px}
+.service-card strong{font-size:13px}
+.service-card p{font-size:11px;margin-top:6px}
+.church-map{margin-top:16px}
+.church-map iframe{display:block;width:100%;height:320px;border:0;border-radius:var(--r)}
+.map-links{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.map-address{font-size:11px;margin-top:10px;color:var(--faint)}
+.visit-form{display:flex;flex-direction:column}
+.field.checkbox{display:flex;align-items:center;gap:9px;font-weight:500}
+.field.checkbox input{width:auto;margin:0}
+.visit-status h2{margin-top:8px}
+.plan-another{display:block;margin-top:16px;padding:0;border:0;background:none;font-size:11px;color:var(--muted);text-decoration:underline;cursor:pointer}
+.guest-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px}
+.guest-card{padding:16px 18px}
+.guest-card.just-arrived{border-color:var(--green-200);box-shadow:0 0 0 2px var(--green-100)}
+.guest-card h3{font-size:14px;margin-top:8px}
+.guest-card h3 small{font-size:10px;color:var(--faint);font-weight:400}
+.guest-card p{font-size:11px;margin-top:6px}
+.guest-card button{margin-top:12px}
+@media(max-width:850px){.service-cards{grid-template-columns:1fr}.guest-list{grid-template-columns:1fr}}
+@media(max-width:600px){.visit-section{padding:20px}.church-map iframe{height:260px}.map-links{flex-direction:column;align-items:stretch}.map-links a{text-align:center}}
