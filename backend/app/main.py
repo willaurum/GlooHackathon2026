@@ -40,6 +40,12 @@ class ConnectionRequest(BaseModel):
     member: str = Field(min_length=1, max_length=100)
 
 
+@app.get('/api/info')
+def church_info():
+    # Public church details (address, service times) for the home page.
+    return db.get_church_info()
+
+
 @app.get('/api/ministries')
 def ministries():
     return db.list_ministries()
