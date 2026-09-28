@@ -1,5 +1,6 @@
 """Belong prototype API with persistent ministries and connections, plus Pastor Notes."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,7 +8,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
-from . import chat, db, matching, pastor_notes
+from . import ai_client, chat, db, matching, pastor_notes
 
 log = logging.getLogger(__name__)
 
@@ -16,9 +17,11 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     db.initialize()
     pastor_notes.start_worker()
+    task = asyncio.create_task(auto_summarize_background())
     try:
         yield
     finally:
+        task.cancel()
         db.close()
 
 
@@ -169,3 +172,120 @@ def patch_item(item_id: int, body: DoneFlag):
 def delete_item(item_id: int):
     if not db.delete_item(item_id):
         raise HTTPException(status_code=404, detail="no such item")
+
+# --- Calendar events + AI summaries (ported to the Durable-Object stack) ---
+
+
+class EventCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=100)
+    date: str = Field(min_length=10, max_length=10)
+    time: str = Field(min_length=1, max_length=100)
+    location: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1)
+    ministry_name: str | None = None
+
+
+class ModelUpdateRequest(BaseModel):
+    model: str = Field(min_length=1, max_length=100)
+
+
+class SummarizeAllRequest(BaseModel):
+    model: str | None = None
+    only_missing: bool = False
+
+
+async def auto_summarize_background():
+    """Draft a summary for events that lack one when an AI endpoint is reachable. No-op-safe otherwise."""
+    try:
+        await asyncio.sleep(5)
+        status = await ai_client.get_status()
+        if not status.get("connected"):
+            return
+        model = status.get("default_model")
+        if not ai_client.find_matching_model(model, status.get("available_models", [])):
+            return
+        for ev in db.list_events():
+            if not ev.get("ai_summary"):
+                try:
+                    summary = await ai_client.summarize_event(
+                        title=ev["title"], category=ev["category"], description=ev["description"],
+                        date=ev["date"], time=ev["time"], location=ev["location"], model=model)
+                    db.update_event_summary(ev["id"], summary)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+@app.get("/api/events")
+def get_events():
+    return db.list_events()
+
+
+@app.get("/api/events/{event_id}")
+def get_event(event_id: int):
+    event = db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
+@app.post("/api/events", status_code=201)
+def post_event(body: EventCreate):
+    return db.create_event(title=body.title, category=body.category, date=body.date,
+                            time=body.time, location=body.location, description=body.description,
+                            ministry_name=body.ministry_name)
+
+
+@app.post("/api/events/{event_id}/summarize")
+async def summarize_event(event_id: int, model: str | None = None):
+    event = db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    status = await ai_client.get_status()
+    if not status.get("connected"):
+        raise HTTPException(status_code=503, detail="AI summaries are not configured on this server yet.")
+    try:
+        summary = await ai_client.summarize_event(
+            title=event["title"], category=event["category"], description=event["description"],
+            date=event["date"], time=event["time"], location=event["location"], model=model)
+        return db.update_event_summary(event_id, summary)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI summarization failed: {exc}")
+
+
+@app.post("/api/events/summarize-all")
+async def summarize_all_events(body: SummarizeAllRequest | None = None, only_missing: bool = False, model: str | None = None):
+    status = await ai_client.get_status()
+    if not status.get("connected"):
+        raise HTTPException(status_code=503, detail="AI summaries are not configured on this server yet.")
+    target_model = body.model if (body and body.model) else model
+    filter_missing = body.only_missing if body else only_missing
+    events = db.list_events()
+    if filter_missing:
+        events = [e for e in events if not e.get("ai_summary")]
+    results, errors = [], []
+    for ev in events:
+        try:
+            summary = await ai_client.summarize_event(
+                title=ev["title"], category=ev["category"], description=ev["description"],
+                date=ev["date"], time=ev["time"], location=ev["location"], model=target_model)
+            results.append(db.update_event_summary(ev["id"], summary))
+        except Exception as exc:
+            errors.append({"event_id": ev["id"], "title": ev["title"], "error": str(exc)})
+    return {"updated": len(results), "errors": errors, "events": db.list_events(), "only_missing": filter_missing}
+
+
+@app.get("/api/ai/status")
+@app.get("/api/ollama/status")
+async def get_ai_status():
+    return await ai_client.get_status()
+
+
+@app.post("/api/ai/model")
+@app.post("/api/ollama/model")
+def set_ai_model(body: ModelUpdateRequest):
+    ai_client.set_default_model(body.model)
+    return {"default_model": ai_client.get_default_model()}

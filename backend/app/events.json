@@ -1,0 +1,101 @@
+[
+  {
+    "id": 1,
+    "title": "Sunday Morning Worship & Family Service",
+    "category": "Worship",
+    "date": "2026-09-27",
+    "time": "09:00 AM - 10:30 AM",
+    "location": "Main Sanctuary",
+    "ministry_name": "Worship collective",
+    "description": "Join our church family for uplifting worship music, a message from God's Word on finding community, and full children's programming for infants through 5th grade. Coffee and refreshments served in the lobby beforehand.",
+    "ai_summary": null
+  },
+  {
+    "id": 2,
+    "title": "Sunday Evening Youth Rally & Fellowship",
+    "category": "Youth & Kids",
+    "date": "2026-09-27",
+    "time": "06:00 PM - 08:00 PM",
+    "location": "Student Center",
+    "ministry_name": "Kids & families",
+    "description": "Middle and high school students gather for high-energy group games, worship led by the youth band, small group breakout discussions, and pizza. New students are warmly invited.",
+    "ai_summary": null
+  },
+  {
+    "id": 3,
+    "title": "Midweek Community Dinner & Bible Study",
+    "category": "Discipleship",
+    "date": "2026-09-30",
+    "time": "06:00 PM - 07:45 PM",
+    "location": "Fellowship Hall",
+    "ministry_name": "Care & connection",
+    "description": "A weekly family dinner followed by age-appropriate Bible studies for adults, youth, and kids. This week begins a 6-week study through the Book of Ephesians focusing on walking in unity.",
+    "ai_summary": null
+  },
+  {
+    "id": 4,
+    "title": "Fall Harvest Community Food Drive",
+    "category": "Outreach",
+    "date": "2026-10-03",
+    "time": "08:30 AM - 12:30 PM",
+    "location": "North Parking Lot & Pavilion",
+    "ministry_name": "Community outreach",
+    "description": "Pack and distribute emergency grocery hampers for local families in need in partnership with the regional food bank. Volunteers will sort donations, assemble care boxes, and assist with drive-through loading.",
+    "ai_summary": null
+  },
+  {
+    "id": 5,
+    "title": "Worship Team Auditions & Workshop",
+    "category": "Creative Arts",
+    "date": "2026-10-06",
+    "time": "07:00 PM - 09:00 PM",
+    "location": "Music Suite & Stage",
+    "ministry_name": "Worship collective",
+    "description": "An open workshop and casual audition evening for vocalists, guitarists, drummers, and keyboard players interested in serving on the Sunday morning worship rotation. Materials provided upon RSVP.",
+    "ai_summary": null
+  },
+  {
+    "id": 6,
+    "title": "Kids Camp Volunteer Orientation",
+    "category": "Next Generation",
+    "date": "2026-10-10",
+    "time": "10:00 AM - 11:30 AM",
+    "location": "Children's Wing Room 204",
+    "ministry_name": "Kids & families",
+    "description": "Essential training and safety orientation for all helpers and group leaders serving in upcoming fall kids events. Covers curriculum overview, child protection guidelines, and team assignments.",
+    "ai_summary": null
+  },
+  {
+    "id": 7,
+    "title": "Men's Monthly Breakfast & Fellowship",
+    "category": "Fellowship",
+    "date": "2026-10-17",
+    "time": "07:30 AM - 09:00 AM",
+    "location": "Fellowship Hall",
+    "ministry_name": "Care & connection",
+    "description": "Hearty cooked breakfast, hot coffee, and an encouraging testimony from guest speaker Pastor Dan on balancing faith, family, and work. Bring a neighbor or friend.",
+    "ai_summary": null
+  },
+  {
+    "id": 8,
+    "title": "Welcome to Grace Newcomers Luncheon",
+    "category": "Hospitality",
+    "date": "2026-10-18",
+    "time": "12:00 PM - 01:30 PM",
+    "location": "Fireside Room",
+    "ministry_name": "Welcome team",
+    "description": "Are you new to Grace Community in the past few months? Enjoy a complimentary catered lunch with pastors and ministry leaders, ask questions, and learn more about getting connected.",
+    "ai_summary": null
+  },
+  {
+    "id": 9,
+    "title": "Prayer & Worship Night of Renewal",
+    "category": "Worship",
+    "date": "2026-10-23",
+    "time": "07:00 PM - 08:30 PM",
+    "location": "Main Sanctuary",
+    "ministry_name": "Worship collective",
+    "description": "An evening set aside for extended acoustic worship, silent reflection, guided corporate prayer, and anointing prayer for healing and encouragement.",
+    "ai_summary": null
+  }
+]

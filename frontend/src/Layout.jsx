@@ -5,6 +5,7 @@ export const SECTIONS = [
   { route: '', label: 'Home', icon: 'home' },
   { route: 'serve', label: 'Serve', icon: 'users', children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book' },
+  { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
   { route: 'give', label: 'Give', icon: 'heart' },
 ];
 

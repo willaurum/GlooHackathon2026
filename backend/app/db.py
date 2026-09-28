@@ -131,6 +131,13 @@ def initialize():
         # A restart interrupts any job that was running; let it be retried.
         ("UPDATE notes SET status = 'failed', error = 'interrupted' WHERE status = 'processing'", ()),
     ]
+    statements.append(('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, location TEXT NOT NULL, ministry_name TEXT, description TEXT NOT NULL, ai_summary TEXT)', ()))
+    events_file = Path(__file__).with_name('events.json')
+    if events_file.exists():
+        for event in json.loads(events_file.read_text(encoding='utf-8')):
+            statements.append(('INSERT OR IGNORE INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
+                 event.get('ministry_name'), event['description'], event.get('ai_summary'))))
     statements += [("INSERT OR IGNORE INTO ministries VALUES (?, ?)", (m['id'], json.dumps(m))) for m in ministries]
     church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
     statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
@@ -326,3 +333,28 @@ def delete_note(note_id):
 
 def queued_note_ids():
     return [row['id'] for row in query("SELECT id FROM notes WHERE status = 'queued' ORDER BY created_at")]
+
+# --- Calendar events ---
+
+
+def list_events():
+    return query("""SELECT id, title, category, date, time, location, ministry_name, description, ai_summary
+        FROM events ORDER BY date ASC, time ASC""")
+
+
+def get_event(event_id):
+    return one("""SELECT id, title, category, date, time, location, ministry_name, description, ai_summary
+        FROM events WHERE id = ?""", (event_id,))
+
+
+def update_event_summary(event_id, ai_summary):
+    return one("""UPDATE events SET ai_summary = ? WHERE id = ?
+        RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
+               (ai_summary, event_id))
+
+
+def create_event(title, category, date, time, location, description, ministry_name=None, ai_summary=None):
+    return one("""INSERT INTO events (title, category, date, time, location, ministry_name, description, ai_summary)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
+               (title, category, date, time, location, ministry_name, description, ai_summary))

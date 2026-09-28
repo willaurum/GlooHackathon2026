@@ -2,11 +2,12 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-Belong is one site for a church community, **Grace Community Church** (fictional), with three areas:
+Belong is one site for a church community, **Grace Community Church** (fictional), with four areas:
 
 - **Serve**: browse ministry teams, see where volunteers are needed, match a member to a team, and review requests from the website chat.
 - **Sermon Notes**: sermons are transcribed on Cloudflare, and you can ask questions that are answered only from the transcript, with timestamps.
 - **Give**: one-time gifts through Stripe Checkout (demo mode until a key is set).
+- **Calendar**: browse and add church events and services, with optional AI-generated summaries.
 
 An **Ask Belong** chat assistant is available on every page.
 
