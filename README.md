@@ -1,26 +1,94 @@
-# GlooHackathon2026 — Pastor Notes
+# GlooHackathon2026 — Belong
 
-Transcription + grounded Q&A for sermons, built entirely on Cloudflare.
-Upload a video (or paste a YouTube link), and it is transcribed on
-Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded,
-and stored — then you can ask questions about it and only get answers
-the transcript actually supports.
+Liberty University's Gloo Hackathon team repository.
 
-Part of the Gloo Hackathon 2026. This branch: `pastor-notes`.
+Belong is one site for a church community, **Grace Community Church** (fictional), with three areas:
+
+- **Serve**: browse ministry teams, see where volunteers are needed, match a member to a team, and review requests from the website chat.
+- **Sermon Notes**: sermons are transcribed on Cloudflare, and you can ask questions that are answered only from the transcript, with timestamps.
+- **Give**: one-time gifts through Stripe Checkout (demo mode until a key is set).
+
+An **Ask Belong** chat assistant is available on every page.
 
 ## What is deployed
 
-| Worker | Purpose |
+| Worker | URL | Purpose |
+|---|---|---|
+| `preview-frontend-gloo-hackathon2026` | https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev | The React frontend (static assets, repo root `wrangler.jsonc`). |
+| `gloo-hackathon2026-api-pastor-notes` | https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev | Church API (`api/`): a Cloudflare **Container** running the FastAPI backend, a **SQLite Durable Object** database, **R2** for sermon media, **Workers AI** for transcription and embeddings. Serves Serve, the chat and Sermon Notes. |
+| `gloo-hackathon2026-api-donate-giving` | https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev | Giving API (`api-giving/`): a Worker + SQLite Durable Object. |
+
+Both APIs accept a comma-separated `ALLOWED_ORIGIN` list, so several frontend previews can share them.
+
+## Repo layout
+
+| Path | What's in it |
 |---|---|
-| `gloo-hackathon2026-api-pastor-notes` | The backend: a Cloudflare **Container** (Python FastAPI + ffmpeg + yt-dlp) backed by a **SQLite Durable Object**, with **R2** for media and **Workers AI** for models. |
-| `preview-pastor-notes-gloo-hackathon2026` | The frontend preview (React/Vite) for this branch. |
+| `frontend/src/App.jsx` | Routing (`#/`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/give`) and page shell. |
+| `frontend/src/Layout.jsx` | Sidebar (desktop), top bar + bottom tab bar (phones), page header, sub-tabs. |
+| `frontend/src/Home.jsx`, `Serve.jsx`, `PastorNotes.jsx`, `Give.jsx`, `ChatWidget.jsx` | The pages and the chat. |
+| `frontend/src/styles.css` | Design tokens (`:root`) and all styles. |
+| `frontend/src/api.js` | API helpers. `VITE_API_BASE` is the church API; `VITE_GIVING_API_BASE` is the giving API. |
+| `api/` | Church API Worker: container, church database Durable Object, Sermon Notes routes. |
+| `api-giving/` | Giving Worker. |
+| `backend/app/` | FastAPI app that runs in the container: ministries, matching, chat (`chat.py`), Sermon Notes (`pastor_notes.py`), SQL (`db.py`). |
+| `docker-compose.yml`, `db/` | Legacy local Postgres setup from the base branch. `db.py` now talks to the Durable Object, so this is not a working local stack on its own. |
 
-The branch is **church-agnostic by design**: the church name, contact info
-and any per-church config lives in a Durable Object (settable at runtime
-with the admin key), and all secrets are per-deployment. Any church gets
-their own subdomain + their own keys.
+## Build and deploy
 
-## How it works
+```bash
+# frontend
+cd frontend && npm ci
+VITE_API_BASE=https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev npm run build
+cd .. && npx wrangler deploy          # repo root: serves frontend/dist
+
+# APIs
+cd api && npm ci && npx wrangler deploy          # rebuilds the container image
+cd ../api-giving && npm ci && npx wrangler deploy
+```
+
+For local API development run `npx wrangler dev` in `api/` or `api-giving/`.
+
+## Keys and access
+
+Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory. They are never in the repo.
+
+| Secret | Worker | What it does |
+|---|---|---|
+| `NOTES_API_KEY` | `api/` | Required for Sermon Notes routes. The page asks for it once and keeps it in the browser tab only. |
+| `NOTES_ADMIN_KEY` | `api/` | Changing the church config. |
+| `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
+| `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Optional; switches giving from demo to live Stripe. |
+
+The Serve and chat routes (`/api/ministries`, `/api/matches`, `/api/connections`, `/api/requests`, `/api/chat`, `/api/info`) are public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key. A copy of the generated Sermon Notes keys is kept on the laptop at `~/.config/pastor-notes/` (owner-only), because Workers secrets cannot be read back.
+
+## Serve
+
+Six fictional ministries are seeded from `backend/app/ministries.json`, and church info, FAQs, events and groups from `backend/app/church.json`. Seeding never overwrites existing rows.
+
+- `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
+- `POST /api/matches`: member name, skills, serving style, and availability; returns the top three open ministries.
+- `GET /api/connections`, `POST /api/connections`, `DELETE /api/connections/{connection_id}`: saved connections, deduplicated by ministry and member name.
+- `GET /api/requests`, `PATCH /api/requests/{request_id}`: requests filed by the chat; approving a connection request also saves the connection.
+- `GET /api/info`: public church details (address, service times) for the home page.
+
+Matching uses simple rules, not AI. Sample contacts use example.com and no introductions are sent. This is a single shared demo workspace without login.
+
+### Website chat (Ask Belong)
+
+The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
+
+- Set `GLOO_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) with `npx wrangler secret put` in `api/`; the Worker passes it into the container. Without a key the chat runs in demo mode with simple built-in replies and a banner saying so. `GLOO_MODEL` defaults to `gloo-anthropic-claude-haiku-4.5`.
+- Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.
+- Nothing is sent to anyone automatically. Requests land in the `requests` table and appear under Serve > Saved; approving a connection request adds it to saved connections.
+- Every user message, tool call, and reply is written to `chat_log`. `GET /api/chat/log/{session_id}` returns one session for auditing (API key required).
+
+## Sermon Notes
+
+Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded and stored, and questions are answered only from what the transcript supports.
+
+### How it works
 
 ```
 YouTube URL / file upload
@@ -52,22 +120,7 @@ independent modes:
   verbatim answer. The LLM can only make answers *prettier*, never less
   grounded.
 
-## Keys / secrets
-
-All are set on the API worker with `npx wrangler secret put <NAME>` (run from
-`api/`). They are never in code, never in the repo.
-
-| Secret | Required | What it does |
-|---|---|---|
-| `NOTES_API_KEY` | yes | Gates every `/api/*` route. The frontend holds it in the browser session only (paste it on the page). No key configured => all API calls return 503. |
-| `NOTES_ADMIN_KEY` | for config changes | Required to change the church config (name, contact, etc.). |
-| `YTDLP_COOKIES` | no | Your YouTube cookies, to get past YouTube blocking Cloudflare server IPs. See note below. |
-
-A copy of the generated keys is kept on the laptop at
-`~/.config/pastor-notes/` (owner-only) because Workers secrets cannot be
-read back.
-
-## Known limitation: YouTube egress
+### Known limitation: YouTube egress
 
 YouTube intermittently refuses downloads from Cloudflares server IPs, so a
 YouTube link can fail with a clear `youtube_blocked` error. Two workarounds:
@@ -78,82 +131,15 @@ YouTube link can fail with a clear `youtube_blocked` error. Two workarounds:
 
 Retrying a YouTube link sometimes succeeds (the block is flaky, not total).
 
-## Run it locally
-
-The old `docker compose` setup (nginx + FastAPI + Postgres) is the base
-branchs dev loop and still works for the *original* app. For the Pastor
-Notes stack (Workers + Durable Object + R2 + Workers AI) use the wrangler
-dev flow:
-
-```bash
-cd api
-npm install
-npx wrangler dev      # local Durable Object + R2 emulation
-```
-
-The container build itself:
-
-```bash
-docker build -t gloo-pastor-notes:latest backend/
-```
-
-## Repo layout (this branch)
-
-| Path | Whats in it |
-|---|---|
-| `api/` | The Workers backend: `wrangler.jsonc`, the Container worker, the SQLite Durable Object, R2, Workers AI calls, and the grounded-Q&A engine. |
-| `backend/` | The Python container image (FastAPI, ffmpeg, yt-dlp). |
-| `frontend/src/PastorNotes.jsx` | The preview page: key entry, YouTube/upload tabs, notes list, transcript + ask view. |
-| `db/` | Legacy Postgres schema from the base branch (unused by this stack). |
-
-## Deploy checklist (per church)
-
-1. `wrangler deploy` the API worker to the churchs subdomain.
-2. `wrangler secret put` the churchs `NOTES_API_KEY` + `NOTES_ADMIN_KEY`.
-3. (Optional) `YTDLP_COOKIES` if they want YouTube links to be reliable.
-4. Set the churchs name/contact via the admin config endpoint.
-5. Point their frontend at the API workers URL.
-
-## Belong prototype
-
-The React frontend now uses FastAPI and Postgres. Six fictional ministries are seeded from `backend/app/ministries.json` on first backend startup. Startup creates the new tables on existing volumes without deleting data; existing ministry records are not overwritten by subsequent seed runs.
-
-- `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
-- `POST /api/matches`: member name, skills, serving style, and availability; returns the top three open ministries.
-- `GET /api/connections`: saved connections shared across this prototype workspace.
-- `POST /api/connections`: save `{ "ministry_id": 1, "member": "Jamie" }`; repeated saves are deduplicated by ministry and member name.
-- `DELETE /api/connections/{connection_id}`: remove a saved connection.
-
-Matching currently uses simple backend rules, not Gloo AI. Replacing that ranking with Gloo is the next integration step. Sample contacts use example.com; no introductions are sent. This is a single shared demo workspace without login or user isolation. Members with the same name are treated as the same person for duplicate saves.
-
-Saved connections survive page refreshes and container restarts through the existing Postgres volume. Removing the volume deletes them. There is no ministry editor yet; seed content is starter data, while the database is the runtime source of truth.
-
-Run `docker compose up --build -d`, then open http://localhost:3000. For frontend development, keep the backend and database running and run `npm install` and `npm run dev` in `frontend`; Vite proxies API calls to port 8000.
-
-## Website chat agent
-
-The "Ask Belong" widget (bottom right) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
-
-- Set `GLOO_API_KEY` in `.env` (from Gloo AI Studio > API Credentials) and run `docker compose up -d` again. Without a key the widget shows a "not configured" banner. `GLOO_MODEL` defaults to `gloo-anthropic-claude-haiku-4.5`.
-- Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.
-- Nothing is sent to anyone automatically. Requests land in the `requests` table and appear on the Saved connections page; approving a connection request adds it to saved connections.
-- Every user message, tool call, and reply is written to `chat_log`. `GET /api/chat/log/{session_id}` returns one session for auditing.
-
 ## Donate / Giving
 
-A church-agnostic giving area that runs on Cloudflare Workers — a pure-JS Worker routes to a single SQLite Durable Object. It is a separate worker from the Docker/FastAPI app above; the React "Give" page talks to the Worker's public origin directly.
-
-```
-api/          The giving Worker: GivingDO (SQLite Durable Object) + routes
-frontend/     The React app; the "Give" page lives in frontend/src/Give.jsx
-wrangler.jsonc  The preview static-assets Worker that serves the built frontend
-```
+A church-agnostic giving area that runs on Cloudflare Workers — a pure-JS Worker routes to a single SQLite Durable Object. It is a separate worker from the church API; the React "Give" page talks to the Worker's public origin directly (`VITE_GIVING_API_BASE`).
 
 The **Give** page is modeled on a single-fund giving flow: preset amount buttons and a free-text "enter any amount" field (both sourced from config), an anonymous-donation toggle, a goal progress bar, and a "Recent Support" feed of recent gifts. Presets, the goal title/amount, and presets all live in the Durable Object config and are changeable through the admin-key-gated route.
 
 Stripe Checkout handles one-time gifts — on "Continue to Payment" the page calls our Worker, which creates the Stripe Checkout session server-side (no direct browser→Stripe) and redirects the donor to Stripe's hosted page, so card data never reaches our servers. Gifts are recorded when the `checkout.session.completed` webhook arrives.
 
-Routes (all under the Worker origin, CORS scoped to the preview only):
+Routes (all under the Worker origin, CORS limited to the origins in `ALLOWED_ORIGIN`):
 
 | Method | Path | Auth | What it does |
 |---|---|---|---|
@@ -168,7 +154,7 @@ Routes (all under the Worker origin, CORS scoped to the preview only):
 | `POST` | `/api/admin/bootstrap-stripe` | admin key | From just a key: create/verify the products + prices for the presets and register the `checkout.session.completed` webhook endpoint, then persist the price ids (and webhook signing secret) in config. |
 
 - **Demo mode** is the default: with no `STRIPE_SECRET_KEY` set, gifts are recorded as `demo`, checkout is simulated, and the page shows a "demo mode" banner — so the preview is fully usable with zero keys.
-- **Stripe is only exercised for real once a key is present.** Set `wrangler secret put STRIPE_SECRET_KEY` (and optionally `STRIPE_WEBHOOK_SECRET`) in `api/`. With a real or Stripe **test** key, the same code runs live Checkout, the bootstrap route, and real webhook verification. Until a key is supplied the branch only verifies the demo path — no rework when a key is added later.
+- **Stripe is only exercised for real once a key is present.** Set `wrangler secret put STRIPE_SECRET_KEY` (and optionally `STRIPE_WEBHOOK_SECRET`) in `api-giving/`. With a real or Stripe **test** key, the same code runs live Checkout, the bootstrap route, and real webhook verification. Until a key is supplied the branch only verifies the demo path — no rework when a key is added later.
 - **Bootstrap**: `POST /api/admin/bootstrap-stripe` (admin key) does the Stripe-dashboard work over HTTPS — verifying the key, creating a product + price per configured preset, and registering a `checkout.session.completed` webhook endpoint pointed at the Worker. The resulting price ids and the webhook signing secret are persisted in config so the checkout flow can use them.
 - `ADMIN_KEY` (a Worker var) gates config writes, the gift list, and bootstrap; it is compared in constant time. Donor-facing routes never expose a donor's email; anonymous donors are masked in the public feed.
-- Deploy the preview first, then the API worker: `wrangler deploy` at the repo root (serves `frontend/dist`), and `npx wrangler deploy` in `api/`.
+- Checkout success/cancel links go back to the frontend origin that started the gift (it must be listed in `ALLOWED_ORIGIN`).
