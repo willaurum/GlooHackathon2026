@@ -57,3 +57,14 @@ Matching currently uses simple backend rules, not Gloo AI. Replacing that rankin
 Saved connections survive page refreshes and container restarts through the existing Postgres volume. Removing the volume deletes them. There is no ministry editor yet; seed content is starter data, while the database is the runtime source of truth.
 
 Run `docker compose up --build -d`, then open http://localhost:3000. For frontend development, keep the backend and database running and run `npm install` and `npm run dev` in `frontend`; Vite proxies API calls to port 8000.
+
+## Prayer map prototype
+
+A second page, "Prayer map," explores a different aesthetic and a three-stage AI pipeline. It deliberately avoids a photorealistic "God's Eye View" globe in favor of a soft, low-fidelity map (a keyless CARTO basemap, desaturated via a CSS filter scoped to the tile layer only) — reflective rather than tactical. The visual rule is **sharp facts, soft people**: real news events get exact pins on real cities; missionary presence only ever gets a soft glowing shape drawn over an entire country, with no exact point, city, or name — a privacy constraint enforced by the schema itself (`RegionOut` forbids extra fields and simply has no coordinate field to leak).
+
+- `GET /api/regions`: fictional missionary "presence" regions — country, codename, field of ministry, and testimony. No coordinates.
+- `GET /api/news`: curated, fictional regional news events with real city coordinates, seeded from `backend/app/news.json` for demo reliability rather than a live feed.
+- `GET /api/regions/{region_id}/prayer-angles`: the history of generated summaries/prayer points for a region.
+- `POST /api/regions/{region_id}/prayer-angles`: runs the three-stage pipeline — retrieval (news filtered by the region's country), synthesis (`backend/app/ai.py`, currently a stubbed templating function standing in for a future LLM call), and returns a new situational summary + specific prayer points slanted toward a fresh angle (safety, provision, gospel access, endurance, or local relationships). Powers the "Generate another angle" button.
+
+Angle history is shared workspace-wide and persists in Postgres, matching how saved connections already work in this prototype. Country borders for the glow regions are a hand-filtered, ~6KB subset of the public-domain Natural Earth 1:110m dataset, vendored at `frontend/src/data/countryBorders.json`.
