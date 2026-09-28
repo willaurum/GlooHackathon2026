@@ -24,6 +24,18 @@ type Goal = { id: string; title: string; amount: number };
 type Secrets = { STRIPE_SECRET_KEY?: string; STRIPE_WEBHOOK_SECRET?: string };
 type GivingEnv = Env & Secrets;
 
+// ALLOWED_ORIGIN is a comma-separated list of frontend origins. The first is the default.
+function allowedOrigins(env: GivingEnv): string[] {
+  return String(env.ALLOWED_ORIGIN).split(',').map((o) => o.trim()).filter(Boolean);
+}
+
+/** The request's Origin when it is allowed, otherwise the default origin. */
+function frontendOrigin(request: Request, env: GivingEnv): string {
+  const list = allowedOrigins(env);
+  const origin = request.headers.get('origin') || '';
+  return list.includes(origin) ? origin : list[0];
+}
+
 type GiftRow = {
   id: string;
   cause_id: string;
@@ -273,7 +285,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
         'INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         id, cfg.goal.id, amount, name, email, anonymous, sessionId, 'demo', created
       );
-      return json({ id, url: this.env.ALLOWED_ORIGIN + '/give?session_id=' + sessionId + '&status=demo', demo: true, mode });
+      return json({ id, url: frontendOrigin(request, this.env) + '/give?session_id=' + sessionId + '&status=demo', demo: true, mode });
     }
 
     // Live Stripe Checkout. Use a pre-made price for a known preset, otherwise
@@ -293,7 +305,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     form.set('metadata[anonymous]', String(anonymous));
     form.set('metadata[name]', name);
     form.set('metadata[email]', email);
-    const origin = this.env.ALLOWED_ORIGIN;
+    const origin = frontendOrigin(request, this.env);
     form.set('success_url', origin + '/give?session_id={CHECKOUT_SESSION_ID}&status=complete');
     form.set('cancel_url', origin + '/give?status=cancel');
 
@@ -474,9 +486,9 @@ export class GivingDO extends DurableObject<GivingEnv> {
   }
 }
 
-function withCors(response: Response, env: GivingEnv): Response {
+function withCors(response: Response, env: GivingEnv, request: Request): Response {
   const headers = new Headers(response.headers);
-  headers.set('access-control-allow-origin', env.ALLOWED_ORIGIN);
+  headers.set('access-control-allow-origin', frontendOrigin(request, env));
   headers.set('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
   headers.set('access-control-allow-headers', 'Content-Type, Authorization');
   headers.set('vary', 'Origin');
@@ -486,7 +498,7 @@ function withCors(response: Response, env: GivingEnv): Response {
 export default {
   async fetch(request: Request, env: GivingEnv): Promise<Response> {
     if (!new URL(request.url).pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
-    if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }), env);
-    return withCors(await env.GIVING.getByName('main').fetch(request), env);
+    if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }), env, request);
+    return withCors(await env.GIVING.getByName('main').fetch(request), env, request);
   },
 };

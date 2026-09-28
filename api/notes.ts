@@ -1,5 +1,8 @@
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
-type Secrets = { NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string };
+type Secrets = {
+	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
+	GLOO_API_KEY?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string;
+};
 export type AppEnv = Env & Secrets;
 
 type Statement = { sql: string; params?: (string | number | null)[] };
