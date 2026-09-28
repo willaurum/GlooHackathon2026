@@ -1,22 +1,6 @@
 import { useEffect, useState } from 'react';
-
-// The giving API is a separate Cloudflare Worker, so the page talks to its
-// public origin directly (the Worker answers the cross-origin request with CORS
-// scoped to the preview origin only).
-const API = 'https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev';
-
-async function gapi(path, options = {}) {
-  const res = await fetch(API + path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `Request failed (${res.status}). Please try again.`);
-  return body;
-}
-
-function fmt(minor, currency) {
-  const sym = currency === 'usd' ? '$' : currency === 'gbp' ? '£' : currency === 'eur' ? '€' : (currency || '').toUpperCase() + ' ';
-  const n = (minor / 100).toLocaleString(undefined, { minimumFractionDigits: Number.isInteger(minor / 100) ? 0 : 2, maximumFractionDigits: 2 });
-  return sym + n;
-}
+import { fmt, gapi } from './api.js';
+import Icon from './Icon.jsx';
 
 function timeAgo(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -50,8 +34,8 @@ function DonationFlow() {
     gapi('/api/gifts').then((d) => setFeed(d.list || [])).catch(() => {});
   }, []);
 
-  if (loadErr) return <div className="give-error panel"><h2>Give is unavailable.</h2><p>{loadErr}</p></div>;
-  if (!config) return <div className="panel"><p role="status">Loading giving options…</p></div>;
+  if (loadErr) return <div className="card give-error"><h2>Giving is unavailable right now.</h2><p>{loadErr}</p></div>;
+  if (!config) return <div className="card"><p role="status">Loading giving options…</p></div>;
 
   const presets = config.presets?.length ? config.presets : [100, 5000, 10000, 15000];
   const goal = config.goal || { title: 'Goal', amount: 0 };
@@ -78,14 +62,14 @@ function DonationFlow() {
   return (
     <section className="give">
       {demo && (
-        <div className="give-banner" role="status">
-          <span>✦</span>
+        <div className="banner demo" role="status">
+          <Icon name="sparkle" />
           <div><b>Demo mode</b> — no payment keys are configured, so gifts are simulated and no card is charged.</div>
         </div>
       )}
       <div className="give-grid">
-        <div className="give-goal">
-          <div className="eyebrow">OUR GOAL</div>
+        <div className="card give-goal">
+          <div className="eyebrow">Our goal</div>
           <h2>{goal.title}</h2>
           <div className="give-raised">
             <strong>{fmt(raised, config.currency)}</strong> raised of {fmt(goal.amount, config.currency)}
@@ -94,7 +78,7 @@ function DonationFlow() {
             <span style={{ width: pct + '%' }} />
           </div>
           <div className="give-recent">
-            <div className="eyebrow">RECENT SUPPORT</div>
+            <div className="eyebrow">Recent support</div>
             {feed.length ? (
               <ul>
                 {feed.map((g, i) => (
@@ -107,8 +91,8 @@ function DonationFlow() {
           </div>
         </div>
 
-        <form className="panel give-form" onSubmit={submit}>
-          <div className="form-title"><span className="icon color1">♥</span><div><h2>Make a gift</h2><p>Takes a couple of clicks.</p></div></div>
+        <form className="card give-form" onSubmit={submit}>
+          <div className="form-title"><span className="icon color0"><Icon name="heart" size={22} /></span><div><h2>Make a gift</h2><p>One-time gift, in a couple of taps.</p></div></div>
           <div className="field"><span>Amount <small>{config.currency.toUpperCase()}</small></span>
             <div className="preset-row">
               {presets.map((p, i) => (
@@ -133,9 +117,9 @@ function DonationFlow() {
               </label>
             </>
           )}
-          {formErr && <div className="api-message" role="alert">{formErr}</div>}
+          {formErr && <div className="banner error" role="alert">{formErr}</div>}
           <button className="primary wide continue" disabled={busy || !current}>
-            {busy ? 'Starting…' : 'Continue to Payment' + (current ? ' — ' + fmt(current, config.currency) : '')}
+            {busy ? 'Starting…' : 'Continue to payment' + (current ? ' · ' + fmt(current, config.currency) : '')}
           </button>
           <p className="disclaimer">{demo ? 'This is a demo. ' : 'Secured by Stripe. '}No card details are stored on our servers.</p>
         </form>
@@ -156,13 +140,13 @@ function Confirmation({ id, status }) {
 
   const state = status || (info?.demo ? 'demo' : info?.status);
   const title = state === 'cancel' ? 'No worries.' : state === 'pending' ? 'Checking your gift…' : 'Thank you for your gift!';
-  const again = () => { window.location.href = window.location.origin + '/give'; };
+  const again = () => { window.location.href = window.location.origin + '/#/give'; };
 
   return (
     <section className="give">
-      <div className="give-confirm" aria-live="polite">
-        <div className="give-mark">{state === 'cancel' ? '↺' : '♥'}</div>
-        <div className="eyebrow">{config ? config.churchName.toUpperCase() : 'YOUR GIFT'}</div>
+      <div className="card give-confirm" aria-live="polite">
+        <div className="give-mark"><Icon name={state === 'cancel' ? 'arrow' : 'heart'} size={28} /></div>
+        <div className="eyebrow">{config ? config.churchName : 'Your gift'}</div>
         <h2>{title}</h2>
         {info ? (
           <>
@@ -172,7 +156,7 @@ function Confirmation({ id, status }) {
             </div>
           </>
         ) : err ? <p>{err}</p> : <p role="status">Looking up your gift…</p>}
-        <button className="primary give-again" onClick={again}>Make another gift →</button>
+        <button className="primary give-again" onClick={again}>Make another gift</button>
       </div>
     </section>
   );
