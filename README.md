@@ -66,3 +66,37 @@ The "Ask Belong" widget (bottom right) talks to `POST /api/chat`, which runs a t
 - Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.
 - Nothing is sent to anyone automatically. Requests land in the `requests` table and appear on the Saved connections page; approving a connection request adds it to saved connections.
 - Every user message, tool call, and reply is written to `chat_log`. `GET /api/chat/log/{session_id}` returns one session for auditing.
+
+## Donate / Giving
+
+A church-agnostic giving area that runs on Cloudflare Workers — a pure-JS Worker routes to a single SQLite Durable Object. It is a separate worker from the Docker/FastAPI app above; the React "Give" page talks to the Worker's public origin directly.
+
+```
+api/          The giving Worker: GivingDO (SQLite Durable Object) + routes
+frontend/     The React app; the "Give" page lives in frontend/src/Give.jsx
+wrangler.jsonc  The preview static-assets Worker that serves the built frontend
+```
+
+The **Give** page is modeled on a single-fund giving flow: preset amount buttons and a free-text "enter any amount" field (both sourced from config), an anonymous-donation toggle, a goal progress bar, and a "Recent Support" feed of recent gifts. Presets, the goal title/amount, and presets all live in the Durable Object config and are changeable through the admin-key-gated route.
+
+Stripe Checkout handles one-time gifts — on "Continue to Payment" the page calls our Worker, which creates the Stripe Checkout session server-side (no direct browser→Stripe) and redirects the donor to Stripe's hosted page, so card data never reaches our servers. Gifts are recorded when the `checkout.session.completed` webhook arrives.
+
+Routes (all under the Worker origin, CORS scoped to the preview only):
+
+| Method | Path | Auth | What it does |
+|---|---|---|---|
+| `GET` | `/api/health` | — | Liveness + current mode (`demo`/`live`). |
+| `GET` | `/api/config` | — | Public config: church name, currency, presets, goal, amount raised. |
+| `GET` | `/api/gifts` | — | "Recent Support" feed — recent donor name (anonymous masked), amount, time. No emails. |
+| `PUT` / `POST` | `/api/config` | admin key | Update church name, currency, presets, and goal. |
+| `POST` | `/api/checkout` | — (rate-limited) | Start a gift; returns a Checkout URL (real or simulated). |
+| `GET` | `/api/confirm/{session_id}` | own session | Look up a gift's status after checkout. |
+| `POST` | `/api/webhooks/stripe` | Stripe signature | Records the gift on `checkout.session.completed` (idempotent on session id). |
+| `GET` | `/api/admin/gifts` | admin key | Full gift list — names and emails, admin-only. |
+| `POST` | `/api/admin/bootstrap-stripe` | admin key | From just a key: create/verify the products + prices for the presets and register the `checkout.session.completed` webhook endpoint, then persist the price ids (and webhook signing secret) in config. |
+
+- **Demo mode** is the default: with no `STRIPE_SECRET_KEY` set, gifts are recorded as `demo`, checkout is simulated, and the page shows a "demo mode" banner — so the preview is fully usable with zero keys.
+- **Stripe is only exercised for real once a key is present.** Set `wrangler secret put STRIPE_SECRET_KEY` (and optionally `STRIPE_WEBHOOK_SECRET`) in `api/`. With a real or Stripe **test** key, the same code runs live Checkout, the bootstrap route, and real webhook verification. Until a key is supplied the branch only verifies the demo path — no rework when a key is added later.
+- **Bootstrap**: `POST /api/admin/bootstrap-stripe` (admin key) does the Stripe-dashboard work over HTTPS — verifying the key, creating a product + price per configured preset, and registering a `checkout.session.completed` webhook endpoint pointed at the Worker. The resulting price ids and the webhook signing secret are persisted in config so the checkout flow can use them.
+- `ADMIN_KEY` (a Worker var) gates config writes, the gift list, and bootstrap; it is compared in constant time. Donor-facing routes never expose a donor's email; anonymous donors are masked in the public feed.
+- Deploy the preview first, then the API worker: `wrangler deploy` at the repo root (serves `frontend/dist`), and `npx wrangler deploy` in `api/`.

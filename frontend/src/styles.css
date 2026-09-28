@@ -6,3 +6,46 @@
 
 .api-message{padding:16px;border:1px solid #dfb9a2;background:#fff4ec;color:#8b4c31;border-radius:8px;margin-bottom:20px}.api-message button{margin-left:12px;padding:7px 12px;border-radius:5px;background:#fff;color:#744831}
 .chat{position:fixed;right:24px;bottom:24px;z-index:20;display:flex;flex-direction:column;align-items:flex-end;gap:12px}.chat-toggle{border-radius:24px;padding:14px 20px;font-size:12px;box-shadow:0 6px 18px #244b3830}.chat-panel{position:relative;width:360px;max-height:min(580px,calc(100vh - 110px));display:flex;flex-direction:column;background:#fff;border:1px solid #e1e7e1;border-radius:14px;box-shadow:0 12px 36px #244b3826;overflow:hidden}.chat-head{display:flex;align-items:center;gap:11px;padding:15px 45px 15px 16px;border-bottom:1px solid #edf0ec}.chat-head .icon{width:34px;height:34px;font-size:18px}.chat-head strong{font-family:'Manrope',sans-serif;font-size:14px}.chat-head small{display:block;font-size:10px;margin-top:2px}.chat-head .close{top:12px}.chat-banner{background:#fbf5e8;color:#8a6d33;font-size:11px;line-height:1.5;padding:9px 16px;border-bottom:1px solid #f0e6cf}.chat-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:9px;min-height:220px}.bubble{max-width:85%;padding:10px 13px;border-radius:12px;font-size:12.5px;line-height:1.6;white-space:pre-wrap;color:#293e35}.bubble.assistant{background:#f3f6f2;border-bottom-left-radius:4px;align-self:flex-start}.bubble.user{background:#2b6248;color:#fff;border-bottom-right-radius:4px;align-self:flex-end}.bubble.error{background:#fbeeee;color:#8b3a3a}.bubble.typing{color:#7f8c83;font-style:italic}.chat-action{display:block;margin-top:8px;padding-top:7px;border-top:1px solid #dfe7dd;font-size:11px;font-weight:600;color:#2d6349}.chat-starters{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}.chat-starters button{background:#fff;border:1px solid #dce5d8;border-radius:16px;padding:7px 11px;font-size:11px;color:#2d6349}.chat-input{display:flex;gap:8px;padding:12px 12px 6px;border-top:1px solid #edf0ec}.chat-input input{flex:1;min-width:0;border:1px solid #dce5d8;border-radius:8px;padding:10px 12px;font-size:12.5px}.chat-input input:focus{outline:2px solid #9ccbb2;border-color:transparent}.chat-input .primary{padding:10px 14px}.chat-note{display:block;font-size:10px;padding:0 14px 10px}.requests{margin-top:30px}.requests h2{margin-bottom:6px}.requests>p{margin-bottom:14px}.request{display:flex;align-items:flex-start;gap:15px;padding:18px 20px;margin-bottom:10px}.request>div{flex:1;min-width:0}.request h3{font-size:15px}.request p{font-size:12px;margin:4px 0}.request .actions{display:flex;gap:8px;flex:none}.tag{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;background:#eaf2eb;color:#2d6349;margin-right:6px}.tag.crisis{background:#fbeeee;color:#8b3a3a}.tag.done{background:#f1f2f1;color:#7f8c83}@media(max-width:600px){.chat{right:12px;bottom:12px;left:12px}.chat-panel{width:100%}.request{flex-direction:column}}
+
+.give{display:flex;flex-direction:column;gap:18px}
+.give-banner{display:flex;align-items:center;gap:11px;padding:11px 16px;background:#fbf5e8;border:1px solid #f0e6cf;color:#8a6d33;border-radius:9px;font-size:12.5px;line-height:1.5}
+.give-banner>span{font-size:18px}
+.give-banner b{font-weight:700}
+.give-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+.give-goal{display:flex;flex-direction:column;gap:10px;padding:22px;background:#fff;border:1px solid #e1e7e1;border-radius:13px}
+.give-goal h2{font-size:20px}
+.give-raised{font-size:12.5px;color:#748078}
+.give-raised strong{font-family:'Manrope',sans-serif;font-size:20px;color:#2b6248;display:block}
+.give-progress{height:10px;background:#eef2ee;border-radius:6px;overflow:hidden}
+.give-progress>span{display:block;height:100%;background:linear-gradient(90deg,#3a7d5b,#2b6248);border-radius:6px;transition:width .4s ease}
+.give-recent{margin-top:6px}
+.give-recent ul{list-style:none;margin:0;padding:0}
+.give-recent li{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eef2ee;font-size:12.5px}
+.give-recent li:last-child{border-bottom:0}
+.give-recent li span{color:#293e35;flex:1}
+.give-recent li b{color:#2b6248;font-weight:700}
+.give-recent li small{color:#93a099;font-size:10px}
+.give-recent-empty{color:#7f8c83;font-size:12.5px}
+.give-form{margin:0}
+.give-form .field{display:block;margin-top:15px}
+.give-form .field>span{display:block;font-size:12px;font-weight:600;color:#41504a;margin-bottom:7px}
+.give-form .field>small{font-weight:400;color:#93a099;margin-left:6px}
+.give-form .field>input,.give-form .field input{width:100%;border:1px solid #dce5d8;border-radius:8px;padding:11px 12px;font-size:13px;color:#293e35;background:#fff}
+.give-form .field input:focus{outline:2px solid #9ccbb2;border-color:transparent}
+.preset-row{display:flex;flex-wrap:wrap;gap:8px}
+.preset-row button{background:#fff;border:1px solid #dce5d8;border-radius:8px;padding:11px 0;flex:1;min-width:64px;font-size:13px;color:#2d6349}
+.preset-row button.chosen{background:#2b6248;color:#fff;border-color:#2b6248}
+.give-form .field>.preset-row+input{margin-top:9px}
+.give-anon{display:flex;align-items:center;gap:9px;margin-top:16px;font-size:13px;color:#41504a}
+.give-anon input{width:17px;height:17px;accent-color:#2b6248}
+.give-anon span{font-weight:500}
+.continue{margin-top:18px}
+.give-error{color:#8b4c31}
+.give-confirm{max-width:540px;margin:0 auto;background:#fff;border:1px solid #e1e7e1;border-radius:14px;padding:34px 32px;text-align:center;box-shadow:0 12px 36px #244b3814}
+.give-mark{display:grid;place-items:center;width:58px;height:58px;margin:0 auto 16px;border-radius:50%;background:#eef4ee;color:#2b6248;font-size:28px}
+.give-confirm h2{font-size:22px}
+.give-status{margin-top:14px;padding:11px 15px;border-radius:9px;font-size:13px;background:#f3f6f2;color:#2d6349;display:inline-block}
+.give-status.demo{background:#fbf5e8;color:#8a6d33}
+.give-status.pending{background:#eef2fb;color:#3154a3}
+.give-again{margin-top:22px}
+@media(max-width:900px){.give-grid{grid-template-columns:1fr;gap:16px}}
