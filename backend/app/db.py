@@ -101,11 +101,41 @@ def initialize():
             embedding TEXT NOT NULL,
             PRIMARY KEY (note_id, idx)
         )""", ()),
+        # Church info, FAQs, events and small groups the chat agent can look up.
+        ("""CREATE TABLE IF NOT EXISTS church_content (
+            kind TEXT NOT NULL,
+            id INTEGER NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (kind, id)
+        )""", ()),
+        # Requests filed by the chat agent. Nothing happens until staff approve them.
+        (f"""CREATE TABLE IF NOT EXISTS requests (
+            request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            ministry_id INTEGER REFERENCES ministries(id),
+            name TEXT NOT NULL,
+            contact TEXT NOT NULL DEFAULT '',
+            details TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT {NOW}
+        )""", ()),
+        # Audit log of every chat turn and tool call.
+        (f"""CREATE TABLE IF NOT EXISTS chat_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            data TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT {NOW}
+        )""", ()),
         ("INSERT OR IGNORE INTO config VALUES ('church', ?)", (json.dumps(DEFAULT_CONFIG),)),
         # A restart interrupts any job that was running; let it be retried.
         ("UPDATE notes SET status = 'failed', error = 'interrupted' WHERE status = 'processing'", ()),
     ]
     statements += [("INSERT OR IGNORE INTO ministries VALUES (?, ?)", (m['id'], json.dumps(m))) for m in ministries]
+    church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
+    statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
+    statements += [("INSERT OR IGNORE INTO church_content VALUES (?, ?, ?)", (kind, item['id'], json.dumps(item)))
+                   for kind in ('faqs', 'events', 'groups') for item in church[kind]]
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
@@ -119,6 +149,53 @@ def list_ministries():
 def get_ministry(ministry_id):
     row = one("SELECT data FROM ministries WHERE id = ?", (ministry_id,))
     return _data(row) if row else None
+
+
+def get_church_info():
+    return _data(one("SELECT data FROM church_content WHERE kind = 'info'"))
+
+
+def list_content(kind):
+    return [_data(row) for row in query("SELECT data FROM church_content WHERE kind = ? ORDER BY id", (kind,))]
+
+
+REQUEST_COLUMNS = "request_id, kind, ministry_id, name, contact, details, status, created_at"
+
+
+def create_request(kind, name, contact='', details='', ministry_id=None):
+    return one(f"""INSERT INTO requests (kind, ministry_id, name, contact, details) VALUES (?, ?, ?, ?, ?)
+        RETURNING {REQUEST_COLUMNS}""", (kind, ministry_id, name, contact, details))
+
+
+def find_pending_request(kind, ministry_id, name):
+    return one("""SELECT request_id FROM requests WHERE kind = ? AND ministry_id IS ?
+        AND lower(name) = lower(?) AND status = 'pending'""", (kind, ministry_id, name))
+
+
+def list_requests():
+    return query("""SELECT r.*, json_extract(m.data, '$.name') AS ministry_name FROM requests r
+        LEFT JOIN ministries m ON m.id = r.ministry_id ORDER BY r.request_id DESC""")
+
+
+def set_request_status(request_id, status):
+    """Approving a connection request also adds it to saved connections, in the same transaction."""
+    updated, _ = run(
+        (f"UPDATE requests SET status = ? WHERE request_id = ? RETURNING {REQUEST_COLUMNS}", (status, request_id)),
+        ("""INSERT INTO connections (ministry_id, member)
+            SELECT ministry_id, name FROM requests
+            WHERE request_id = ? AND status = 'approved' AND kind = 'connection' AND ministry_id IS NOT NULL
+            ON CONFLICT (ministry_id, member) DO NOTHING""", (request_id,)),
+    )
+    return updated['rows'][0] if updated['rows'] else None
+
+
+def log_chat(session_id, kind, data):
+    query("INSERT INTO chat_log (session_id, kind, data) VALUES (?, ?, ?)", (session_id, kind, json.dumps(data)))
+
+
+def get_chat_log(session_id):
+    rows = query("SELECT kind, data, created_at FROM chat_log WHERE session_id = ? ORDER BY id", (session_id,))
+    return [{**row, 'data': _data(row)} for row in rows]
 
 
 def list_connections():
