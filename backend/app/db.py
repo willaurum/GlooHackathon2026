@@ -34,9 +34,29 @@ def initialize():
             member TEXT NOT NULL,
             UNIQUE (ministry_id, member)
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS events (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            category TEXT NOT NULL,
+            date DATE NOT NULL,
+            time TEXT NOT NULL,
+            location TEXT NOT NULL,
+            ministry_name TEXT,
+            description TEXT NOT NULL,
+            ai_summary TEXT
+        )""")
         for ministry in json.loads(Path(__file__).with_name('ministries.json').read_text(encoding='utf-8')):
             conn.execute("INSERT INTO ministries VALUES (%s, %s) ON CONFLICT DO NOTHING",
                          (ministry['id'], Jsonb(ministry)))
+        events_file = Path(__file__).with_name('events.json')
+        if events_file.exists():
+            for event in json.loads(events_file.read_text(encoding='utf-8')):
+                conn.execute("""INSERT INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING""",
+                    (event['id'], event['title'], event['category'], event['date'], event['time'],
+                     event['location'], event.get('ministry_name'), event['description'], event.get('ai_summary')))
+            conn.execute("SELECT setval(pg_get_serial_sequence('events', 'id'), coalesce(max(id), 1)) FROM events")
 
 
 def list_ministries():
@@ -94,3 +114,85 @@ def delete_item(item_id: int) -> bool:
     with pool.connection() as conn:
         cur = conn.execute("DELETE FROM items WHERE id = %s", (item_id,))
         return cur.rowcount > 0
+
+
+def list_events():
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT id, title, category, date, time, location, ministry_name, description, ai_summary FROM events ORDER BY date ASC, time ASC"
+        ).fetchall()
+        return [
+            {
+                **row,
+                "date": row["date"].isoformat()
+                if hasattr(row["date"], "isoformat")
+                else str(row["date"]),
+            }
+            for row in rows
+        ]
+
+
+def get_event(event_id: int):
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT id, title, category, date, time, location, ministry_name, description, ai_summary FROM events WHERE id = %s",
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            **row,
+            "date": row["date"].isoformat()
+            if hasattr(row["date"], "isoformat")
+            else str(row["date"]),
+        }
+
+
+def update_event_summary(event_id: int, ai_summary: str):
+    with pool.connection() as conn:
+        row = conn.execute(
+            "UPDATE events SET ai_summary = %s WHERE id = %s RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary",
+            (ai_summary, event_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            **row,
+            "date": row["date"].isoformat()
+            if hasattr(row["date"], "isoformat")
+            else str(row["date"]),
+        }
+
+
+def create_event(
+    title: str,
+    category: str,
+    date: str,
+    time: str,
+    location: str,
+    description: str,
+    ministry_name: str = None,
+    ai_summary: str = None,
+):
+    with pool.connection() as conn:
+        row = conn.execute(
+            """INSERT INTO events (title, category, date, time, location, ministry_name, description, ai_summary)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
+            (
+                title,
+                category,
+                date,
+                time,
+                location,
+                ministry_name,
+                description,
+                ai_summary,
+            ),
+        ).fetchone()
+        return {
+            **row,
+            "date": row["date"].isoformat()
+            if hasattr(row["date"], "isoformat")
+            else str(row["date"]),
+        }
