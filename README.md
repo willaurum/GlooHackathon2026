@@ -57,3 +57,64 @@ Matching currently uses simple backend rules, not Gloo AI. Replacing that rankin
 Saved connections survive page refreshes and container restarts through the existing Postgres volume. Removing the volume deletes them. There is no ministry editor yet; seed content is starter data, while the database is the runtime source of truth.
 
 Run `docker compose up --build -d`, then open http://localhost:3000. For frontend development, keep the backend and database running and run `npm install` and `npm run dev` in `frontend`; Vite proxies API calls to port 8000.
+
+## Pastor Notes API (Cloudflare)
+
+Turn a sermon video (YouTube link or uploaded file) into a stored transcript, then ask
+questions that are answered only from what was said, with timestamped citations.
+
+```
+api/        Worker: auth, uploads to R2, grounded Q&A, and the ChurchDB (SQLite Durable Object)
+backend/    FastAPI container: yt-dlp + ffmpeg ingest, Workers AI transcription, the other routes
+frontend/   Preview site, with a Pastor Notes page (deployed from the root wrangler.jsonc)
+```
+
+Models (Workers AI, no key needed): `@cf/openai/whisper-large-v3-turbo` (speech to text),
+`@cf/baai/bge-base-en-v1.5` (embeddings), and optionally `@cf/meta/llama-3.1-8b-instruct-fp8`
+for written answers.
+
+### Endpoints
+
+Every `/api/*` route except `/api/health` needs an `X-API-Key` header.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/health` | No key needed |
+| GET | `/api/church` | This deploy's church config |
+| PUT | `/api/admin/config` | Needs `X-Admin-Key` too. Fields: `name`, `timezone`, `default_language` |
+| POST | `/api/notes` | `{"title", "youtube_url"}` → 202 |
+| POST | `/api/notes/upload?title=` | Raw `video/*` or `audio/*` body, up to 95 MB → 202 |
+| GET | `/api/notes`, `/api/notes/:id` | List, or one note's status |
+| GET | `/api/notes/:id/transcript`, `/api/notes/:id/segments` | Once the note is `ready` |
+| POST | `/api/notes/:id/ask` | `{"question"}` → `{found, answer, citations, engine}` |
+| POST | `/api/notes/:id/retry` | Failed notes only |
+| DELETE | `/api/notes/:id` | Also deletes the uploaded file |
+
+### How answers stay grounded
+
+A transcript chunk supports a question only if it is close in meaning **and** shares a topic
+word with the question. With nothing supporting it, the answer is "Not found in this note."
+By default (`NOTES_ANSWER_ENGINE=extractive`) the answer is the matching transcript sentences,
+word for word, each with its timestamp. With `workers-ai` (or a `GEMINI_API_KEY` secret) a model writes the answer, and it is only
+used if every quote it cites is really in the transcript and its topic words come from the cited
+passages; otherwise (or if the model finds nothing) the verbatim answer is returned.
+
+### Deploy (one church per deploy)
+
+Church details live in the database, not the code; keys are Workers secrets.
+
+```bash
+cd api && npm install
+npx wrangler r2 bucket create gloo-hackathon2026-pastor-notes-media
+npx wrangler deploy
+npx wrangler secret put NOTES_API_KEY       # required; the API returns 503 until it is set
+npx wrangler secret put NOTES_ADMIN_KEY     # optional; enables PUT /api/admin/config
+npx wrangler secret put YTDLP_COOKIES       # optional; YouTube cookies.txt if YouTube blocks downloads
+cd ../frontend && VITE_API_BASE=https://<api-worker-url> npm run build && cd .. && npx --prefix api wrangler deploy
+```
+
+YouTube sometimes blocks downloads from cloud servers; the note then fails with
+`youtube_blocked`. Upload the file instead, or set `YTDLP_COOKIES`.
+
+For local development of this branch use `cd api && npx wrangler dev`; `docker compose`
+still expects Postgres.

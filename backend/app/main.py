@@ -1,4 +1,4 @@
-"""Belong prototype API with persistent ministries and connections."""
+"""Belong prototype API with persistent ministries and connections, plus Pastor Notes."""
 
 from contextlib import asynccontextmanager
 
@@ -6,21 +6,21 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
-from . import db
+from . import db, pastor_notes
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.pool.open()
-    db.pool.wait(timeout=30)
+    db.initialize()
+    pastor_notes.start_worker()
     try:
-        db.initialize()
         yield
     finally:
-        db.pool.close()
+        db.close()
 
 
 app = FastAPI(title="Belong API", lifespan=lifespan)
+app.include_router(pastor_notes.router)
 
 
 class MatchRequest(BaseModel):
