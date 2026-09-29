@@ -6,9 +6,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime
 from typing import Literal
 
-from . import ai_client, chat, db, matching, pastor_notes
+from . import ai, ai_client, chat, db, matching, pastor_notes
 
 log = logging.getLogger(__name__)
 
@@ -241,6 +242,74 @@ def met_visit(visit_id: int):
     if visit is None:
         raise HTTPException(status_code=409, detail='This guest cannot be marked met right now')
     return visit
+
+
+# --- Prayer map: regions, news, and prayer angles ---
+
+
+class RegionOut(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: int
+    country: str
+    country_code: str
+    codename: str
+    field_of_ministry: str
+    testimony: str
+    since: int
+    team_size: int
+
+
+class NewsEventOut(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: int
+    country: str
+    country_code: str
+    city: str
+    lat: float
+    lng: float
+    headline: str
+    source: str
+    date: str
+    summary: str
+
+
+class PrayerAngleOut(BaseModel):
+    angle_id: int
+    region_id: int
+    angle: str
+    summary: str
+    prayer_points: list[str]
+    source_news_ids: list[int]
+    created_at: datetime
+
+
+@app.get('/api/regions', response_model=list[RegionOut])
+def regions():
+    return db.list_regions()
+
+
+@app.get('/api/news', response_model=list[NewsEventOut])
+def news():
+    return db.list_news()
+
+
+@app.get('/api/regions/{region_id}/prayer-angles', response_model=list[PrayerAngleOut])
+def prayer_angle_history(region_id: int):
+    if db.get_region(region_id) is None:
+        raise HTTPException(status_code=404, detail='Region not found')
+    return db.list_angles(region_id)
+
+
+@app.post('/api/regions/{region_id}/prayer-angles', status_code=201, response_model=PrayerAngleOut)
+def generate_prayer_angle(region_id: int):
+    region = db.get_region(region_id)
+    if region is None:
+        raise HTTPException(status_code=404, detail='Region not found')
+    news_items = db.news_for_country(region['country_code'])
+    angle = ai.next_angle(db.seen_angles(region_id))
+    result = ai.synthesize(region, news_items, angle)
+    return db.save_angle(region_id, angle, result['summary'], result['prayer_points'],
+                          [n['id'] for n in news_items])
 
 
 # --- Calendar events + AI summaries (ported to the Durable-Object stack) ---

@@ -8,6 +8,7 @@ export const SECTIONS = [
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
   { route: 'give', label: 'Give', icon: 'heart' },
   { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
+  { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
 ];
 
 const sectionOf = route => route.split('/')[0];

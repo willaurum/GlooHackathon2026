@@ -124,6 +124,18 @@ def initialize():
             data TEXT NOT NULL,
             PRIMARY KEY (kind, id)
         )""", ()),
+        # Prayer map: missionary presence regions and curated regional news.
+        ("CREATE TABLE IF NOT EXISTS regions (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
+        ("CREATE TABLE IF NOT EXISTS news_events (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
+        ("""CREATE TABLE IF NOT EXISTS prayer_angles (
+            angle_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            region_id INTEGER NOT NULL REFERENCES regions(id),
+            angle TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            prayer_points TEXT NOT NULL,
+            source_news_ids TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        )""", ()),
         # Requests filed by the chat agent. Nothing happens until staff approve them.
         (f"""CREATE TABLE IF NOT EXISTS requests (
             request_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +171,15 @@ def initialize():
     statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
     statements += [("INSERT OR IGNORE INTO church_content VALUES (?, ?, ?)", (kind, item['id'], json.dumps(item)))
                    for kind in ('faqs', 'events', 'groups') for item in church[kind]]
+    # Prayer map seed data
+    regions_file = Path(__file__).with_name('regions.json')
+    if regions_file.exists():
+        for region in json.loads(regions_file.read_text(encoding='utf-8')):
+            statements.append(("INSERT OR IGNORE INTO regions VALUES (?, ?)", (region['id'], json.dumps(region))))
+    news_file = Path(__file__).with_name('news.json')
+    if news_file.exists():
+        for item in json.loads(news_file.read_text(encoding='utf-8')):
+            statements.append(("INSERT OR IGNORE INTO news_events VALUES (?, ?)", (item['id'], json.dumps(item))))
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
@@ -426,3 +447,44 @@ def mark_met(visit_id):
     return one(f"""UPDATE visits SET status = 'met'
         WHERE visit_id = ? AND status IN ('arrived', 'on_the_way')
         RETURNING {STAFF_VISIT_COLUMNS}""", (visit_id,))
+
+
+# --- Prayer map: regions, news, and prayer angles ---
+
+
+def list_regions():
+    return [_data(row) for row in query("SELECT data FROM regions ORDER BY id")]
+
+
+def get_region(region_id):
+    row = one("SELECT data FROM regions WHERE id = ?", (region_id,))
+    return _data(row) if row else None
+
+
+def list_news():
+    return [_data(row) for row in query("SELECT data FROM news_events ORDER BY id")]
+
+
+def news_for_country(country_code):
+    return [_data(row) for row in query("SELECT data FROM news_events WHERE json_extract(data, '$.country_code') = ? ORDER BY id", (country_code,))]
+
+
+def seen_angles(region_id):
+    rows = query("SELECT DISTINCT angle FROM prayer_angles WHERE region_id = ?", (region_id,))
+    return [row['angle'] for row in rows]
+
+
+def list_angles(region_id):
+    rows = query("SELECT angle_id, region_id, angle, summary, prayer_points, source_news_ids, created_at FROM prayer_angles WHERE region_id = ? ORDER BY created_at", (region_id,))
+    return [{**r, 'prayer_points': json.loads(r['prayer_points']), 'source_news_ids': json.loads(r['source_news_ids'])} for r in rows]
+
+
+def save_angle(region_id, angle, summary, prayer_points, source_news_ids):
+    row = one(f"""INSERT INTO prayer_angles (region_id, angle, summary, prayer_points, source_news_ids)
+        VALUES (?, ?, ?, ?, ?)
+        RETURNING angle_id, region_id, angle, summary, prayer_points, source_news_ids, created_at""",
+              (region_id, angle, summary, json.dumps(prayer_points), json.dumps(source_news_ids)))
+    if row:
+        row['prayer_points'] = json.loads(row['prayer_points'])
+        row['source_news_ids'] = json.loads(row['source_news_ids'])
+    return row

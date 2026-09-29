@@ -8,8 +8,9 @@ import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
+import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
@@ -69,6 +70,10 @@ export default function App() {
           <PageHeader eyebrow="Guests" title={route === 'guests/plan' ? 'Plan your visit.' : 'Welcome team.'} text={route === 'guests/plan' ? 'Everything a first-time guest needs, and a way to let us know they’re coming.' : 'See who has arrived and get them to the right person.'} />
           {route === 'guests/plan' && <VisitPage />}
           {route === 'guests/welcome' && <WelcomeTeam />}
+        </div>}
+        {section === 'prayer' && <div className="page">
+          <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
+          <PrayerMap />
         </div>}
         <footer className="site-footer">
           <b>belong.</b>
