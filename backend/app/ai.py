@@ -41,11 +41,7 @@ def synthesize(region: dict, news_items: list[dict], angle: str) -> dict:
     headline = news_items[0]["headline"] if news_items else None
     testimony_snippet = textwrap.shorten(region["testimony"], width=220, placeholder="...")
 
-    summary_parts = [
-        f"{region['codename']} has been serving in {region['country']} since {region['since']}, "
-        f"focused on {region['field_of_ministry'].lower()}.",
-        testimony_snippet,
-    ]
+    summary_parts = [testimony_snippet]
     if headline:
         summary_parts.append(f"Recent regional news adds context: \"{headline}\".")
     summary_parts.append(f"This angle looks specifically at {frame}.")
@@ -59,7 +55,6 @@ def synthesize(region: dict, news_items: list[dict], angle: str) -> dict:
 def _prayer_points_for_angle(angle: str, region: dict, news_items: list[dict]) -> list[str]:
     country = region["country"]
     codename = region["codename"]
-    headlines = [n["headline"] for n in news_items[:2]]
 
     if angle == "safety":
         points = [
@@ -87,8 +82,6 @@ def _prayer_points_for_angle(angle: str, region: dict, news_items: list[dict]) -
             f"Pray for the emerging local leaders {codename} has mentioned, that they would be equipped to carry this work forward.",
         ]
 
-    if headlines:
-        points.append(
-            "Pray in light of what's happening regionally right now: " + "; ".join(headlines) + "."
-        )
+    if news_items:
+        points.append(f"Pray in light of the recent news coming out of {country}.")
     return points

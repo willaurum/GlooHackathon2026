@@ -8,11 +8,24 @@
 
 .map-legend{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:11px;color:#5c6f61;margin-bottom:14px}.legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}.legend-dot.news-dot{background:#c0563c;border:2px solid #fff;box-shadow:0 0 0 1px #c0563c88}.legend-dot.region-dot{background:#5f8f6b;filter:blur(1px)}
 .map-shell{height:480px;border-radius:12px;overflow:hidden;border:1px solid #e2e7e2;position:relative}.map-shell .leaflet-tile-pane{filter:saturate(.55) sepia(.12) hue-rotate(-6deg) brightness(1.03)}
-.news-pin{background:#c0563c;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px #00000040}
+.news-pin{background:#c0563c;border:1.5px solid #fff;border-radius:50%;box-shadow:0 1px 3px #00000040}
 @keyframes pulseGlow{0%,100%{opacity:.4}50%{opacity:.72}}
-.region-glow{animation:pulseGlow 4s ease-in-out infinite;filter:blur(5px)}
+.region-glow{animation:pulseGlow 4s ease-in-out infinite;filter:blur(5px);cursor:pointer;transition:fill-opacity .2s}.region-glow:hover{fill-opacity:.65}.region-glow.selected{animation:none;filter:none}
+@keyframes beaconPulse{0%{transform:scale(.6);opacity:.8}100%{transform:scale(2.8);opacity:0}}
+.beacon{cursor:pointer}.beacon>span{position:absolute}
+.beacon-ring{inset:0;border-radius:50%;background:#3f7a55;animation:beaconPulse 2.4s ease-out infinite}.beacon-ring.delay{animation-delay:1.2s}
+.beacon-core{inset:3px;border-radius:50%;background:#2d6349;border:2px solid #fff;box-shadow:0 1px 4px #00000040;transition:transform .15s}
+.beacon:hover .beacon-core,.beacon.selected .beacon-core{transform:scale(1.25)}
+.beacon-label{left:24px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#fff;color:#2d6349;font:700 11px 'DM Sans',sans-serif;padding:3px 8px;border-radius:12px;box-shadow:0 1px 4px #00000026}
+.beacon.selected .beacon-label{background:#2d6349;color:#fff}.beacon.selected .beacon-ring{background:#2d6349}
 .prayer-card{position:relative;padding:28px;margin-top:20px}.prayer-card h2{margin-top:12px}
 .angle-pill{display:inline-block;font-size:9px;letter-spacing:.6px;text-transform:uppercase;background:#eaf2eb;color:#2d6349;border-radius:20px;padding:5px 11px;margin-top:14px;font-weight:700}
-.situational-summary{margin-top:12px}
+.source-columns{display:grid;grid-template-columns:1fr 1fr;margin-top:18px;border-top:1px solid #e5eae6;border-bottom:1px solid #e5eae6}
+.source-block{padding:16px 20px 18px 0}.source-block+.source-block{padding:16px 0 18px 20px;border-left:1px solid #e5eae6}.source-block p{font-size:12px}
+.source-label{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;color:#7c9082;margin-bottom:8px}
+.source-block article+article{margin-top:10px}.source-block b{display:block;font-size:12px;color:#45584e}.source-block small{font-size:10px}
+.prayer-points{padding-top:16px}.prayer-points>b{display:block;font-size:12px;color:#45584e}.prayer-points ul{margin:10px 0 0;padding-left:18px;line-height:1.75;color:#5c6f61;font-size:12px}.prayer-points .primary{margin-top:16px}
+.prayer-points .angle-pill{margin:0 0 0 10px;vertical-align:middle}
+@media(max-width:600px){.source-columns{grid-template-columns:1fr}.source-block,.source-block+.source-block{padding:14px 0;border-left:0}.source-block+.source-block{border-top:1px solid #e5eae6}}
 @media(max-width:850px){.map-shell{height:380px}}
 @media(max-width:600px){.map-shell{height:300px}.map-legend{gap:6px 16px}}

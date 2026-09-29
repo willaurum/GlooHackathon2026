@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, Marker, Tooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
 import countryBorders from './data/countryBorders.json';
 
-const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [12, 12], iconAnchor: [6, 6] });
+const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [9, 9], iconAnchor: [4.5, 4.5] });
+
+function beaconIcon(country, selected) {
+  return L.divIcon({
+    className: 'beacon' + (selected ? ' selected' : ''),
+    html: `<span class="beacon-ring"></span><span class="beacon-ring delay"></span><span class="beacon-core"></span><span class="beacon-label">${country}</span>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
+}
 
 function FitToBorders({ features }) {
   const map = useMap();
@@ -45,11 +54,32 @@ export default function PrayerMap() {
   }, [selected]);
 
   const regionByCode = useMemo(() => Object.fromEntries(regions.map(r => [r.country_code, r])), [regions]);
-  const newsById = useMemo(() => Object.fromEntries(news.map(n => [n.id, n])), [news]);
+  const regionNews = useMemo(
+    () => (selected ? news.filter(n => n.country_code === selected.country_code) : []),
+    [news, selected]
+  );
   const borderFeatures = useMemo(
     () => countryBorders.features.filter(f => regionByCode[f.properties.country_code]),
     [regionByCode]
   );
+
+  const selectedCode = selected?.country_code;
+  const beacons = useMemo(
+    () => borderFeatures.map(f => {
+      const region = regionByCode[f.properties.country_code];
+      return {
+        region,
+        center: L.geoJSON(f).getBounds().getCenter(),
+        icon: beaconIcon(region.country, region.country_code === selectedCode),
+      };
+    }),
+    [borderFeatures, regionByCode, selectedCode]
+  );
+
+  function selectCountry(code) {
+    const region = regionByCode[code];
+    if (region) selectRegion(region);
+  }
 
   async function selectRegion(region) {
     setSelected(region);
@@ -82,59 +112,67 @@ export default function PrayerMap() {
     {error && <div className="api-message" role="alert">{error}</div>}
     {loading && <p role="status">Loading prayer map data…</p>}
     <div className="map-legend">
-      <span><span className="legend-dot news-dot" /> Real news — exact city</span>
-      <span><span className="legend-dot region-dot" /> Missionary presence — whole country only, never an exact point</span>
+      <span><span className="legend-dot region-dot" /> Missionary testimony · click to open</span>
+      <span><span className="legend-dot news-dot" /> News story</span>
     </div>
     <div className="map-shell">
       <MapContainer center={[20, 40]} zoom={2} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          attribution="Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors"
+          maxNativeZoom={16}
         />
         <FitToBorders features={borderFeatures} />
         <GeoJSON
-          key={borderFeatures.length}
+          key={`${borderFeatures.length}-${selectedCode}`}
           data={{ type: 'FeatureCollection', features: borderFeatures }}
-          style={() => ({ className: 'region-glow', color: 'transparent', weight: 0, fillColor: '#5f8f6b', fillOpacity: 0.45 })}
+          style={feature => feature.properties.country_code === selectedCode
+            ? { className: 'region-glow selected', color: '#2d6349', weight: 1.5, fillColor: '#5f8f6b', fillOpacity: 0.6 }
+            : { className: 'region-glow', color: 'transparent', weight: 0, fillColor: '#5f8f6b', fillOpacity: 0.4 }}
           onEachFeature={(feature, layer) => {
-            layer.on('click', () => {
-              const region = regionByCode[feature.properties.country_code];
-              if (region) selectRegion(region);
-            });
+            layer.on('click', () => selectCountry(feature.properties.country_code));
           }}
         />
         {news.map(n => (
-          <Marker key={n.id} position={[n.lat, n.lng]} icon={newsIcon}>
-            <Popup>
-              <strong>{n.headline}</strong><br />
-              {n.city}, {n.country} · {n.source} · {n.date}
-              <p>{n.summary}</p>
-            </Popup>
+          <Marker key={n.id} position={[n.lat, n.lng]} icon={newsIcon}
+            eventHandlers={{ click: () => selectCountry(n.country_code) }}>
+            <Tooltip direction="top" offset={[0, -6]}>{n.headline}</Tooltip>
           </Marker>
+        ))}
+        {beacons.map(({ region, center, icon }) => (
+          <Marker key={region.id} position={center} zIndexOffset={1000} icon={icon}
+            eventHandlers={{ click: () => selectRegion(region) }}
+          />
         ))}
       </MapContainer>
     </div>
     <div id="prayer-detail">
       {selected && <section className="panel prayer-card" aria-live="polite">
         <button className="close" aria-label="Close region details" onClick={() => { setSelected(null); setHistory([]); }}>×</button>
-        <div className="eyebrow">{selected.country.toUpperCase()} · SOFT PRESENCE, NOT AN EXACT LOCATION</div>
+        <div className="eyebrow">{selected.country.toUpperCase()}</div>
         <h2>{selected.codename}</h2>
-        <p><b>{selected.field_of_ministry}</b> · serving since {selected.since} · team of {selected.team_size}</p>
-        <p>{selected.testimony}</p>
-        {latest && <>
-          <span className="angle-pill">Angle: {latest.angle}</span>
-          <p className="situational-summary">{latest.summary}</p>
-          <div className="reason">
-            <b>Prayer points</b>
-            <ul>{latest.prayer_points.map((point, i) => <li key={i}>{point}</li>)}</ul>
+        <div className="source-columns">
+          <div className="source-block">
+            <div className="source-label">From the field</div>
+            <p>{selected.testimony}</p>
           </div>
-          {latest.source_news_ids.length > 0 && <small className="requirement">
-            Sourced from: {latest.source_news_ids.map(id => newsById[id]?.headline).filter(Boolean).join(' · ')}
-          </small>}
-        </>}
-        <button className="primary" disabled={busy} onClick={generateAngle}>
-          {busy ? 'Working…' : latest ? 'Generate another angle →' : 'Reveal this region’s story →'}
-        </button>
+          <div className="source-block">
+            <div className="source-label">In the news</div>
+            {regionNews.length > 0
+              ? regionNews.map(n => <article key={n.id}>
+                  <b>{n.headline}</b>
+                  <small>{n.city} · {n.source} · {n.date}</small>
+                </article>)
+              : <p>No recent news from {selected.country}.</p>}
+          </div>
+        </div>
+        <div className="prayer-points">
+          <b>Prayer points{latest && <span className="angle-pill">{latest.angle}</span>}</b>
+          {latest && <ul>{latest.prayer_points.map((point, i) => <li key={i}>{point}</li>)}</ul>}
+          <button className="primary" disabled={busy} onClick={generateAngle}>
+            {busy ? 'Loading…' : latest ? 'Pray about something else' : 'Show prayer points'}
+          </button>
+        </div>
       </section>}
     </div>
   </div>;
