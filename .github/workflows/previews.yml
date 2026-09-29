@@ -99,6 +99,8 @@ jobs:
           WORKER="${{ steps.plan.outputs.worker }}"
           API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER"
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API")
+          # An existing Worker answers 204 (no content) here, not 200.
+          [ "$CODE" = "204" ] && CODE=200
           if [ "$CODE" = "200" ] && [ "$FORCE" != "true" ]; then
             echo "Preview already exists: ${{ steps.plan.outputs.url }} (run the workflow by hand with force to rebuild it)."
             echo "### Preview already exists" >> "$GITHUB_STEP_SUMMARY"
@@ -161,7 +163,12 @@ jobs:
           echo "Frontend: HTTP $CODE"
           [ "$CODE" = "200" ] || { echo "::error::$URL did not answer 200"; exit 1; }
           if [ "${{ steps.plan.outputs.kind }}" = "stub" ]; then
-            curl -fsS "$URL/api/health" | grep -q '"ok":true' || { echo "::error::$URL/api/health did not answer ok"; exit 1; }
+            # A new Worker can serve its files a few seconds before its code.
+            for i in $(seq 1 12); do
+              curl -fsS "$URL/api/health" 2>/dev/null | grep -q '"ok":true' && break
+              [ "$i" = 12 ] && { echo "::error::$URL/api/health did not answer ok"; exit 1; }
+              sleep 5
+            done
             curl -fsS "$URL/api/ministries" -o /dev/null || { echo "::error::$URL/api/ministries failed"; exit 1; }
           fi
           echo "::notice::Preview for ${{ steps.plan.outputs.branch }}: $URL"
