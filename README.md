@@ -83,12 +83,12 @@ The Serve and chat routes (`/api/ministries`, `/api/matches`, `/api/connections`
 Six fictional ministries are seeded from `backend/app/ministries.json`, and church info, FAQs, events and groups from `backend/app/church.json`. Seeding never overwrites existing rows.
 
 - `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
-- `POST /api/matches`: member name, skills, serving style, and availability; returns the top three open ministries.
+- `POST /api/matches`: member name, skills, serving style, and availability, plus an optional `description` in their own words. With an AI provider configured and a description given, AI returns up to three open ministries with reasons and details to confirm (`engine: "ai"`); otherwise, or if the AI fails, simple rules rank the top three (`engine: "rules"`).
 - `GET /api/connections`, `POST /api/connections`, `DELETE /api/connections/{connection_id}`: saved connections, deduplicated by ministry and member name.
 - `GET /api/requests`, `PATCH /api/requests/{request_id}`: requests filed by the chat; approving a connection request also saves the connection.
 - `GET /api/info`: public church details (address, service times) for the home page.
 
-Matching uses simple rules, not AI. Sample contacts use example.com and no introductions are sent. This is a single shared demo workspace without login.
+Without an AI provider, matching uses simple rules. Sample contacts use example.com and no introductions are sent. This is a single shared demo workspace without login.
 
 ### Website chat (Ask Belong)
 
@@ -104,6 +104,18 @@ Demo connection requests start with “connect me” or “sign me up”. Supply
 The widget keeps the visible transcript but sends only recent context, so long chats remain within the API limits. Demo mode is keyword-based and does not provide general conversational understanding.
 
 Chat regression checks: `python -m unittest discover -s backend/tests` (backend dependencies required), and `node --test frontend/src/chatHistory.test.js`.
+
+### HPC Ollama for local development
+
+With the Liberty student VPN connected, keep this SSH tunnel open (replace `YOUR_USERNAME`):
+
+```powershell
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:11434:arrietty.hpc.lan:11434 YOUR_USERNAME@totoro.university.liberty.edu
+```
+
+In your ignored `.env`, set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` for Docker Desktop. No Ollama API key is needed. Use `http://127.0.0.1:11434/v1` instead when running the backend directly on Windows. Rebuild with `docker compose up --build -d`. Both Find a place and the chat use the configured provider. The VPN and SSH tunnel must remain connected; this local tunnel does not configure access for Cloudflare deployments.
+
+Verify the tunnel with `Invoke-RestMethod http://127.0.0.1:11434/api/tags`. Verify the backend selection at `/api/chat/status`; configuration status alone does not confirm model health.
 
 ## Sermon Notes
 
