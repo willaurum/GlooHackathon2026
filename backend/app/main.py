@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
-from . import chat, db, matching
+from . import chat, db, recommendations
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +28,7 @@ app = FastAPI(title="Belong API", lifespan=lifespan)
 
 class MatchRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
-    name: str = Field(default='', max_length=100)
-    skills: list[Literal['Hospitality', 'Teaching', 'Technology', 'Creativity', 'Music', 'Organization', 'Listening', 'Encouragement']] = Field(default_factory=list, max_length=8)
-    style: Literal['Working with people', 'Behind the scenes', 'Hands-on service']
-    day: Literal['Sunday mornings', 'Saturday mornings', 'Weekday evenings']
+    description: str = Field(min_length=1, max_length=4000)
 
 
 class ConnectionRequest(BaseModel):
@@ -47,10 +44,12 @@ def ministries():
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
-    # Deliberately simple placeholder: replace this ranking with Gloo AI later.
-    ranked = matching.rank(db.list_ministries(), body.skills, body.style, body.day)
-    return {'name': body.name or 'this member', 'style': body.style, 'day': body.day,
-            'engine': 'rules', 'matches': ranked}
+    try:
+        return recommendations.recommend(body.description, db.list_ministries())
+    except recommendations.NotConfigured as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except recommendations.Unavailable as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @app.get('/api/connections')

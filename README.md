@@ -47,18 +47,30 @@ change the database credentials.
 The React frontend now uses FastAPI and Postgres. Six fictional ministries are seeded from `backend/app/ministries.json` on first backend startup. Startup creates the new tables on existing volumes without deleting data; existing ministry records are not overwritten by subsequent seed runs.
 
 - `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
-- `POST /api/matches`: member name, skills, serving style, and availability; returns the top three open ministries.
+- `POST /api/matches`: accepts `{ "description": "A paragraph about yourself..." }` (1–4,000 characters); AI returns up to three suitable open ministries in recommended order, with reasons, details to confirm, and database-sourced ministry contacts.
 - `GET /api/connections`: saved connections shared across this prototype workspace.
 - `POST /api/connections`: save `{ "ministry_id": 1, "member": "Jamie" }`; repeated saves are deduplicated by ministry and member name.
 - `DELETE /api/connections/{connection_id}`: remove a saved connection.
 
-Matching currently uses simple backend rules, not Gloo AI. Replacing that ranking with Gloo is the next integration step. Sample contacts use example.com; no introductions are sent. This is a single shared demo workspace without login or user isolation. Members with the same name are treated as the same person for duplicate saves.
+Find a place uses the configured AI provider and fallback from the backend. Set `GLOO_API_KEY` for the default Gloo provider, or configure `AI_PROVIDER` / `AI_FALLBACK` and their corresponding keys. With no configured provider it returns HTTP 503; provider failures or invalid AI responses return HTTP 502. It never substitutes rule-based recommendations. The chat's ministry search still uses rules. Sample contacts use example.com; no introductions are sent. This is a single shared demo workspace without login or user isolation. Members with the same name are treated as the same person for duplicate saves.
 
 Saved connections survive page refreshes and container restarts through the existing Postgres volume. Removing the volume deletes them. There is no ministry editor yet; seed content is starter data, while the database is the runtime source of truth.
 
 Run `docker compose up --build -d`, then open http://localhost:3000. For frontend development, keep the backend and database running and run `npm install` and `npm run dev` in `frontend`; Vite proxies API calls to port 8000.
 
 ## Website chat agent
+
+### HPC Ollama for local development
+
+With the Liberty student VPN connected, keep this SSH tunnel open (replace `YOUR_USERNAME`):
+
+```powershell
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:11434:arrietty.hpc.lan:11434 YOUR_USERNAME@totoro.university.liberty.edu
+```
+
+In your ignored `.env`, set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` for Docker Desktop. No Ollama API key is needed. Use `http://127.0.0.1:11434/v1` instead when running the backend directly on Windows. Rebuild with `docker compose up --build -d`. Both Find a place and the chat use the configured provider. The VPN and SSH tunnel must remain connected; this local tunnel does not configure access for Cloudflare deployments.
+
+Verify the tunnel with `Invoke-RestMethod http://127.0.0.1:11434/api/tags`. Verify the backend selection at `/api/chat/status`; configuration status alone does not confirm model health.
 
 The "Ask Belong" widget (bottom right) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
 
