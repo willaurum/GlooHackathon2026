@@ -84,3 +84,9 @@ Demo connection requests start with “connect me” or “sign me up”. Supply
 The widget keeps the visible transcript but sends only recent context, so long chats remain within the API limits. Demo mode is keyword-based and does not provide general conversational understanding.
 
 Chat regression checks: `python -m unittest discover -s backend/tests` (backend dependencies required), and `node --test frontend/src/chatHistory.test.js`.
+
+## Ministry shifts
+
+Each ministry includes `shifts` with a stable ID, ISO date, local church start/end times (`HH:MM`), and filled/total positions. The fictional October 2026 schedule is shown on ministry cards, team details, and recommendations and is included in the AI catalog. Coverage totals count shift positions, not unique volunteers. Saving or approving a connection does not reserve a position.
+
+Startup adds sample shifts to seeded ministries that do not yet have a `shifts` field, preserving existing shifts and other ministry data. API coverage is calculated from shifts. The paragraph form and matching/filtering workflow are unchanged.

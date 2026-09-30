@@ -34,6 +34,8 @@ class RecommendationTests(unittest.TestCase):
         data = json.loads(sent[1]['content'])
         self.assertEqual(data['description'], 'I enjoy welcoming families.')
         self.assertNotIn('email', data['ministries'][0])
+        self.assertEqual(data['ministries'][1]['shifts'], self.ministries[1]['shifts'])
+        self.assertEqual(result['matches'][0]['shifts'], self.ministries[1]['shifts'])
 
     def test_rejects_unknown_duplicate_and_full_ministries(self):
         self.ministries[0]['filled'] = self.ministries[0]['total']

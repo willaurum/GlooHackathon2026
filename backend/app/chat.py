@@ -129,7 +129,7 @@ def looks_like_contact(value):
 
 def summarize_ministry(m):
     return {key: m[key] for key in ('id', 'name', 'category', 'description', 'skills', 'style', 'day', 'head', 'email', 'note')} | {
-        'open_spots': m['total'] - m['filled']}
+        'open_spots': m['total'] - m['filled'], 'shifts': m.get('shifts', [])}
 
 
 def search_ministries(skills=None, style=None, day=None):
