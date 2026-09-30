@@ -23,7 +23,15 @@
         "start_time": "08:30",
         "end_time": "10:30",
         "filled": 4,
-        "total": 6
+        "total": 6,
+        "services": [
+          "sunday-9"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       },
       {
         "id": "0-2",
@@ -31,8 +39,20 @@
         "start_time": "10:30",
         "end_time": "12:30",
         "filled": 3,
-        "total": 6
+        "total": 6,
+        "services": [
+          "sunday-11"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       }
+    ],
+    "requirements": [
+      "background_check",
+      "onboarding"
     ]
   },
   {
@@ -59,7 +79,15 @@
         "start_time": "08:30",
         "end_time": "10:30",
         "filled": 3,
-        "total": 6
+        "total": 6,
+        "services": [
+          "sunday-9"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       },
       {
         "id": "1-2",
@@ -67,9 +95,18 @@
         "start_time": "10:30",
         "end_time": "12:30",
         "filled": 5,
-        "total": 6
+        "total": 6,
+        "services": [
+          "sunday-11"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       }
-    ]
+    ],
+    "requirements": []
   },
   {
     "name": "Production & media",
@@ -95,7 +132,15 @@
         "start_time": "08:00",
         "end_time": "10:30",
         "filled": 3,
-        "total": 5
+        "total": 5,
+        "services": [
+          "sunday-9"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       },
       {
         "id": "2-2",
@@ -103,8 +148,19 @@
         "start_time": "10:00",
         "end_time": "12:30",
         "filled": 5,
-        "total": 5
+        "total": 5,
+        "services": [
+          "sunday-11"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       }
+    ],
+    "requirements": [
+      "shadowing"
     ]
   },
   {
@@ -131,9 +187,18 @@
         "start_time": "09:00",
         "end_time": "12:00",
         "filled": 6,
-        "total": 10
+        "total": 10,
+        "services": [
+          "outside-services"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       }
-    ]
+    ],
+    "requirements": []
   },
   {
     "name": "Worship collective",
@@ -159,8 +224,20 @@
         "start_time": "08:00",
         "end_time": "12:30",
         "filled": 5,
-        "total": 6
+        "total": 6,
+        "services": [
+          "sunday-9",
+          "sunday-11"
+        ],
+        "frequencies": [
+          "weekly",
+          "monthly"
+        ]
       }
+    ],
+    "requirements": [
+      "audition",
+      "midweek_rehearsal"
     ]
   },
   {
@@ -187,8 +264,20 @@
         "start_time": "18:00",
         "end_time": "20:00",
         "filled": 2,
-        "total": 4
+        "total": 4,
+        "services": [
+          "outside-services"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
       }
+    ],
+    "requirements": [
+      "care_training",
+      "confidentiality"
     ]
   }
 ]

@@ -21,3 +21,11 @@
 .serving-preferences input:focus-visible, .serving-preferences select:focus-visible { outline: 3px solid #9ccbb2; outline-offset: 2px; }
 .preference-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
 @media(max-width:600px) { .preference-row { grid-template-columns: 1fr; } }
+
+.availability-window { display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 8px; align-items: end; margin: 10px 0; }
+.availability-window label { min-width: 0; font-size: 12px; }
+.requirement-choices { margin: 20px 0 0; padding: 0; border: 0; }
+.requirement-choices label { display: flex; gap: 8px; align-items: center; margin: 8px 0; font-size: 13px; }
+.requirement-choices input { width: auto; }
+.eligibility-notes { padding-left: 18px; font-size: 12px; line-height: 1.6; }
+@media(max-width:1100px) { .availability-window { grid-template-columns: 1fr 1fr; } }

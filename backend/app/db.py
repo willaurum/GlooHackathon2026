@@ -41,6 +41,16 @@ def initialize():
             conn.execute("""UPDATE ministries SET data = jsonb_set(data, '{shifts}', %s)
                 WHERE id = %s AND NOT (data ? 'shifts')""",
                 (Jsonb(ministry['shifts']), ministry['id']))
+            # Add eligibility metadata to known sample shifts without replacing saved schedules/counts.
+            existing = conn.execute("SELECT data FROM ministries WHERE id = %s FOR UPDATE", (ministry['id'],)).fetchone()['data']
+            existing.setdefault('requirements', ministry['requirements'])
+            seeds = {shift['id']: shift for shift in ministry['shifts']}
+            for shift in existing.get('shifts', []):
+                seed = seeds.get(shift['id'])
+                if seed:
+                    for key in ('services', 'frequencies'):
+                        shift.setdefault(key, seed[key])
+            conn.execute("UPDATE ministries SET data = %s WHERE id = %s", (Jsonb(existing), ministry['id']))
         # Church info, FAQs, events and small groups the chat agent can look up.
         conn.execute("""CREATE TABLE IF NOT EXISTS church_content (
             kind TEXT NOT NULL,

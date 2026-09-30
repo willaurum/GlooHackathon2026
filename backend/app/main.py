@@ -5,7 +5,7 @@ from datetime import date
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Literal
 
 from . import chat, db, recommendations
@@ -27,8 +27,23 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Belong API", lifespan=lifespan)
 
 
+class AvailabilityWindow(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    day: Literal['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    start_time: str = Field(pattern=r'^([01][0-9]|2[0-3]):[0-5][0-9]$')
+    end_time: str = Field(pattern=r'^([01][0-9]|2[0-3]):[0-5][0-9]$')
+
+    @model_validator(mode='after')
+    def ordered(self):
+        if self.start_time >= self.end_time:
+            raise ValueError('End time must be after start time; use separate windows for different days.')
+        return self
+
+
 class ServingPreferences(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    availability: list[AvailabilityWindow] = Field(default_factory=list, max_length=21)
+    unavailable_requirements: list[Literal['background_check', 'onboarding', 'shadowing', 'audition', 'midweek_rehearsal', 'care_training', 'confidentiality']] = Field(default_factory=list, max_length=7)
     days_and_times: str = Field(default='', max_length=500)
     preferred_service: str = Field(default='', max_length=200)
     frequency: Literal['one-time', 'weekly', 'monthly'] | None = None
@@ -37,7 +52,7 @@ class ServingPreferences(BaseModel):
 
 class MatchRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
-    description: str = Field(min_length=1, max_length=4000)
+    description: str = Field(default='', max_length=4000)
     preferences: ServingPreferences = Field(default_factory=ServingPreferences)
 
 
