@@ -7,8 +7,11 @@
 # - A pull request only builds, as a check; it deploys nothing, so unmerged
 #   code never replaces the preview of the branch it goes into.
 # - To redeploy by hand: Actions > Previews > Run workflow, pick the branch.
-# - Branches with a wrangler.jsonc (jaron-*) deploy under the name in that file
-#   and call the live APIs, whose ALLOWED_ORIGIN lists those names.
+# - main has a wrangler.jsonc: it deploys under the name in that file, which is
+#   the live site, and calls the live APIs (their ALLOWED_ORIGIN lists it).
+#   Only main does: any other branch with that file gets its own
+#   preview-<branch> Worker, whose preview-proxy/ forwards /api calls to the
+#   live APIs, so a branch never replaces the live site.
 # - Older branches (a FastAPI + Postgres backend) get the frontend plus
 #   preview-api-stub/, a same-origin stand-in API seeded from the branch's
 #   backend/app/*.json. Its data is in memory and resets now and then.
@@ -56,16 +59,23 @@ jobs:
           # it builds as that branch would (it does not deploy).
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then BRANCH="$GITHUB_BASE_REF"; else BRANCH="$GITHUB_REF_NAME"; fi
           SUFFIX="-gloo-hackathon2026"
+          SLUG=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+          # Worker names can be 63 characters; shorten the branch part only.
+          MAX=$((63 - ${#SUFFIX} - 8))
+          SLUG=$(printf '%s' "${SLUG:0:$MAX}" | sed -E 's/-+$//')
+          BRANCH_WORKER="preview-${SLUG:-branch}${SUFFIX}"
           if [ -f wrangler.jsonc ] && [ -f frontend/package.json ]; then
-            KIND=cloudflare
-            WORKER=$(node -e "const t=require('fs').readFileSync('wrangler.jsonc','utf8').replace(/^\s*\/\/.*$/mg,'');console.log(JSON.parse(t).name||'')")
+            LIVE=$(node -e "const t=require('fs').readFileSync('wrangler.jsonc','utf8').replace(/^\s*\/\/.*$/mg,'');console.log(JSON.parse(t).name||'')")
+            echo "live_origin=https://$LIVE.$SUBDOMAIN.workers.dev" >> "$GITHUB_OUTPUT"
+            if [ "$BRANCH" = "main" ]; then
+              KIND=cloudflare; WORKER="$LIVE"
+            else
+              # Only main is the live site.
+              KIND=proxy; WORKER="$BRANCH_WORKER"
+              [ "$WORKER" = "$LIVE" ] && { echo "::error::Branch $BRANCH would deploy over the live site ($LIVE); rename the branch."; exit 1; }
+            fi
           elif [ -f frontend/package.json ] && [ -d backend/app ]; then
-            KIND=stub
-            SLUG=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
-            # Worker names can be 63 characters; shorten the branch part only.
-            MAX=$((63 - ${#SUFFIX} - 8))
-            SLUG=$(printf '%s' "${SLUG:0:$MAX}" | sed -E 's/-+$//')
-            WORKER="preview-${SLUG:-branch}${SUFFIX}"
+            KIND=stub; WORKER="$BRANCH_WORKER"
           else
             echo "::notice::No frontend to preview on $BRANCH."
             echo "kind=none" >> "$GITHUB_OUTPUT"
@@ -94,14 +104,43 @@ jobs:
         working-directory: frontend
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-          if [ "${{ steps.plan.outputs.kind }}" = "cloudflare" ]; then
-            export VITE_API_BASE="$LIVE_API" VITE_GIVING_API_BASE="$LIVE_GIVING_API"
-          fi
+          case "${{ steps.plan.outputs.kind }}" in
+            cloudflare) export VITE_API_BASE="$LIVE_API" VITE_GIVING_API_BASE="$LIVE_GIVING_API" ;;
+            # Same-origin; preview-proxy/ forwards these to the live APIs.
+            proxy) export VITE_API_BASE="" VITE_GIVING_API_BASE="/giving-api" ;;
+          esac
           npm run build
 
       - name: Deploy (branch with its own wrangler.jsonc)
         if: steps.plan.outputs.kind == 'cloudflare' && env.DEPLOY == 'true'
         run: npx --yes wrangler@4 deploy
+
+      - name: Deploy (branch of the Cloudflare app, own Worker)
+        if: steps.plan.outputs.kind == 'proxy' && env.DEPLOY == 'true'
+        run: |
+          cat > preview.wrangler.jsonc <<JSON
+          {
+            "name": "${{ steps.plan.outputs.worker }}",
+            "main": "preview-proxy/index.js",
+            "compatibility_date": "2026-09-01",
+            "assets": {
+              "directory": "frontend/dist",
+              "binding": "ASSETS",
+              "not_found_handling": "single-page-application",
+              "run_worker_first": ["/api/*", "/giving-api/*"]
+            },
+            "services": [
+              { "binding": "CHURCH_API", "service": "gloo-hackathon2026-api-pastor-notes" },
+              { "binding": "GIVING_API", "service": "gloo-hackathon2026-api-donate-giving" }
+            ],
+            "vars": {
+              "LIVE_API": "$LIVE_API",
+              "LIVE_GIVING_API": "$LIVE_GIVING_API",
+              "LIVE_ORIGIN": "${{ steps.plan.outputs.live_origin }}"
+            }
+          }
+          JSON
+          npx --yes wrangler@4 deploy --config preview.wrangler.jsonc
 
       - name: Deploy (frontend + stand-in API)
         if: steps.plan.outputs.kind == 'stub' && env.DEPLOY == 'true'
@@ -133,6 +172,14 @@ jobs:
           done
           echo "Frontend: HTTP $CODE"
           [ "$CODE" = "200" ] || { echo "::error::$URL did not answer 200"; exit 1; }
+          if [ "${{ steps.plan.outputs.kind }}" = "proxy" ]; then
+            # The forwarded church API answers through this Worker.
+            for i in $(seq 1 12); do
+              curl -fsS "$URL/api/ministries" -o /dev/null 2>/dev/null && break
+              [ "$i" = 12 ] && { echo "::error::$URL/api/ministries did not answer through the proxy"; exit 1; }
+              sleep 5
+            done
+          fi
           if [ "${{ steps.plan.outputs.kind }}" = "stub" ]; then
             # A new Worker can serve its files a few seconds before its code.
             for i in $(seq 1 12); do

@@ -25,17 +25,24 @@ with the branch name in lowercase and anything other than letters and digits
 turned into `-`. For example `feature/prayer-map` becomes
 `preview-feature-prayer-map-gloo-hackathon2026`.
 
-Branches that have a `wrangler.jsonc` (`main` and the `jaron-*` ones) keep the
-name in that file, for example `preview-frontend-gloo-hackathon2026` for
-`main`, because
-the live APIs only accept calls from the names in their `ALLOWED_ORIGIN`.
+`main` is the exception: its preview is the live site,
+`preview-frontend-gloo-hackathon2026`, the name in its `wrangler.jsonc`,
+because the live APIs only accept calls from the names in their
+`ALLOWED_ORIGIN`. **Only `main` deploys there.** Any other branch that has
+that `wrangler.jsonc` (every branch made from `main`) gets its own
+`preview-<branch>` Worker, so pushing a branch never changes the live site.
 
 ## What is in it
 
-- **Branches with a `wrangler.jsonc`** (Cloudflare-native): the built frontend,
-  calling the live church and giving APIs. The data is real and shared.
+- **`main`** (Cloudflare-native): the built frontend, calling the live church
+  and giving APIs. This is the live site.
+- **Other branches with a `wrangler.jsonc`** (anything made from `main`): the
+  built frontend plus `preview-proxy/`, which forwards `/api/*` to the live
+  church API and `/giving-api/*` to the live giving API. The data is real and
+  shared with the live site, so a branch preview can change it. A Stripe
+  checkout started there returns to the live site afterward.
 - **Branches with the FastAPI + Postgres backend** (erik, ben, will, prayer
-  map, main): the built frontend plus `preview-api-stub/`, a stand-in for the
+  map): the built frontend plus `preview-api-stub/`, a stand-in for the
   backend's API that runs inside the preview itself, seeded from the branch's
   `backend/app/*.json`. No database and no AI: chat, event summaries and
   prayer angles give demo answers. Its data is kept in memory, so what you add
