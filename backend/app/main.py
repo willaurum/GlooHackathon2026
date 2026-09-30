@@ -1,26 +1,33 @@
-"""Belong prototype API with persistent ministries and connections."""
+"""Belong prototype API with persistent ministries and connections, plus Pastor Notes."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime
 from typing import Literal
 
-from . import db
+from . import ai, ai_client, chat, db, matching, pastor_notes
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.pool.open()
-    db.pool.wait(timeout=30)
+    db.initialize()
+    pastor_notes.start_worker()
+    task = asyncio.create_task(auto_summarize_background())
     try:
-        db.initialize()
         yield
     finally:
-        db.pool.close()
+        task.cancel()
+        db.close()
 
 
 app = FastAPI(title="Belong API", lifespan=lifespan)
+app.include_router(pastor_notes.router)
 
 
 class MatchRequest(BaseModel):
@@ -37,6 +44,12 @@ class ConnectionRequest(BaseModel):
     member: str = Field(min_length=1, max_length=100)
 
 
+@app.get('/api/info')
+def church_info():
+    # Public church details (address, service times) for the home page.
+    return db.get_church_info()
+
+
 @app.get('/api/ministries')
 def ministries():
     return db.list_ministries()
@@ -45,17 +58,9 @@ def ministries():
 @app.post('/api/matches')
 def matches(body: MatchRequest):
     # Deliberately simple placeholder: replace this ranking with Gloo AI later.
-    ranked = []
-    for ministry in db.list_ministries():
-        if ministry['filled'] >= ministry['total']:
-            continue
-        overlap = sorted(set(body.skills).intersection(ministry['skills']))
-        score = len(overlap) * 3 + (3 if ministry['style'] == body.style else 0) + (4 if ministry['day'] == body.day else 0)
-        score += (ministry['total'] - ministry['filled']) / ministry['total']
-        ranked.append({**ministry, 'overlap': overlap, 'score': score})
-    ranked.sort(key=lambda m: (-m['score'], m['id']))
+    ranked = matching.rank(db.list_ministries(), body.skills, body.style, body.day)
     return {'name': body.name or 'this member', 'style': body.style, 'day': body.day,
-            'engine': 'rules', 'matches': ranked[:3]}
+            'engine': 'rules', 'matches': ranked}
 
 
 @app.get('/api/connections')
@@ -75,6 +80,59 @@ def save_connection(body: ConnectionRequest):
 def remove_connection(connection_id: int):
     if not db.remove_connection(connection_id):
         raise HTTPException(status_code=404, detail='Connection not found')
+
+
+class ChatMessage(BaseModel):
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+
+
+class RequestStatus(BaseModel):
+    status: Literal['approved', 'declined']
+
+
+@app.get('/api/chat/status')
+def chat_status():
+    return chat.status()
+
+
+@app.post('/api/chat')
+def chat_turn(body: ChatRequest):
+    if body.messages[-1].role != 'user':
+        raise HTTPException(status_code=400, detail='The last message must come from the user')
+    # Keep recent history, starting on a user turn; some models reject a leading assistant turn.
+    messages = [m.model_dump() for m in body.messages][-20:]
+    while messages[0]['role'] != 'user':
+        messages.pop(0)
+    try:
+        return chat.run(messages, body.session_id)
+    except Exception:
+        log.exception('chat turn failed')
+        db.log_chat(body.session_id, 'error', {})
+        raise HTTPException(status_code=502, detail='The assistant is unavailable right now. Please try again in a moment.')
+
+
+@app.get('/api/chat/log/{session_id}')
+def chat_log(session_id: str):
+    return db.get_chat_log(session_id)
+
+
+@app.get('/api/requests')
+def requests():
+    return db.list_requests()
+
+
+@app.patch('/api/requests/{request_id}')
+def update_request(request_id: int, body: RequestStatus):
+    row = db.set_request_status(request_id, body.status)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Request not found')
+    return row
 
 
 class NewItem(BaseModel):
@@ -115,3 +173,258 @@ def patch_item(item_id: int, body: DoneFlag):
 def delete_item(item_id: int):
     if not db.delete_item(item_id):
         raise HTTPException(status_code=404, detail="no such item")
+
+# --- First-time guest visits ---
+
+
+class VisitRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=100)
+    contact: str = Field(default='', max_length=200)
+    service: str
+    party_size: int = Field(ge=1, le=20)
+    kids: str = Field(default='', max_length=200)
+    wants_host: bool = True
+
+
+class ClaimRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    host: str = Field(min_length=1, max_length=60)
+
+
+@app.get('/api/church')
+def church():
+    return {'info': db.get_church_info(), 'faqs': db.list_content('faqs'), 'events': db.list_content('events')}
+
+
+@app.post('/api/visits', status_code=201)
+def create_visit(body: VisitRequest):
+    services = {f"{s['day']} {s['time']}" for s in db.get_church_info()['services']}
+    if body.service not in services:
+        raise HTTPException(status_code=400, detail='Unknown service time')
+    return db.create_visit(body.name, body.contact, body.service, body.party_size, body.kids, body.wants_host)
+
+
+@app.get('/api/visits/{token}')
+def get_visit(token: str):
+    visit = db.get_visit_by_token(token)
+    if visit is None:
+        raise HTTPException(status_code=404, detail='Visit not found')
+    return visit
+
+
+@app.post('/api/visits/{token}/arrive')
+def arrive_visit(token: str):
+    visit = db.mark_arrived(token)
+    if visit is None:
+        if db.get_visit_by_token(token) is None:
+            raise HTTPException(status_code=404, detail='Visit not found')
+        raise HTTPException(status_code=409, detail='This visit already checked in')
+    return visit
+
+
+@app.get('/api/visits')
+def visits_queue():
+    return {'waiting': db.list_visits(['arrived', 'on_the_way']), 'planned': db.list_planned_visits()}
+
+
+@app.post('/api/visits/{visit_id}/claim')
+def claim_visit(visit_id: int, body: ClaimRequest):
+    visit = db.set_visit_host(visit_id, body.host)
+    if visit is None:
+        raise HTTPException(status_code=409, detail='This guest is not waiting to be claimed')
+    return visit
+
+
+@app.post('/api/visits/{visit_id}/met')
+def met_visit(visit_id: int):
+    visit = db.mark_met(visit_id)
+    if visit is None:
+        raise HTTPException(status_code=409, detail='This guest cannot be marked met right now')
+    return visit
+
+
+# --- Prayer map: regions, news, and prayer angles ---
+
+
+class RegionOut(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: int
+    country: str
+    country_code: str
+    codename: str
+    field_of_ministry: str
+    testimony: str
+    since: int
+    team_size: int
+
+
+class NewsEventOut(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: int
+    country: str
+    country_code: str
+    city: str
+    lat: float
+    lng: float
+    headline: str
+    source: str
+    date: str
+    summary: str
+
+
+class PrayerAngleOut(BaseModel):
+    angle_id: int
+    region_id: int
+    angle: str
+    summary: str
+    prayer_points: list[str]
+    source_news_ids: list[int]
+    created_at: datetime
+
+
+@app.get('/api/regions', response_model=list[RegionOut])
+def regions():
+    return db.list_regions()
+
+
+@app.get('/api/news', response_model=list[NewsEventOut])
+def news():
+    return db.list_news()
+
+
+@app.get('/api/regions/{region_id}/prayer-angles', response_model=list[PrayerAngleOut])
+def prayer_angle_history(region_id: int):
+    if db.get_region(region_id) is None:
+        raise HTTPException(status_code=404, detail='Region not found')
+    return db.list_angles(region_id)
+
+
+@app.post('/api/regions/{region_id}/prayer-angles', status_code=201, response_model=PrayerAngleOut)
+def generate_prayer_angle(region_id: int):
+    region = db.get_region(region_id)
+    if region is None:
+        raise HTTPException(status_code=404, detail='Region not found')
+    news_items = db.news_for_country(region['country_code'])
+    angle = ai.next_angle(db.seen_angles(region_id))
+    result = ai.synthesize(region, news_items, angle)
+    return db.save_angle(region_id, angle, result['summary'], result['prayer_points'],
+                          [n['id'] for n in news_items])
+
+
+# --- Calendar events + AI summaries (ported to the Durable-Object stack) ---
+
+
+class EventCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=100)
+    date: str = Field(min_length=10, max_length=10)
+    time: str = Field(min_length=1, max_length=100)
+    location: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1)
+    ministry_name: str | None = None
+
+
+class ModelUpdateRequest(BaseModel):
+    model: str = Field(min_length=1, max_length=100)
+
+
+class SummarizeAllRequest(BaseModel):
+    model: str | None = None
+    only_missing: bool = False
+
+
+async def auto_summarize_background():
+    """Draft a summary for events that lack one when an AI endpoint is reachable. No-op-safe otherwise."""
+    try:
+        await asyncio.sleep(5)
+        status = await ai_client.get_status()
+        if not status.get("connected"):
+            return
+        model = status.get("default_model")
+        if not ai_client.find_matching_model(model, status.get("available_models", [])):
+            return
+        for ev in db.list_events():
+            if not ev.get("ai_summary"):
+                try:
+                    summary = await ai_client.summarize_event(
+                        title=ev["title"], category=ev["category"], description=ev["description"],
+                        date=ev["date"], time=ev["time"], location=ev["location"], model=model)
+                    db.update_event_summary(ev["id"], summary)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+@app.get("/api/events")
+def get_events():
+    return db.list_events()
+
+
+@app.get("/api/events/{event_id}")
+def get_event(event_id: int):
+    event = db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
+@app.post("/api/events", status_code=201)
+def post_event(body: EventCreate):
+    return db.create_event(title=body.title, category=body.category, date=body.date,
+                            time=body.time, location=body.location, description=body.description,
+                            ministry_name=body.ministry_name)
+
+
+@app.post("/api/events/{event_id}/summarize")
+async def summarize_event(event_id: int, model: str | None = None):
+    event = db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    status = await ai_client.get_status()
+    if not status.get("connected"):
+        raise HTTPException(status_code=503, detail="AI summaries are not configured on this server yet.")
+    try:
+        summary = await ai_client.summarize_event(
+            title=event["title"], category=event["category"], description=event["description"],
+            date=event["date"], time=event["time"], location=event["location"], model=model)
+        return db.update_event_summary(event_id, summary)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI summarization failed: {exc}")
+
+
+@app.post("/api/events/summarize-all")
+async def summarize_all_events(body: SummarizeAllRequest | None = None, only_missing: bool = False, model: str | None = None):
+    status = await ai_client.get_status()
+    if not status.get("connected"):
+        raise HTTPException(status_code=503, detail="AI summaries are not configured on this server yet.")
+    target_model = body.model if (body and body.model) else model
+    filter_missing = body.only_missing if body else only_missing
+    events = db.list_events()
+    if filter_missing:
+        events = [e for e in events if not e.get("ai_summary")]
+    results, errors = [], []
+    for ev in events:
+        try:
+            summary = await ai_client.summarize_event(
+                title=ev["title"], category=ev["category"], description=ev["description"],
+                date=ev["date"], time=ev["time"], location=ev["location"], model=target_model)
+            results.append(db.update_event_summary(ev["id"], summary))
+        except Exception as exc:
+            errors.append({"event_id": ev["id"], "title": ev["title"], "error": str(exc)})
+    return {"updated": len(results), "errors": errors, "events": db.list_events(), "only_missing": filter_missing}
+
+
+@app.get("/api/ai/status")
+@app.get("/api/ollama/status")
+async def get_ai_status():
+    return await ai_client.get_status()
+
+
+@app.post("/api/ai/model")
+@app.post("/api/ollama/model")
+def set_ai_model(body: ModelUpdateRequest):
+    ai_client.set_default_model(body.model)
+    return {"default_model": ai_client.get_default_model()}

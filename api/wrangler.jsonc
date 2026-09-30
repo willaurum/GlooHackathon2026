@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gloo-hackathon2026-api-pastor-notes",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "containers": [
+    {
+      "class_name": "ChurchAPI",
+      "image": "../backend/Dockerfile",
+      "image_build_context": "../backend",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHURCH_API", "class_name": "ChurchAPI" },
+      { "name": "CHURCH_DB", "class_name": "ChurchDB" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChurchAPI", "ChurchDB"] }
+  ],
+  // Uploaded sermon videos. The container reads them back through the Worker.
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "gloo-hackathon2026-pastor-notes-media" }
+  ],
+  "ai": { "binding": "AI" },
+  "vars": {
+    // Comma-separated frontend origins; the first is the default.
+    "ALLOWED_ORIGIN": "https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-pastor-notes-gloo-hackathon2026.jaronwilson2025.workers.dev",
+    // extractive (default, no AI answerer) | workers-ai. A GEMINI_API_KEY secret overrides both.
+    "NOTES_ANSWER_ENGINE": "extractive",
+    "NOTES_LLM_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8",
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    // Similarity floor; a passage must also share a topic word with the question.
+    "NOTES_MIN_SCORE": "0.45",
+    "MAX_UPLOAD_BYTES": "99614720",
+    "MAX_DURATION_SEC": "5400"
+  },
+  "observability": { "enabled": true }
+}
