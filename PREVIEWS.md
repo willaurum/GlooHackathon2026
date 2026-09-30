@@ -5,16 +5,18 @@ Every team branch gets its own live preview on Cloudflare, built by
 
 ## When a preview is made
 
-- **A push** to a branch named `jaron-*`, `ben-*`, `erik-*`, `will-*` or `feature/*`.
-- **A pull request** opened in this repo: it previews the branch the pull
-  request goes into, with the pull request merged in. A comment on the pull
-  request links it.
+- **Every push** to `main` or a branch named `jaron-*`, `ben-*`, `erik-*`,
+  `will-*` or `feature/*`, merges included, builds the branch and deploys it
+  over its preview. The preview always shows the branch's latest commit, a
+  minute or two after the push. If you push again while a build is running,
+  the newer push wins.
+- **A pull request** only builds, as a check that it still compiles. It does
+  not deploy, so unmerged code never replaces a preview. Once it is merged,
+  the push to the target branch updates that branch's preview.
 - **By hand**: Actions > Previews > Run workflow, pick the branch.
 
-Each branch gets **one** preview. If it already exists, the run stops and
-says so, so later pushes do not change it. To rebuild it, run the workflow by
-hand with **force** ticked: that deletes that one preview Worker and deploys
-it again.
+A branch only runs this if it has `.github/workflows/previews.yml`. Branches
+made from `main` have it.
 
 ## Where it is
 
@@ -23,8 +25,9 @@ with the branch name in lowercase and anything other than letters and digits
 turned into `-`. For example `feature/prayer-map` becomes
 `preview-feature-prayer-map-gloo-hackathon2026`.
 
-Branches that already have a `wrangler.jsonc` (the `jaron-*` ones) keep the
-name in that file, for example `preview-frontend-gloo-hackathon2026`, because
+Branches that have a `wrangler.jsonc` (`main` and the `jaron-*` ones) keep the
+name in that file, for example `preview-frontend-gloo-hackathon2026` for
+`main`, because
 the live APIs only accept calls from the names in their `ALLOWED_ORIGIN`.
 
 ## What is in it
@@ -36,7 +39,7 @@ the live APIs only accept calls from the names in their `ALLOWED_ORIGIN`.
   backend's API that runs inside the preview itself, seeded from the branch's
   `backend/app/*.json`. No database and no AI: chat, event summaries and
   prayer angles give demo answers. Its data is kept in memory, so what you add
-  can reset when the preview has been idle.
+  resets on every deploy and when the preview has been idle.
 
 ## The token
 
