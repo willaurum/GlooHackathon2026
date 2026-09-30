@@ -191,7 +191,7 @@ function Requests({ requests, busy, review }) {
   return <div className="requests">
     <div className="eyebrow">From the website chat</div>
     <h2>Requests waiting on a person</h2>
-    <p>The assistant files these. Nothing is sent to anyone until staff approve.</p>
+    <p>Requests are saved here for review. Approval saves a connection; staff must contact the person separately. No notifications are sent automatically.</p>
     {requests.map(r => <article className="card request" key={r.request_id}>
       <div>
         <span className={'tag' + (r.kind === 'crisis' ? ' crisis' : '')}>{requestLabels[r.kind] ?? r.kind}</span>
