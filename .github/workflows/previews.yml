@@ -129,6 +129,10 @@ jobs:
               "not_found_handling": "single-page-application",
               "run_worker_first": ["/api/*", "/giving-api/*"]
             },
+            "services": [
+              { "binding": "CHURCH_API", "service": "gloo-hackathon2026-api-pastor-notes" },
+              { "binding": "GIVING_API", "service": "gloo-hackathon2026-api-donate-giving" }
+            ],
             "vars": {
               "LIVE_API": "$LIVE_API",
               "LIVE_GIVING_API": "$LIVE_GIVING_API",
