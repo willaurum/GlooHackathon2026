@@ -1,11 +1,12 @@
-# One Cloudflare preview per branch, made automatically.
+# One Cloudflare preview per branch, kept up to date automatically.
 #
-# - A push to a team branch (jaron-*, ben-*, erik-*, will-*, feature/*), or a
-#   pull request opened in this repo, builds that branch's frontend and
-#   deploys it as its own Worker on jaronwilson2025.workers.dev.
-# - Each branch gets ONE preview, ever: if its Worker already exists the run
-#   stops there. To rebuild one, run this workflow by hand (Actions > Previews >
-#   Run workflow) with "force" ticked.
+# - Every push to main or a team branch (jaron-*, ben-*, erik-*, will-*,
+#   feature/*), merges included, builds that branch's frontend and deploys it
+#   over its Worker on jaronwilson2025.workers.dev, so the preview always shows
+#   the branch's latest commit. A newer push cancels an older one still running.
+# - A pull request only builds, as a check; it deploys nothing, so unmerged
+#   code never replaces the preview of the branch it goes into.
+# - To redeploy by hand: Actions > Previews > Run workflow, pick the branch.
 # - Branches with a wrangler.jsonc (jaron-*) deploy under the name in that file
 #   and call the live APIs, whose ALLOWED_ORIGIN lists those names.
 # - Older branches (a FastAPI + Postgres backend) get the frontend plus
@@ -16,23 +17,18 @@ name: Previews
 
 on:
   push:
-    branches: ['jaron-*', 'ben-*', 'erik-*', 'will-*', 'feature/**']
+    branches: ['main', 'jaron-*', 'ben-*', 'erik-*', 'will-*', 'feature/**']
   pull_request:
-    types: [opened, reopened]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
-    inputs:
-      force:
-        description: 'Delete and rebuild this branch preview even if it exists'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: preview-${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
-  cancel-in-progress: false
+  group: preview-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   preview:
@@ -44,7 +40,8 @@ jobs:
       SUBDOMAIN: jaronwilson2025
       LIVE_API: https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev
       LIVE_GIVING_API: https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev
-      FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+      # A pull request builds but never deploys.
+      DEPLOY: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,8 +52,8 @@ jobs:
       - name: Which branch, which kind, which Worker
         id: plan
         run: |
-          # A pull request previews the branch it goes into: the merge of the
-          # two is what is checked out.
+          # A pull request is checked out merged into the branch it goes into;
+          # it builds as that branch would (it does not deploy).
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then BRANCH="$GITHUB_BASE_REF"; else BRANCH="$GITHUB_REF_NAME"; fi
           SUFFIX="-gloo-hackathon2026"
           if [ -f wrangler.jsonc ] && [ -f frontend/package.json ]; then
@@ -82,7 +79,7 @@ jobs:
           { echo "branch=$BRANCH"; echo "kind=$KIND"; echo "worker=$WORKER"; echo "url=https://$WORKER.$SUBDOMAIN.workers.dev"; } >> "$GITHUB_OUTPUT"
 
       - name: Cloudflare account
-        if: steps.plan.outputs.kind != 'none'
+        if: steps.plan.outputs.kind != 'none' && env.DEPLOY == 'true'
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::The CLOUDFLARE_API_TOKEN repository secret is not set."; exit 1; fi
           ACCOUNT="${{ vars.CLOUDFLARE_ACCOUNT_ID }}"
@@ -92,34 +89,8 @@ jobs:
           fi
           echo "CLOUDFLARE_ACCOUNT_ID=$ACCOUNT" >> "$GITHUB_ENV"
 
-      - name: Once per branch
-        id: once
-        if: steps.plan.outputs.kind != 'none'
-        run: |
-          WORKER="${{ steps.plan.outputs.worker }}"
-          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER"
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API")
-          # An existing Worker answers 204 (no content) here, not 200.
-          [ "$CODE" = "204" ] && CODE=200
-          if [ "$CODE" = "200" ] && [ "$FORCE" != "true" ]; then
-            echo "Preview already exists: ${{ steps.plan.outputs.url }} (run the workflow by hand with force to rebuild it)."
-            echo "### Preview already exists" >> "$GITHUB_STEP_SUMMARY"
-            echo "${{ steps.plan.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$CODE" != "200" ] && [ "$CODE" != "404" ]; then
-            echo "::error::Could not check for $WORKER (HTTP $CODE). Does the token have Workers Scripts: Edit on this account?"; exit 1
-          fi
-          if [ "$CODE" = "200" ]; then
-            # force: the only delete, and only of this one preview Worker.
-            echo "force: deleting $WORKER first"
-            curl -fsS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API?force=true" >/dev/null
-          fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-
       - name: Build the frontend
-        if: steps.plan.outputs.kind != 'none' && steps.once.outputs.skip != 'true'
+        if: steps.plan.outputs.kind != 'none'
         working-directory: frontend
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
@@ -129,11 +100,11 @@ jobs:
           npm run build
 
       - name: Deploy (branch with its own wrangler.jsonc)
-        if: steps.plan.outputs.kind == 'cloudflare' && steps.once.outputs.skip != 'true'
+        if: steps.plan.outputs.kind == 'cloudflare' && env.DEPLOY == 'true'
         run: npx --yes wrangler@4 deploy
 
       - name: Deploy (frontend + stand-in API)
-        if: steps.plan.outputs.kind == 'stub' && steps.once.outputs.skip != 'true'
+        if: steps.plan.outputs.kind == 'stub' && env.DEPLOY == 'true'
         run: |
           node preview-api-stub/make-seed.mjs
           cat > preview.wrangler.jsonc <<JSON
@@ -152,7 +123,7 @@ jobs:
           npx --yes wrangler@4 deploy --config preview.wrangler.jsonc
 
       - name: Check it answers
-        if: steps.plan.outputs.kind != 'none' && steps.once.outputs.skip != 'true'
+        if: steps.plan.outputs.kind != 'none' && env.DEPLOY == 'true'
         run: |
           URL="${{ steps.plan.outputs.url }}"
           for i in $(seq 1 12); do
@@ -174,11 +145,11 @@ jobs:
           echo "::notice::Preview for ${{ steps.plan.outputs.branch }}: $URL"
           { echo "### Preview for \`${{ steps.plan.outputs.branch }}\`"; echo "$URL"; } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Link it on the pull request
-        if: github.event_name == 'pull_request' && steps.plan.outputs.kind != 'none'
+      - name: Link the preview on the pull request
+        # Once, when the pull request is opened.
+        if: github.event_name == 'pull_request' && github.event.action == 'opened' && steps.plan.outputs.kind != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ steps.once.outputs.skip }}" = "true" ]; then NOTE="already existed, so it was left as is"; else NOTE="is live"; fi
           gh pr comment "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" \
-            --body "Preview of \`${{ steps.plan.outputs.branch }}\` $NOTE: ${{ steps.plan.outputs.url }}"
+            --body "This builds. Once it is merged, the preview of \`${{ steps.plan.outputs.branch }}\` updates on its own: ${{ steps.plan.outputs.url }}"
