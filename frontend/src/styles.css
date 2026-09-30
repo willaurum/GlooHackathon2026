@@ -13,3 +13,11 @@
 .shifts > small, .shift-capacity, .shift-empty { color: #656b64; font-size: 12px; }
 .shifts ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
 .shifts li { display: grid; gap: 4px; padding: 10px 12px; background: #f5f6f2; border-radius: 8px; font-size: 13px; }
+
+.story-input.short-answer { min-height: 0; }
+.serving-preferences { border: 0; padding: 0; margin: 6px 0 22px; min-width: 0; }
+.serving-preferences legend { font-weight: 700; font-size: 16px; margin-bottom: 8px; }
+.serving-preferences input, .serving-preferences select { width: 100%; min-width: 0; padding: 11px; border: 1px solid #dce5d8; border-radius: 8px; background: white; color: #293e35; }
+.serving-preferences input:focus-visible, .serving-preferences select:focus-visible { outline: 3px solid #9ccbb2; outline-offset: 2px; }
+.preference-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+@media(max-width:600px) { .preference-row { grid-template-columns: 1fr; } }

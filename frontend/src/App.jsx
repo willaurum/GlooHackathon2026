@@ -9,13 +9,14 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 const urgent = m => (m.total - m.filled) / m.total >= .35;
-const vision = 'Belong helps large churches turn a desire to serve into a meaningful connection. Leaders can monitor volunteer needs, explore each department’s responsibilities, and find the people leading those teams. Visitors can share a paragraph about themselves. The AI compares their interests, experience, and availability with current ministry needs and recommends teams, with ministry leads’ contact information for the next step. The goal: help more people move from attending church to actively belonging.';
+const vision = 'Belong helps large churches turn a desire to serve into a meaningful connection. Leaders can monitor volunteer needs, explore each department’s responsibilities, and find the people leading those teams. Visitors can share their interests and serving preferences. The AI compares their interests, experience, and availability with current ministry needs and recommends teams, with ministry leads’ contact information for the next step. The goal: help more people move from attending church to actively belonging.';
 export default function App() {
   const [page, setPage] = useState('Overview'),
     [query, setQuery] = useState(''),
     [filter, setFilter] = useState(false),
     [detail, setDetail] = useState(null),
     [description, setDescription] = useState(''),
+    [preferences, setPreferences] = useState({ days_and_times: '', preferred_service: '', frequency: '', earliest_start_date: '' }),
     [matching, setMatching] = useState(false),
     [matchError, setMatchError] = useState(''),
     [results, setResults] = useState(null),
@@ -71,7 +72,7 @@ export default function App() {
     e.preventDefault();
     if (matching || !description.trim()) return;
     setMatching(true); setMatchError(''); setResults(null);
-    try { setResults(await api('/matches', { method: 'POST', body: JSON.stringify({ description: description.trim() }) })); }
+    try { setResults(await api('/matches', { method: 'POST', body: JSON.stringify({ description: description.trim(), preferences: { ...preferences, frequency: preferences.frequency || null, earliest_start_date: preferences.earliest_start_date || null } }) })); }
     catch (err) { setMatchError(err.message); }
     finally { setMatching(false); }
   }
@@ -99,15 +100,33 @@ export default function App() {
  {page === 'Find a place' && <div className="matching">
    <form className="panel match-form" onSubmit={match} aria-busy={matching}>
      <div className="form-title"><span className="icon color1">✧</span><div><h2>Your story. Your place.</h2><p>A little about you can open the right door.</p></div></div>
-     <label className="field" htmlFor="member-story">Tell us about yourself</label>
-     <p id="story-help" className="story-help">Write a paragraph about what you enjoy, your experience, how you like to help, and when you’re available. Share whatever feels relevant.</p>
-     <textarea id="member-story" className="story-input" value={description} onChange={e => setDescription(e.target.value)} maxLength={4000} rows={9} required disabled={matching} aria-describedby="story-help" placeholder="I enjoy welcoming new people and making them feel comfortable. I’ve helped organize community events, and I’m happiest working alongside a team. I’m usually free on Sunday mornings and would love a way to help families feel at home." />
+     <label className="field" htmlFor="member-story">What do you enjoy, and how would you like to help?</label>
+     <p id="story-help" className="story-help">A sentence or two about your interests or experience is enough.</p>
+     <textarea id="member-story" className="story-input short-answer" value={description} onChange={e => setDescription(e.target.value)} maxLength={1000} rows={3} required disabled={matching} aria-describedby="story-help" placeholder="I enjoy welcoming people and organizing events. I’d love to help families feel at home." />
+     <fieldset className="serving-preferences" disabled={matching}>
+       <legend>When would you like to serve?</legend>
+       <p className="story-help">These details are optional. Use local church time; leave anything you’re unsure about blank.</p>
+       <label className="field" htmlFor="days-and-times">Days and time windows</label>
+       <textarea id="days-and-times" className="story-input short-answer" rows={2} maxLength={500} value={preferences.days_and_times} onChange={e => setPreferences(p => ({ ...p, days_and_times: e.target.value }))} placeholder="Sundays 8 AM–noon, or Tuesdays after 6 PM" />
+       <label className="field" htmlFor="preferred-service">Which service would you prefer to serve at?</label>
+       <input id="preferred-service" maxLength={200} value={preferences.preferred_service} onChange={e => setPreferences(p => ({ ...p, preferred_service: e.target.value }))} placeholder="Sunday 9 AM, any service, or outside services" />
+       <div className="preference-row">
+         <div><label className="field" htmlFor="serving-frequency">How often?</label>
+           <select id="serving-frequency" value={preferences.frequency} onChange={e => setPreferences(p => ({ ...p, frequency: e.target.value }))}>
+             <option value="">Not sure yet</option><option value="one-time">One-time</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+           </select>
+         </div>
+         <div><label className="field" htmlFor="earliest-start">Earliest start date</label>
+           <input id="earliest-start" type="date" value={preferences.earliest_start_date} onChange={e => setPreferences(p => ({ ...p, earliest_start_date: e.target.value }))} />
+         </div>
+       </div>
+     </fieldset>
      <button type="submit" className="primary wide" disabled={matching || !description.trim()}>{matching ? 'Finding your place…' : '✧ Find my ministries →'}</button>
-     <p className="disclaimer">AI considers your story alongside current ministry opportunities. You decide who to contact.</p>
+     <p className="disclaimer">AI considers your answers alongside current ministry opportunities. You decide who to contact.</p>
      {matchError && <p className="match-error" role="alert">{matchError}</p>}
    </form>
    <section aria-live="polite" aria-busy={matching}>
-     {matching ? <div className="placeholder" role="status"><span>✧</span><h2>Finding where you could belong…</h2><p>We’re considering your story and the ministries with open opportunities.</p></div>
+     {matching ? <div className="placeholder" role="status"><span>✧</span><h2>Finding where you could belong…</h2><p>We’re considering your answers and the ministries with open opportunities.</p></div>
        : !results ? <div className="placeholder"><span>✳</span><div className="eyebrow">EVERYONE HAS SOMETHING TO GIVE</div><h2>Let’s find your place.</h2><p>Your recommended ministries, reasons for each match, and team contacts will appear here.</p></div>
        : <><div className="results-heading"><div className="eyebrow">{results.matches.length ? 'RECOMMENDED FOR YOU' : 'YOUR NEXT STEP'}</div><h2>{results.matches.length ? 'Places you could belong.' : 'Let’s explore the possibilities.'}</h2><p>{results.summary}</p></div>
          {results.matches.map((m, i) => <article className="panel recommendation" key={m.id}>

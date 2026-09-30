@@ -1,6 +1,7 @@
 """Belong prototype API with persistent ministries and connections."""
 
 import logging
+from datetime import date
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -26,9 +27,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Belong API", lifespan=lifespan)
 
 
+class ServingPreferences(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    days_and_times: str = Field(default='', max_length=500)
+    preferred_service: str = Field(default='', max_length=200)
+    frequency: Literal['one-time', 'weekly', 'monthly'] | None = None
+    earliest_start_date: date | None = None
+
+
 class MatchRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     description: str = Field(min_length=1, max_length=4000)
+    preferences: ServingPreferences = Field(default_factory=ServingPreferences)
 
 
 class ConnectionRequest(BaseModel):
@@ -45,7 +55,8 @@ def ministries():
 @app.post('/api/matches')
 def matches(body: MatchRequest):
     try:
-        return recommendations.recommend(body.description, db.list_ministries())
+        return recommendations.recommend(body.description, db.list_ministries(),
+                                         preferences=body.preferences.model_dump(mode='json'))
     except recommendations.NotConfigured as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except recommendations.Unavailable as error:

@@ -91,3 +91,36 @@ class RecommendationTests(unittest.TestCase):
                                 (recommendations.Unavailable('Try again'), 502)]:
                 with patch.object(recommendations, 'recommend', side_effect=error):
                     self.assertEqual(client.post('/api/matches', json={'description': 'My story'}).status_code, code)
+
+
+    def test_endpoint_passes_structured_preferences_to_ai(self):
+        client = TestClient(main.app)
+        fake = provider(self.plan)
+        preferences = {'days_and_times': ' Sundays 8 AM–noon ',
+                       'preferred_service': 'Sunday 9 AM', 'frequency': 'monthly',
+                       'earliest_start_date': '2026-10-11'}
+        with patch.object(main.db, 'list_ministries', return_value=self.ministries), patch.object(
+                recommendations.chat, 'make_clients', return_value=[fake]):
+            response = client.post('/api/matches', json={'description': 'I like welcoming people.', 'preferences': preferences})
+        self.assertEqual(response.status_code, 200)
+        sent = json.loads(fake[3].chat.completions.create.call_args.kwargs['messages'][1]['content'])
+        self.assertEqual(sent['preferences'], {**preferences, 'days_and_times': 'Sundays 8 AM–noon'})
+
+    def test_endpoint_accepts_unspecified_preferences(self):
+        client = TestClient(main.app)
+        with patch.object(main.db, 'list_ministries', return_value=self.ministries), patch.object(
+                recommendations, 'recommend', return_value={'matches': [], 'summary': 'Confirm your schedule.'}) as recommend:
+            response = client.post('/api/matches', json={'description': 'I enjoy music', 'preferences': {
+                'days_and_times': '', 'preferred_service': '', 'frequency': None, 'earliest_start_date': None}})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(recommend.call_args.kwargs['preferences']['frequency'])
+        self.assertIsNone(recommend.call_args.kwargs['preferences']['earliest_start_date'])
+
+    def test_endpoint_rejects_invalid_preferences_before_ai(self):
+        client = TestClient(main.app)
+        for preferences in ({'frequency': 'daily'}, {'earliest_start_date': '2026-02-30'},
+                            {'days_and_times': 'x' * 501}, {'preferred_service': 'x' * 201}):
+            with self.subTest(preferences=preferences), patch.object(recommendations, 'recommend') as recommend:
+                response = client.post('/api/matches', json={'description': 'I enjoy music', 'preferences': preferences})
+                self.assertEqual(response.status_code, 422)
+                recommend.assert_not_called()

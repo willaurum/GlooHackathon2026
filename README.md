@@ -47,7 +47,7 @@ change the database credentials.
 The React frontend now uses FastAPI and Postgres. Six fictional ministries are seeded from `backend/app/ministries.json` on first backend startup. Startup creates the new tables on existing volumes without deleting data; existing ministry records are not overwritten by subsequent seed runs.
 
 - `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
-- `POST /api/matches`: accepts `{ "description": "A paragraph about yourself..." }` (1–4,000 characters); AI returns up to three suitable open ministries in recommended order, with reasons, details to confirm, and database-sourced ministry contacts.
+- `POST /api/matches`: accepts a `description` (1–4,000 characters) and optional structured `preferences` (see below); AI returns up to three suitable open ministries in recommended order, with reasons, details to confirm, and database-sourced ministry contacts.
 - `GET /api/connections`: saved connections shared across this prototype workspace.
 - `POST /api/connections`: save `{ "ministry_id": 1, "member": "Jamie" }`; repeated saves are deduplicated by ministry and member name.
 - `DELETE /api/connections/{connection_id}`: remove a saved connection.
@@ -89,4 +89,25 @@ Chat regression checks: `python -m unittest discover -s backend/tests` (backend 
 
 Each ministry includes `shifts` with a stable ID, ISO date, local church start/end times (`HH:MM`), and filled/total positions. The fictional October 2026 schedule is shown on ministry cards, team details, and recommendations and is included in the AI catalog. Coverage totals count shift positions, not unique volunteers. Saving or approving a connection does not reserve a position.
 
-Startup adds sample shifts to seeded ministries that do not yet have a `shifts` field, preserving existing shifts and other ministry data. API coverage is calculated from shifts. The paragraph form and matching/filtering workflow are unchanged.
+Startup adds sample shifts to seeded ministries that do not yet have a `shifts` field, preserving existing shifts and other ministry data. API coverage is calculated from shifts. The matching/filtering workflow is unchanged.
+
+
+## Serving preferences
+
+Find a place asks for a short answer about interests/experience, plus optional days and time windows, preferred service to serve at, frequency (one-time, weekly, monthly), and earliest start date. Blank schedule answers mean unspecified; they do not imply unrestricted availability.
+
+`POST /api/matches` accepts:
+
+```json
+{
+  "description": "I enjoy welcoming people and organizing events.",
+  "preferences": {
+    "days_and_times": "Sundays 8 AM–noon or Tuesdays after 6 PM",
+    "preferred_service": "Sunday 9 AM",
+    "frequency": "monthly",
+    "earliest_start_date": "2026-10-11"
+  }
+}
+```
+
+`preferences` may be omitted for existing clients. Text fields default to empty strings; frequency and date default to null. Days/time windows allow 500 characters and preferred service allows 200. The backend validates field types, lengths, frequency choices, and calendar dates, then sends preferences separately to the AI. It does not yet filter ministries by schedule or verify recurring availability (TODO #3).
