@@ -18,6 +18,8 @@ log = logging.getLogger(__name__)
 # Each provider speaks the OpenAI chat-completions format. AI_PROVIDER is tried
 # first; if it has no key or a call fails, AI_FALLBACK takes over.
 PROVIDERS = {
+    'ollama': {'base_url': 'http://localhost:11434/v1', 'key': 'OLLAMA_API_KEY',
+               'model': ('OLLAMA_MODEL', 'gpt-oss:20b'), 'extra_body': {}},
     'gloo': {'base_url': 'https://platform.ai.gloo.com/ai/v2/guarded', 'key': 'GLOO_API_KEY',
              'model': ('GLOO_MODEL', 'gloo-anthropic-claude-haiku-4.5'), 'extra_body': {'auto_routing': False}},
     'openai': {'base_url': 'https://api.openai.com/v1', 'key': 'OPENAI_API_KEY',
@@ -101,6 +103,8 @@ def provider_chain():
         name = name.strip().lower()
         spec = PROVIDERS.get(name)
         key = os.environ.get(spec['key'], '').strip() if spec else ''
+        if name == 'ollama':
+            key = key or 'ollama'  # The SDK requires a value; a local Ollama server does not.
         if key and name not in [c[0] for c in chain]:
             chain.append((name, os.environ.get(*spec['model']), spec['extra_body'], key))
     return chain
@@ -113,7 +117,9 @@ def status():
 
 def make_clients():
     from openai import OpenAI
-    return [(name, model, extra_body, OpenAI(api_key=key, base_url=PROVIDERS[name]['base_url'], timeout=60, max_retries=1))
+    return [(name, model, extra_body, OpenAI(api_key=key,
+            base_url=os.environ.get('OLLAMA_BASE_URL', PROVIDERS[name]['base_url']) if name == 'ollama' else PROVIDERS[name]['base_url'],
+            timeout=60, max_retries=1))
             for name, model, extra_body, key in provider_chain()]
 
 

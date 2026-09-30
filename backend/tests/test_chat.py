@@ -98,6 +98,20 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(reply['provider'], 'demo')
         self.assertIn('9:00am', reply['reply'])
 
+    @patch.dict('os.environ', {'AI_PROVIDER': 'ollama', 'OLLAMA_MODEL': 'gpt-oss:20b',
+                              'OLLAMA_BASE_URL': 'http://host.docker.internal:11434/v1'}, clear=True)
+    def test_ollama_uses_configured_tunnel_without_api_key(self):
+        self.assertEqual(chat.status(), {'configured': True, 'providers': ['ollama:gpt-oss:20b']})
+        with patch('openai.OpenAI') as create:
+            clients = chat.make_clients()
+        self.assertEqual(len(clients), 1)
+        self.assertEqual(create.call_args.kwargs['base_url'], 'http://host.docker.internal:11434/v1')
+        self.assertEqual(create.call_args.kwargs['api_key'], 'ollama')
+
+    @patch.dict('os.environ', {}, clear=True)
+    def test_ollama_is_not_enabled_unless_selected(self):
+        self.assertFalse(chat.status()['configured'])
+
 
 if __name__ == '__main__':
     unittest.main()

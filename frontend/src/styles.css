@@ -577,3 +577,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .situational-summary{margin-top:12px}
 @media(max-width:850px){.map-shell{height:380px}}
 @media(max-width:600px){.map-shell{height:300px}.map-legend{gap:6px 16px}}
+
+/* Find a place: the optional "about them" box (AI suggestions). */
+.field textarea.story-input {
+  display: block; width: 100%; margin-top: 8px; min-height: 110px; resize: vertical;
+  background: #fbfcfa; border: 1px solid var(--line-strong); border-radius: 10px;
+  padding: 10px 14px; font: inherit; font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--ink);
+}
+.field textarea.story-input:focus { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
+.story-help { font-size: 13px; margin: -8px 0 16px; }
+.reason.considerations { background: var(--bg); }

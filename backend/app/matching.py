@@ -1,4 +1,4 @@
-"""Rule-based ministry ranking, shared by the match form and the chat agent's search tool."""
+"""Rule-based ministry ranking for the chat agent's search tool."""
 
 SKILLS = ['Hospitality', 'Teaching', 'Technology', 'Creativity', 'Music', 'Organization', 'Listening', 'Encouragement']
 STYLES = ['Working with people', 'Behind the scenes', 'Hands-on service']
