@@ -257,6 +257,25 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .contact a { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; text-decoration: none; word-break: break-all; }
 .contact a:hover { text-decoration: underline; }
 .requirement { display: block; margin-top: 14px; }
+.form-note { font-size: 14px; margin-top: 14px; }
+.field textarea {
+  display: block; width: 100%; margin-top: 8px; resize: vertical;
+  background: #fbfcfa; border: 1px solid var(--line-strong); border-radius: 10px;
+  padding: 10px 14px; font: inherit; font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--ink);
+}
+.field textarea:focus { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
+.field textarea:disabled { opacity: .7; }
+.match-error { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--danger-50); color: var(--danger); font-size: 14px; }
+.match-schedule { margin-top: 12px; font-size: 13px; }
+.match-considerations { margin-top: 12px; }
+.match-considerations b { font-size: 13px; color: var(--ink); }
+.match-considerations p { font-size: 14px; margin-top: 4px; }
+.shifts { margin: 16px 0 0; }
+.shifts h4 { font-size: 14px; color: var(--ink); }
+.shifts > small, .shift-capacity, .shift-empty { font-size: 13px; color: var(--muted); }
+.shift-empty { margin-top: 12px; }
+.shifts ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.shifts li { display: grid; gap: 2px; padding: 10px 12px; background: var(--green-50); border-radius: 10px; font-size: 14px; color: var(--ink); }
 .saved { display: flex; align-items: center; gap: 16px; padding: 20px; margin-bottom: 12px; }
 .saved > div { flex: 1; min-width: 0; }
 .saved h3 { margin-bottom: 8px; }
