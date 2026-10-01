@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import ChurchMap from './ChurchMap.jsx';
-import { EXAMPLE_CAMPUS, MAP_SPOTS } from './visitMap.js';
+import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS } from './visitMap.js';
 
 const TOKEN_KEY = 'belong.visitToken';
 
@@ -127,7 +127,7 @@ export default function VisitPage() {
             </button>
           </li>)}
         </ul>
-        <ChurchMap building={EXAMPLE_CAMPUS.building} spots={MAP_SPOTS} activeId={spotId} onSelect={setSpotId} />
+        <ChurchMap building={EXAMPLE_CAMPUS.building} spots={MAP_SPOTS} activeId={spotId} onSelect={setSpotId} maskIds={ALLOWED_PARKING_IDS} />
       </div>
       <div className="map-links">
         <a className="btn primary" href={`https://www.google.com/maps/dir/?api=1&destination=${directions}`} target="_blank" rel="noopener noreferrer">Get directions</a>

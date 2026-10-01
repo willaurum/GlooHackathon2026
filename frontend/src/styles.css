@@ -161,6 +161,12 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .ask-card { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: var(--r-lg); background: var(--green-50); border: 1px solid var(--green-100); color: var(--green-600); }
 .ask-card strong { color: var(--ink); font-size: 15px; }
 .ask-card p { font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.profile { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 14px 6px 0; border-top: 1px solid var(--line); }
+.profile strong { display: block; font-size: 14px; color: var(--ink); }
+.profile small { display: block; font-size: 12px; margin-top: 2px; }
+.avatar { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--sand-100); color: var(--sand-700); border: 3px solid var(--sand-50); box-sizing: border-box; font-size: 12px; font-weight: 700; }
+.workspace-bar { display: flex; align-items: center; justify-content: flex-end; gap: 14px; height: 64px; padding: 0 40px; background: var(--card); border-bottom: 1px solid var(--line); }
+.demo-pill { padding: 6px 12px; border-radius: 999px; background: var(--green-50); color: var(--green-600); font-size: 12px; }
 .topbar, .tabbar { display: none; }
 .content { margin-left: var(--sidebar); min-width: 0; }
 main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
@@ -377,7 +383,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 @media (max-width: 860px) {
-  .sidebar { display: none; }
+  .sidebar, .workspace-bar { display: none; }
   .content { margin-left: 0; }
   .topbar {
     position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px;

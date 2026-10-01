@@ -54,3 +54,6 @@ export const MAP_SPOTS = [
     at: [37.36084, -79.17338],
   },
 ];
+
+// Where guests may park. The map dims everything outside these areas; edit this list to change them.
+export const ALLOWED_PARKING_IDS = ['guest-parking', 'main-parking', 'overflow-parking'];

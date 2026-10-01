@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import ChatWidget from './ChatWidget.jsx';
 import Give from './Give.jsx';
 import Home from './Home.jsx';
-import { PageHeader, Sidebar, TabBar, TopBar } from './Layout.jsx';
+import { PageHeader, Sidebar, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
@@ -50,6 +50,7 @@ export default function App() {
     <Sidebar route={route} go={go} onAsk={() => setChatOpen(true)} savedCount={savedCount} />
     <TopBar go={go} onAsk={() => setChatOpen(true)} />
     <div className="content">
+      <WorkspaceBar />
       <main>
         {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
         {/* Kept mounted so the saved/pending count stays live in the nav. */}

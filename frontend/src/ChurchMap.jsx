@@ -7,6 +7,10 @@ const AREA = { color: '#ffffff', weight: 1.5, fillColor: '#c9dcc9', fillOpacity:
 const AREA_ACTIVE = { color: '#ffd166', weight: 3, fillColor: '#ffd166', fillOpacity: 0.45 };
 const BUILDING = { color: '#ffffff', weight: 2, fillColor: '#2b6248', fillOpacity: 0.55, interactive: false };
 
+const MASK = { stroke: false, fillColor: '#0b1f16', fillOpacity: 0.55, interactive: false };
+// The whole world as the outer ring; each allowed area is cut out as a hole.
+const WORLD = [[-85, -180], [-85, 180], [85, 180], [85, -180]];
+
 const boundsOf = spot => spot.kind === 'area' ? L.latLngBounds(spot.shape) : L.latLngBounds([spot.at, spot.at]);
 
 // Zooms to the selected spot, or back out to the whole campus when nothing is selected.
@@ -20,9 +24,10 @@ function FocusOn({ spot, campus }) {
   return null;
 }
 
-export default function ChurchMap({ building, spots, activeId, onSelect }) {
+export default function ChurchMap({ building, spots, activeId, onSelect, maskIds = [] }) {
   const campus = useMemo(() => spots.reduce((b, s) => b.extend(boundsOf(s)), L.latLngBounds(building)), [building, spots]);
   const active = spots.find(s => s.id === activeId);
+  const allowed = useMemo(() => spots.filter(s => s.kind === 'area' && maskIds.includes(s.id)).map(s => s.shape), [spots, maskIds]);
 
   return <div className="church-map">
     <MapContainer bounds={campus} boundsOptions={{ padding: [24, 24] }} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
@@ -32,6 +37,7 @@ export default function ChurchMap({ building, spots, activeId, onSelect }) {
         maxNativeZoom={19}
         maxZoom={20}
       />
+      {allowed.length > 0 && <Polygon positions={[WORLD, ...allowed]} pathOptions={MASK} />}
       <Polygon positions={building} pathOptions={BUILDING} />
       {spots.map(s => {
         const on = s.id === activeId;
