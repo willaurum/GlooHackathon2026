@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.app import chat
@@ -33,8 +34,41 @@ class ChatTests(unittest.TestCase):
 
     def test_starter_questions(self):
         self.assertIn('9:00am', self.reply('When are services?'))
-        self.assertIn('open spots', self.reply('How can I get involved?'))
+        self.assertIn('paragraph', self.reply('How can I get involved?'))
+        self.assertEqual(self.actions[-1]['page'], 'find-place')
         self.assertIn('Young adults', self.reply('Are there small groups?'))
+
+    def test_demo_navigation_and_events(self):
+        for question, page in [('Browse ministries', 'ministries'), ('Show my saved connections', 'saved-connections'),
+                               ('What is your vision?', 'our-vision'), ('Show the dashboard', 'overview'),
+                               ('Can you recommend a ministry for me?', 'find-place')]:
+            with self.subTest(question=question):
+                self.actions.clear()
+                self.reply(question)
+                self.assertEqual(self.actions, [{'tool': 'suggest_page', 'page': page, 'title': chat.SITE_PAGES[page][0]}])
+        self.actions.clear()
+        self.assertIn('Serve Day', self.reply('What upcoming events are there?'))
+        self.assertEqual(self.actions, [])
+        self.mocks['create_request'].assert_not_called()
+
+    def test_invalid_destinations_and_duplicate_suggestions(self):
+        for page in ('events', 'https://example.com', '__proto__', None, []):
+            self.assertIn('error', chat.call_tool('suggest_page', json.dumps({'page': page})))
+        result = chat.suggest_page('find-place')
+        chat.collect_action(self.actions, 'suggest_page', result)
+        chat.collect_action(self.actions, 'suggest_page', result)
+        self.assertEqual(len(self.actions), 1)
+
+    def test_ai_navigation_tool_is_returned_to_frontend(self):
+        call = SimpleNamespace(id='nav1', function=SimpleNamespace(name='suggest_page', arguments='{"page":"find-place"}'))
+        responses = [
+            (SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='', tool_calls=[call]))]), 'fake:model'),
+            (SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='Try Find a place for personalized suggestions.', tool_calls=[]))]), 'fake:model'),
+        ]
+        with patch.object(chat, 'complete', side_effect=responses):
+            result = chat.run([{'role': 'user', 'content': 'Where should I serve?'}], 'test', clients=[('fake', 'model', {}, None)])
+        self.assertEqual(result['actions'], [{'tool': 'suggest_page', 'page': 'find-place', 'title': 'Find a place'}])
+        self.mocks['create_request'].assert_not_called()
 
     def test_care_and_connection_take_precedence(self):
         self.assertIn('saved', self.reply('Help me, I am struggling').lower())

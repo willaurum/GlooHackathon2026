@@ -11,7 +11,7 @@ import logging
 import os
 import re
 
-from . import db, matching
+from . import db
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,29 @@ PROVIDERS = {
                   'model': ('ANTHROPIC_MODEL', 'claude-haiku-4-5'), 'extra_body': {}},
 }
 MAX_STEPS = 6
+SITE_PAGES = {
+    'overview': ('Overview', 'See ministry needs and volunteer coverage across the church.'),
+    'ministries': ('Ministries', 'Browse teams, responsibilities, schedules, and ministry contacts.'),
+    'find-place': ('Find a place', 'Share a paragraph about yourself to get personalized ministry recommendations and contacts.'),
+    'saved-connections': ('Saved connections', 'Review saved connections and requests in this shared demo workspace.'),
+    'our-vision': ('Our vision', 'Learn how Belong helps people move from attending to belonging.'),
+}
+
+
+def suggest_page(page):
+    if not isinstance(page, str) or page not in SITE_PAGES:
+        return {'error': 'Choose an existing page: ' + ', '.join(SITE_PAGES)}
+    title, description = SITE_PAGES[page]
+    return {'page': page, 'title': title, 'message': description}
+
+
+def collect_action(actions, tool, result):
+    if tool == 'suggest_page' and result.get('page') in SITE_PAGES:
+        action = {'tool': tool, 'page': result['page'], 'title': SITE_PAGES[result['page']][0]}
+        if action not in actions:
+            actions.append(action)
+    elif 'request_id' in result:
+        actions.append({'tool': tool, 'request_id': result['request_id'], 'status': result['status']})
 
 NOT_CONFIGURED = ("The AI assistant isn't switched on yet: no AI provider key is configured. "
                   "Add GLOO_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY) to your .env file and restart the backend.")
@@ -38,7 +61,10 @@ SYSTEM_PROMPT = """You are Belong, the website assistant for {church}. You help 
 
 How to work:
 - Use the tools for every fact about the church: service times, events, groups, ministries, and contacts. If the tools don't have the answer, say you don't know and offer the church office contact. Never invent names, times, places, or contact details.
-- To recommend a ministry, first learn what they enjoy or are good at, how they like to serve, and when they're free. Ask at most two short questions at a time. Then call search_ministries and briefly explain why each suggestion could fit.
+- You are a site guide. For personalized serving or ministry recommendations, call suggest_page with find-place. Briefly explain that they can share a paragraph there. Do not interview them, rank ministries, or duplicate the Find a place experience in chat.
+- For browsing teams or contacts, suggest ministries. Use search_ministries only for factual questions about specific teams or when a person explicitly requests a connection to a named team; it does not rank matches.
+- Call suggest_page whenever recommending a page so the visitor gets a clickable Take me there button. Available pages: overview, ministries, find-place, saved-connections, our-vision. Never invent pages or URLs. Navigation happens only when the visitor clicks.
+- Continue answering questions about upcoming events, service times, FAQs, and small groups with the information tools. There is no Events or Small groups page yet; answer those questions here instead of inventing links.
 - Only call request_connection after the person clearly says yes to being connected and has given their name and an email or phone number. Tell them a staff member reviews every request before anyone reaches out.
 - Requests are only saved in the church workspace for staff review. No notification, email, or introduction is sent automatically, even after approval. Never claim staff have been notified or promise a response time.
 - You are not a pastor or counselor. Do not counsel, diagnose, give spiritual direction, or make pastoral judgments. If someone shares grief, illness, a family crisis, or a prayer need, or asks for pastoral care, respond with brief kindness and offer to pass it to the care team with hand_off_to_staff. Ask for their name and contact first, but hand off without them if they'd rather not share.
@@ -48,6 +74,13 @@ How to work:
 - Keep replies short and warm: two to four sentences or a short list. Plain text only, no markdown headings or tables."""
 
 TOOLS = [
+    {'type': 'function', 'function': {
+        'name': 'suggest_page',
+        'description': 'Offer a clickable Take me there suggestion for an existing site page. Use find-place for personalized ministry recommendations, ministries for team browsing, overview for needs, saved-connections for saved connections, our-vision for the purpose of Belong.',
+        'parameters': {'type': 'object', 'properties': {
+            'page': {'type': 'string', 'enum': list(SITE_PAGES)},
+        }, 'required': ['page'], 'additionalProperties': False},
+    }},
     {'type': 'function', 'function': {
         'name': 'get_church_info',
         'description': 'Church name, address, contact details, office hours, service times, what to expect on a first visit, the care team, and frequently asked questions (parking, kids check-in, students, accessibility, membership, online services).',
@@ -65,13 +98,8 @@ TOOLS = [
     }},
     {'type': 'function', 'function': {
         'name': 'search_ministries',
-        'description': 'Find volunteer ministries with open spots that fit a person. Returns the top three with responsibilities, schedule, open spots, and the ministry lead. Call with no arguments to see every ministry.',
-        'parameters': {'type': 'object', 'properties': {
-            'skills': {'type': 'array', 'items': {'type': 'string', 'enum': matching.SKILLS},
-                       'description': 'Gifts or skills the person mentioned.'},
-            'style': {'type': 'string', 'enum': matching.STYLES, 'description': 'How they like to serve.'},
-            'day': {'type': 'string', 'enum': matching.DAYS, 'description': 'When they are available.'},
-        }},
+        'description': 'Read ministry facts, schedules, open spots, and contacts for factual questions or an explicit connection request. This is not a recommendation tool. For personalized matches use suggest_page with find-place.',
+        'parameters': {'type': 'object', 'properties': {}},
     }},
     {'type': 'function', 'function': {
         'name': 'request_connection',
@@ -132,14 +160,8 @@ def summarize_ministry(m):
         'open_spots': m['total'] - m['filled']}
 
 
-def search_ministries(skills=None, style=None, day=None):
-    skills = [s for s in (skills or []) if s in matching.SKILLS]
-    ministries = db.list_ministries()
-    if not skills and not style and not day:
-        return {'ministries': [summarize_ministry(m) for m in ministries]}
-    ranked = matching.rank(ministries, skills, style if style in matching.STYLES else None,
-                           day if day in matching.DAYS else None)
-    return {'matches': [summarize_ministry(m) | {'matching_skills': m['overlap']} for m in ranked]}
+def search_ministries():
+    return {'ministries': [summarize_ministry(m) for m in db.list_ministries()]}
 
 
 def request_connection(ministry_id, name, contact, note=''):
@@ -179,6 +201,10 @@ def call_tool(name, arguments):
     except json.JSONDecodeError:
         return {'error': 'Arguments were not valid JSON. Try the call again.'}
     try:
+        if not isinstance(args, dict):
+            return {'error': 'Arguments must be a JSON object.'}
+        if name == 'suggest_page':
+            return suggest_page(args.get('page'))
         if name == 'get_church_info':
             return {'church': db.get_church_info(), 'faqs': db.list_content('faqs')}
         if name == 'list_events':
@@ -186,7 +212,7 @@ def call_tool(name, arguments):
         if name == 'list_small_groups':
             return {'groups': db.list_content('groups')}
         if name == 'search_ministries':
-            return search_ministries(args.get('skills'), args.get('style'), args.get('day'))
+            return search_ministries()
         if name == 'request_connection':
             return request_connection(int(args['ministry_id']), str(args['name']), str(args['contact']), str(args.get('note') or ''))
         if name == 'hand_off_to_staff':
@@ -239,18 +265,6 @@ def demo_intent(text):
     return next((name for name, words in DEMO_INTENTS
                  if any(re.search(r'(?<!\w)' + re.escape(w) + r'(?!\w)', text, re.I)
                         for w in words)), None)
-DEMO_SKILLS = {
-    'Music': ['music', 'sing', 'guitar', 'band', 'piano', 'worship'],
-    'Teaching': ['teach', 'kids', 'youth', 'children'],
-    'Technology': ['tech', 'sound', 'video', 'camera', 'computer'],
-    'Hospitality': ['greet', 'welcome', 'hospitality', 'coffee'],
-    'Creativity': ['art', 'design', 'creative', 'photo'],
-    'Organization': ['organiz', 'admin', 'plan'],
-    'Listening': ['listen'],
-    'Encouragement': ['encourag'],
-}
-DEMO_DAYS = {'Sunday mornings': ['sunday'], 'Saturday mornings': ['saturday'],
-             'Weekday evenings': ['weekday', 'evening', 'weeknight', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday']}
 
 
 def demo_tools(session_id, actions):
@@ -259,16 +273,11 @@ def demo_tools(session_id, actions):
     def use(tool, **args):
         result = call_tool(tool, json.dumps(args))
         db.log_chat(session_id, 'tool', {'name': tool, 'arguments': args, 'result': result, 'provider': 'demo'})
-        if 'request_id' in result:
-            actions.append({'tool': tool, 'request_id': result['request_id'], 'status': result['status']})
+        collect_action(actions, tool, result)
         return result
 
     def search(query):
-        text = query.lower()
-        skills = [skill for skill, words in DEMO_SKILLS.items() if any(w in text for w in words)]
-        day = next((d for d, words in DEMO_DAYS.items() if any(w in text for w in words)), None)
-        result = use('search_ministries', skills=skills, day=day)
-        return result.get('matches', result.get('ministries', []))
+        return use('suggest_page', page='find-place')
 
     def hand_off(reason):
         kind = ('crisis' if any(w in reason.lower() for w in CRISIS_WORDS)
@@ -288,6 +297,7 @@ def demo_tools(session_id, actions):
                    contact=contact.group(0), note=details[:500])
 
     return {
+        'suggest_page': lambda page: use('suggest_page', page=page),
         'get_church_info': lambda: use('get_church_info'),
         'list_events': lambda: use('list_events')['events'],
         'list_small_groups': lambda: use('list_small_groups')['groups'],
@@ -337,6 +347,15 @@ def demo_reply(message: str, tools: dict, history=None) -> str:
                                   if saved else " I couldn't save your request for staff review.")
         if text.strip(' .!') in ('cancel', 'never mind', 'nevermind', 'no thanks'):
             return 'Okay, I will not save a connection request. ' + DEMO_MENU
+        page = next((key for key, phrases in (
+            ('find-place', ['find a place', 'recommend', 'where can i serve', 'where should i serve']),
+            ('saved-connections', ['saved connections', 'saved requests', 'my connections']),
+            ('our-vision', ['our vision', 'your vision', 'purpose of belong']),
+            ('overview', ['overview', 'dashboard', 'home page']),
+            ('ministries', ['browse ministries', 'all ministries', 'ministry contacts', 'ministry teams', 'ministries page']),
+        ) if any(phrase in text for phrase in phrases)), None)
+        if page and not any(word in text for word in ('event', 'small group', 'prayer', 'struggling')):
+            return format_demo_result(tools['suggest_page'](page=page))
         intent = demo_intent(text)
         details = message
         # Continue only an unfinished connection flow, stopping at a topic change or completed request.
@@ -362,9 +381,6 @@ def demo_reply(message: str, tools: dict, history=None) -> str:
         else:
             result = tools[intent]()
         reply = format_demo_result(result)
-        if intent == 'search_ministries' and result:
-            reply += ("\nTo request a connection, say 'connect me' with the ministry's full name, "
-                      "your name, and an email or phone number.")
         if intent == 'hand_off_to_staff' and 'request_id' in result:
             reply = f"I'm sorry you're going through that. {reply}"
         if intent == 'request_connection' and 'request_id' in result:
@@ -409,8 +425,7 @@ def run(messages, session_id, clients=None):
             result = call_tool(call.function.name, call.function.arguments)
             db.log_chat(session_id, 'tool', {'name': call.function.name, 'arguments': call.function.arguments,
                                              'result': result, 'provider': provider})
-            if 'request_id' in result:
-                actions.append({'tool': call.function.name, 'request_id': result['request_id'], 'status': result['status']})
+            collect_action(actions, call.function.name, result)
             convo.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps(result, default=str)})
 
     reply = GAVE_UP.format(**info)

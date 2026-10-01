@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { chatHistory } from './chatHistory.js';
+import { navigationPage, followSuggestion } from './chatNavigation.js';
 
-const greeting = 'Hi! I’m Belong, Grace Community’s assistant. I can help with service times, events, small groups, or finding a place to serve.';
+const greeting = 'Hi! I’m Belong, your guide to the church and this site. Ask about service times, events, or small groups—or let me point you to the right page.';
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
 const actionLabels = {
   request_connection: 'Connection request saved for staff review',
@@ -9,7 +10,7 @@ const actionLabels = {
 };
 const newSessionId = () => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
 
-export default function ChatWidget({ onRequestFiled }) {
+export default function ChatWidget({ onRequestFiled, onNavigate }) {
   const [open, setOpen] = useState(false),
     [messages, setMessages] = useState([]),
     [input, setInput] = useState(''),
@@ -37,20 +38,26 @@ export default function ChatWidget({ onRequestFiled }) {
       if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Something went wrong. Please try again.');
       setConfigured(body.configured);
       setMessages(previous => [...previous, { role: 'assistant', content: body.reply, actions: body.actions }]);
-      if (body.actions?.length) onRequestFiled?.();
+      if (body.actions?.some(a => a.request_id)) onRequestFiled?.();
     } catch (err) {
       setMessages(previous => [...previous, { role: 'assistant', content: err.message, error: true }]);
     } finally { setBusy(false); }
   }
   return <div className="chat">
     {open && <section className="chat-panel" aria-label="Chat with Belong">
-      <div className="chat-head"><span className="icon color1">✧</span><div><strong>Ask Belong</strong><small>AI assistant · Staff review every request</small></div><button className="close" aria-label="Close chat" onClick={() => setOpen(false)}>×</button></div>
+      <div className="chat-head"><span className="icon color1">✧</span><div><strong>Ask Belong</strong><small>Church information & site guide</small></div><button className="close" aria-label="Close chat" onClick={() => setOpen(false)}>×</button></div>
       {!configured && <div className="chat-banner">Demo mode: basic church information and requests are available. AI conversation is not configured.</div>}
       <div className="chat-log" ref={log} aria-live="polite">
         <p className="bubble assistant">{greeting}</p>
         {messages.map((m, i) => <div key={i} className={'bubble ' + m.role + (m.error ? ' error' : '')}>
           {m.content}
-          {m.actions?.map(a => <span className="chat-action" key={a.request_id}>✓ {actionLabels[a.tool] ?? 'Done'}</span>)}
+          {m.actions?.map(a => {
+            const page = navigationPage(a);
+            if (page) return <div className="chat-page" key={a.page}><strong>{page}</strong><button type="button" className="secondary" aria-label={'Take me to ' + page} onClick={() => {
+              if (followSuggestion(a, onNavigate)) setOpen(false);
+            }}>Take me there →</button></div>;
+            return a.request_id && actionLabels[a.tool] ? <span className="chat-action" key={a.request_id}>✓ {actionLabels[a.tool]}</span> : null;
+          })}
         </div>)}
         {busy && <p className="bubble assistant typing">Thinking…</p>}
         {!messages.length && <div className="chat-starters">{starters.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}</div>}

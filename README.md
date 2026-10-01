@@ -52,7 +52,7 @@ The React frontend now uses FastAPI and Postgres. Six fictional ministries are s
 - `POST /api/connections`: save `{ "ministry_id": 1, "member": "Jamie" }`; repeated saves are deduplicated by ministry and member name.
 - `DELETE /api/connections/{connection_id}`: remove a saved connection.
 
-Find a place uses the configured AI provider and fallback from the backend. Set `GLOO_API_KEY` for the default Gloo provider, or configure `AI_PROVIDER` / `AI_FALLBACK` and their corresponding keys. With no configured provider it returns HTTP 503; provider failures or invalid AI responses return HTTP 502. It never substitutes rule-based recommendations. The chat's ministry search still uses rules. Sample contacts use example.com; no introductions are sent. This is a single shared demo workspace without login or user isolation. Members with the same name are treated as the same person for duplicate saves.
+Find a place uses the configured AI provider and fallback from the backend. Set `GLOO_API_KEY` for the default Gloo provider, or configure `AI_PROVIDER` / `AI_FALLBACK` and their corresponding keys. With no configured provider it returns HTTP 503; provider failures or invalid AI responses return HTTP 502. It never substitutes rule-based recommendations. The chat guides visitors to Find a place for personalized recommendations and reads ministry facts without ranking them. Sample contacts use example.com; no introductions are sent. This is a single shared demo workspace without login or user isolation. Members with the same name are treated as the same person for duplicate saves.
 
 Saved connections survive page refreshes and container restarts through the existing Postgres volume. Removing the volume deletes them. There is no ministry editor yet; seed content is starter data, while the database is the runtime source of truth.
 
@@ -84,3 +84,5 @@ Demo connection requests start with “connect me” or “sign me up”. Supply
 The widget keeps the visible transcript but sends only recent context, so long chats remain within the API limits. Demo mode is keyword-based and does not provide general conversational understanding.
 
 Chat regression checks: `python -m unittest discover -s backend/tests` (backend dependencies required), and `node --test frontend/src/chatHistory.test.js`.
+
+The chat can suggest existing pages (Overview, Ministries, Find a place, Saved connections, and Our vision) with a **Take me there** button. Clicking switches pages without resetting the conversation. Page suggestions are allowlisted on both the backend and frontend; the model cannot supply arbitrary URLs. Events and small groups remain informational chat answers because they do not have dedicated pages. Navigation is supported in both AI and demo mode.
