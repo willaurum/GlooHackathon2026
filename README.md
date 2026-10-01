@@ -80,15 +80,15 @@ The Serve and chat routes (`/api/ministries`, `/api/matches`, `/api/connections`
 
 ## Serve
 
-Six fictional ministries are seeded from `backend/app/ministries.json`, and church info, FAQs, events and groups from `backend/app/church.json`. Seeding never overwrites existing rows.
+Six fictional ministries, each with dated shifts, capacity, and onboarding requirements, are seeded from `backend/app/ministries.json`, and church info, FAQs, events and groups from `backend/app/church.json`. Seeding never overwrites existing rows.
 
 - `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
-- `POST /api/matches`: member name, skills, serving style, and availability; returns the top three open ministries.
+- `POST /api/matches`: a `description` (optional, up to 4,000 characters) and optional structured `preferences`; returns up to three AI-recommended ministries with reasons, details to confirm, and database-sourced contacts. Empty answers return every team to browse.
 - `GET /api/connections`, `POST /api/connections`, `DELETE /api/connections/{connection_id}`: saved connections, deduplicated by ministry and member name.
 - `GET /api/requests`, `PATCH /api/requests/{request_id}`: requests filed by the chat; approving a connection request also saves the connection.
 - `GET /api/info`: public church details (address, service times) for the home page.
 
-Matching uses simple rules, not AI. Sample contacts use example.com and no introductions are sent. This is a single shared demo workspace without login.
+Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. This is a single shared demo workspace without login.
 
 ### Website chat (Ask Belong)
 
@@ -98,6 +98,28 @@ The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) ta
 - Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.
 - Nothing is sent to anyone automatically. Requests land in the `requests` table and appear under Serve > Saved; approving a connection request adds it to saved connections.
 - Every user message, tool call, and reply is written to `chat_log`. `GET /api/chat/log/{session_id}` returns one session for auditing (API key required).
+- The chat can suggest a page with a **Take me there** button: home, plan-visit, ministries, find-place, saved-connections, calendar, give, and prayer-map. The backend allowlists page keys (`SITE_PAGES` in `chat.py`), and `frontend/src/chatNavigation.js` maps them to hash routes; the model cannot supply URLs. For personalized serving suggestions, the chat points people to Find a place instead of ranking ministries itself.
+- Guardrails: the system prompt keeps the assistant to church and site topics and tells it to decline everything else, and obvious prompt-override attempts ("ignore previous instructions", "system prompt", "developer mode") get a fixed reply without calling the model. These reduce off-topic use; they are not a guarantee.
+- Replies may use **bold** and simple lists, rendered by `frontend/src/chatFormat.js` as React elements (never raw HTML).
+
+#### HPC Ollama for local development
+
+With the Liberty student VPN connected, keep an SSH tunnel open (replace `YOUR_USERNAME`):
+
+```powershell
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:11434:arrietty.hpc.lan:11434 YOUR_USERNAME@totoro.university.liberty.edu
+```
+
+Then set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434` (or `http://127.0.0.1:11434` outside Docker) for the backend. No API key is needed, and the chat adds `/v1` if it is missing. Both Find a place and the chat use it. This tunnel only works locally, not from Cloudflare.
+
+#### Tests
+
+```bash
+python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts
+node --test frontend/src/chatFormat.test.js frontend/src/chatHistory.test.js frontend/src/chatNavigation.test.js
+```
+
+Run the Python tests from the repo root with the backend requirements installed. They mock the database, so no church DB is needed.
 
 ## Sermon Notes
 
