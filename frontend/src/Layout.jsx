@@ -21,6 +21,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
     <div className="church"><span>G</span><div><strong>Grace Community</strong><small>Springfield</small></div></div>
+    <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
       {SECTIONS.map(s => <div key={s.route}>
         <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
@@ -46,6 +47,7 @@ export function TopBar({ go, onAsk }) {
   return <header className="topbar">
     <Brand onClick={() => go('')} />
     <span className="topbar-church">Grace Community</span>
+    <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
   </header>;
 }
