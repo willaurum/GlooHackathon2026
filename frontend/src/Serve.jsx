@@ -20,6 +20,7 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
     [skills, setSkills] = useState(['Hospitality', 'Encouragement']),
     [style, setStyle] = useState('Working with people'),
     [day, setDay] = useState('Sunday mornings'),
+    [about, setAbout] = useState(''),
     [results, setResults] = useState(null),
     [saved, setSaved] = useState([]),
     [teams, setTeams] = useState([]),
@@ -71,7 +72,7 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
   }
   async function match(e) {
     e.preventDefault(); setBusy(true); setError(''); setResults(null);
-    try { setResults(await api('/matches', { method: 'POST', body: JSON.stringify({ name, skills, style, day }) })); }
+    try { setResults(await api('/matches', { method: 'POST', body: JSON.stringify({ name, skills, style, day, description: about.trim() }) })); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
@@ -139,6 +140,10 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
         </fieldset>
         <label className="field">How would they like to serve?<select value={style} onChange={e => setStyle(e.target.value)}>{['Working with people', 'Behind the scenes', 'Hands-on service'].map(v => <option key={v}>{v}</option>)}</select></label>
         <label className="field">When are they available?<select value={day} onChange={e => setDay(e.target.value)}>{['Sunday mornings', 'Saturday mornings', 'Weekday evenings'].map(v => <option key={v}>{v}</option>)}</select></label>
+        <label className="field">About them, in their words <small>Optional</small>
+          <textarea className="story-input" value={about} maxLength={4000} rows={5} onChange={e => setAbout(e.target.value)}
+            placeholder="What they enjoy, their experience, how they like to help, and when they’re free." /></label>
+        <p className="muted story-help">With AI set up, this is what the suggestions are based on. Without it, the choices above are used.</p>
         <button className="primary wide" disabled={loading || busy || !teams.length}>{busy ? 'Working…' : <>Discover opportunities<Icon name="arrow" size={18} /></>}</button>
       </form>
       <section aria-live="polite">
@@ -149,14 +154,18 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
           <p>Tell us a little about the member. Suggested ministries and team contacts will appear here.</p>
           <ol className="placeholder-steps"><li>Get to know them</li><li>Explore the fit</li><li>Make an introduction</li></ol>
         </div> : <>
-          <div className="results-heading"><div className="eyebrow">Suggested ministries</div><h2>A few places for {results.name}</h2><p>Conversation starters, not commitments. Confirm availability with each team.</p></div>
+          <div className="results-heading"><div className="eyebrow">Suggested ministries</div><h2>A few places for {results.name}</h2><p>{results.engine === 'ai' && results.summary ? results.summary : 'Conversation starters, not commitments. Confirm availability with each team.'}</p>
+            {results.note && <p className="muted">{results.note} These suggestions use the choices above instead.</p>}</div>
           {results.matches.map((m, i) => {
             const exists = saved.some(s => s.id === m.id && s.member === results.name);
             return <article className="card recommendation" key={m.id}>
               <div className="card-top"><span className={'icon color' + m.id}>{m.icon}</span><span className="badge">{i === 0 ? 'Top suggestion' : 'Suggestion ' + (i + 1)}</span></div>
               <h3>{m.name}</h3>
               <p>{m.description}</p>
-              <div className="reason"><b>Why it could fit</b><p>{m.overlap.length ? 'Connects with gifts in ' + m.overlap.join(', ').toLowerCase() + '.' : 'An opportunity to explore a new area of service.'} {m.style === results.style ? 'Matches their preferred serving style.' : 'Serving style: ' + m.style.toLowerCase() + '.'} {m.day === results.day ? 'Fits their availability.' : 'Schedule differs: ' + m.day.toLowerCase() + '.'} {m.total - m.filled} open spots.</p></div>
+              {m.reason ? <>
+                <div className="reason"><b>Why it could fit</b><p>{m.reason}</p></div>
+                <div className="reason considerations"><b>Before they get started</b><p>{m.considerations}</p><p className="muted">{m.day} · {m.total - m.filled} open spots</p></div>
+              </> : <div className="reason"><b>Why it could fit</b><p>{m.overlap.length ? 'Connects with gifts in ' + m.overlap.join(', ').toLowerCase() + '.' : 'An opportunity to explore a new area of service.'} {m.style === results.style ? 'Matches their preferred serving style.' : 'Serving style: ' + m.style.toLowerCase() + '.'} {m.day === results.day ? 'Fits their availability.' : 'Schedule differs: ' + m.day.toLowerCase() + '.'} {m.total - m.filled} open spots.</p></div>}
               <div className="contact-row"><Contact m={m} /><button className="secondary" disabled={exists || busy} onClick={() => save(m)}>{exists ? <><Icon name="check" size={16} />Saved</> : 'Save connection'}</button></div>
               <small className="requirement">{m.note}</small>
             </article>;
@@ -191,7 +200,7 @@ function Requests({ requests, busy, review }) {
   return <div className="requests">
     <div className="eyebrow">From the website chat</div>
     <h2>Requests waiting on a person</h2>
-    <p>The assistant files these. Nothing is sent to anyone until staff approve.</p>
+    <p>Requests are saved here for review. Approval saves a connection; staff must contact the person separately. No notifications are sent automatically.</p>
     {requests.map(r => <article className="card request" key={r.request_id}>
       <div>
         <span className={'tag' + (r.kind === 'crisis' ? ' crisis' : '')}>{requestLabels[r.kind] ?? r.kind}</span>

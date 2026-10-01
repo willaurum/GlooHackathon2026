@@ -161,6 +161,12 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .ask-card { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: var(--r-lg); background: var(--green-50); border: 1px solid var(--green-100); color: var(--green-600); }
 .ask-card strong { color: var(--ink); font-size: 15px; }
 .ask-card p { font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.profile { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 14px 6px 0; border-top: 1px solid var(--line); }
+.profile strong { display: block; font-size: 14px; color: var(--ink); }
+.profile small { display: block; font-size: 12px; margin-top: 2px; }
+.avatar { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--sand-100); color: var(--sand-700); border: 3px solid var(--sand-50); box-sizing: border-box; font-size: 12px; font-weight: 700; }
+.workspace-bar { display: flex; align-items: center; justify-content: flex-end; gap: 14px; height: 64px; padding: 0 40px; background: var(--card); border-bottom: 1px solid var(--line); }
+.demo-pill { padding: 6px 12px; border-radius: 999px; background: var(--green-50); color: var(--green-600); font-size: 12px; }
 .topbar, .tabbar { display: none; }
 .content { margin-left: var(--sidebar); min-width: 0; }
 main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
@@ -377,7 +383,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 @media (max-width: 860px) {
-  .sidebar { display: none; }
+  .sidebar, .workspace-bar { display: none; }
   .content { margin-left: 0; }
   .topbar {
     position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px;
@@ -539,6 +545,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 /* --- First-time guest visit pages --- */
+.first-visit{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:40px;margin:-6px 0 14px;border:1px solid var(--green-200);border-radius:var(--r);background:var(--green-50);color:var(--green-800);font-size:14px;font-weight:600}
+.first-visit:hover{background:var(--green-100)}
+.topbar .first-visit{width:auto;min-height:32px;margin:0;padding:0 12px;font-size:12px;white-space:nowrap}
 .visit-page,.welcome-team{display:flex;flex-direction:column;gap:18px}
 .visit-section{padding:24px 26px}
 .visit-section h2{margin-top:6px}
@@ -547,8 +556,18 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .service-card{background:var(--green-50);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px}
 .service-card strong{font-size:13px}
 .service-card p{font-size:11px;margin-top:6px}
-.church-map{margin-top:16px}
-.church-map iframe{display:block;width:100%;height:320px;border:0;border-radius:var(--r)}
+.find-your-way{display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:16px;margin-top:16px}
+.spot-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.spot{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card);color:var(--text);cursor:pointer}
+.spot:hover{border-color:var(--line-strong)}
+.spot.active{border-color:var(--green-600);background:var(--green-50)}
+.spot strong{display:block;font-size:13px;color:var(--ink)}
+.spot small{display:block;font-size:11px;line-height:1.5;margin-top:4px;color:var(--muted)}
+.spot-icon{flex:none;width:14px;height:14px;margin-top:2px;border:2px solid var(--green-700);background:var(--green-100)}
+.spot-icon.area{border-radius:3px}
+.spot-icon.point{border-radius:50%;background:var(--green-700)}
+.spot.active .spot-icon{border-color:#c99a1e;background:#ffd166}
+.church-map{height:380px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
 .map-links{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
 .map-address{font-size:11px;margin-top:10px;color:var(--faint)}
 .visit-form{display:flex;flex-direction:column}
@@ -563,8 +582,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .guest-card h3 small{font-size:10px;color:var(--faint);font-weight:400}
 .guest-card p{font-size:11px;margin-top:6px}
 .guest-card button{margin-top:12px}
-@media(max-width:850px){.service-cards{grid-template-columns:1fr}.guest-list{grid-template-columns:1fr}}
-@media(max-width:600px){.visit-section{padding:20px}.church-map iframe{height:260px}.map-links{flex-direction:column;align-items:stretch}.map-links a{text-align:center}}
+@media(max-width:850px){.service-cards{grid-template-columns:1fr}.guest-list{grid-template-columns:1fr}.find-your-way{grid-template-columns:1fr}.church-map{order:-1}}
+@media(max-width:600px){.visit-section{padding:20px}.church-map{height:300px}.map-links{flex-direction:column;align-items:stretch}.map-links a{text-align:center}}
 
 /* --- Prayer map --- */
 .map-legend{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:11px;color:var(--muted);margin-bottom:14px}.legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}.legend-dot.news-dot{background:var(--danger);border:2px solid #fff;box-shadow:0 0 0 1px #9c3b2788}.legend-dot.region-dot{background:var(--green-600);filter:blur(1px)}
@@ -577,3 +596,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .situational-summary{margin-top:12px}
 @media(max-width:850px){.map-shell{height:380px}}
 @media(max-width:600px){.map-shell{height:300px}.map-legend{gap:6px 16px}}
+
+/* Find a place: the optional "about them" box (AI suggestions). */
+.field textarea.story-input {
+  display: block; width: 100%; margin-top: 8px; min-height: 110px; resize: vertical;
+  background: #fbfcfa; border: 1px solid var(--line-strong); border-radius: 10px;
+  padding: 10px 14px; font: inherit; font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--ink);
+}
+.field textarea.story-input:focus { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
+.story-help { font-size: 13px; margin: -8px 0 16px; }
+.reason.considerations { background: var(--bg); }

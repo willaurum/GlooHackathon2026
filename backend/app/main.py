@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Literal
 
-from . import ai, ai_client, chat, db, matching, pastor_notes
+from . import ai, ai_client, chat, db, matching, pastor_notes, recommendations
 
 log = logging.getLogger(__name__)
 
@@ -34,8 +34,10 @@ class MatchRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     name: str = Field(default='', max_length=100)
     skills: list[Literal['Hospitality', 'Teaching', 'Technology', 'Creativity', 'Music', 'Organization', 'Listening', 'Encouragement']] = Field(default_factory=list, max_length=8)
-    style: Literal['Working with people', 'Behind the scenes', 'Hands-on service']
-    day: Literal['Sunday mornings', 'Saturday mornings', 'Weekday evenings']
+    style: Literal['Working with people', 'Behind the scenes', 'Hands-on service'] = 'Working with people'
+    day: Literal['Sunday mornings', 'Saturday mornings', 'Weekday evenings'] = 'Sunday mornings'
+    # In the person's own words. With an AI provider configured, the AI ranks from this.
+    description: str = Field(default='', max_length=4000)
 
 
 class ConnectionRequest(BaseModel):
@@ -57,10 +59,18 @@ def ministries():
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
-    # Deliberately simple placeholder: replace this ranking with Gloo AI later.
-    ranked = matching.rank(db.list_ministries(), body.skills, body.style, body.day)
-    return {'name': body.name or 'this member', 'style': body.style, 'day': body.day,
-            'engine': 'rules', 'matches': ranked}
+    ministries = db.list_ministries()
+    who = {'name': body.name or 'this member', 'style': body.style, 'day': body.day}
+    note = ''
+    if body.description:
+        try:
+            return {**who, **recommendations.recommend(body.description, ministries)}
+        except recommendations.NotConfigured:
+            pass  # no AI key: the rules below still work
+        except recommendations.Unavailable as error:
+            note = str(error)
+    ranked = matching.rank(ministries, body.skills, body.style, body.day)
+    return {**who, 'engine': 'rules', 'matches': ranked, **({'note': note} if note else {})}
 
 
 @app.get('/api/connections')

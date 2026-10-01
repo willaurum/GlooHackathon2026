@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE } from './api.js';
 import Icon from './Icon.jsx';
+import { chatHistory } from './chatHistory.js';
 
 const greeting = 'Hi! I’m Belong, Grace Community’s assistant. I can help with service times, events, small groups, or finding a place to serve.';
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
 const actionLabels = {
-  request_connection: 'Connection request sent to staff for review',
-  hand_off_to_staff: 'Passed to the church staff'
+  request_connection: 'Connection request saved for staff review',
+  hand_off_to_staff: 'Request saved for staff review'
 };
 const newSessionId = () => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
 
@@ -31,7 +32,7 @@ export default function ChatWidget({ open, setOpen, onRequestFiled }) {
       const response = await fetch(API_BASE + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, messages: history.filter(m => !m.error).map(({ role, content }) => ({ role, content })) })
+        body: JSON.stringify({ session_id: sessionId, messages: chatHistory(history) })
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Something went wrong. Please try again.');
@@ -45,7 +46,7 @@ export default function ChatWidget({ open, setOpen, onRequestFiled }) {
   return <div className="chat">
     {open && <section className="chat-panel" aria-label="Chat with Belong">
       <div className="chat-head"><span className="icon color1"><Icon name="sparkle" size={20} /></span><div><strong>Ask Belong</strong><small>AI assistant · Staff review every request</small></div><button className="close" aria-label="Close chat" onClick={() => setOpen(false)}><Icon name="x" /></button></div>
-      {!configured && <div className="chat-banner">Demo mode: no AI key is configured, so answers come from simple built-in replies.</div>}
+      {!configured && <div className="chat-banner">Demo mode: basic church information and requests are available. AI conversation is not configured.</div>}
       <div className="chat-log" ref={log} aria-live="polite">
         <p className="bubble assistant">{greeting}</p>
         {messages.map((m, i) => <div key={i} className={'bubble ' + m.role + (m.error ? ' error' : '')}>
