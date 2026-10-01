@@ -47,7 +47,7 @@ change the database credentials.
 The React frontend now uses FastAPI and Postgres. Six fictional ministries are seeded from `backend/app/ministries.json` on first backend startup. Startup creates the new tables on existing volumes without deleting data; existing ministry records are not overwritten by subsequent seed runs.
 
 - `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
-- `POST /api/matches`: accepts `{ "description": "A paragraph about yourself..." }` (1–4,000 characters); AI returns up to three suitable open ministries in recommended order, with reasons, details to confirm, and database-sourced ministry contacts.
+- `POST /api/matches`: accepts a `description` (optional, up to 4,000 characters) and optional structured `preferences` (see below); AI returns up to three suitable open ministries in recommended order, with reasons, details to confirm, and database-sourced ministry contacts.
 - `GET /api/connections`: saved connections shared across this prototype workspace.
 - `POST /api/connections`: save `{ "ministry_id": 1, "member": "Jamie" }`; repeated saves are deduplicated by ministry and member name.
 - `DELETE /api/connections/{connection_id}`: remove a saved connection.
@@ -86,3 +86,37 @@ The widget keeps the visible transcript but sends only recent context, so long c
 Chat regression checks: `python -m unittest discover -s backend/tests` (backend dependencies required), and `node --test frontend/src/chatHistory.test.js`.
 
 The chat can suggest existing pages (Overview, Ministries, Find a place, Saved connections, and Our vision) with a **Take me there** button. Clicking switches pages without resetting the conversation. Page suggestions are allowlisted on both the backend and frontend; the model cannot supply arbitrary URLs. Events and small groups remain informational chat answers because they do not have dedicated pages. Navigation is supported in both AI and demo mode.
+
+## Ministry shifts
+
+Each ministry includes `shifts` with a stable ID, ISO date, local church start/end times (`HH:MM`), and filled/total positions. The fictional October 2026 schedule is shown on ministry cards, team details, and recommendations and is included in the AI catalog. Coverage totals count shift positions, not unique volunteers. Saving or approving a connection does not reserve a position.
+
+Startup adds sample shifts to seeded ministries that do not yet have a `shifts` field, preserving existing shifts and other ministry data. API coverage is calculated from shifts. The matching/filtering workflow is unchanged.
+
+
+## Serving preferences and eligibility
+
+Find a place shows three optional written prompts: interests, what serving might look like in the visitor’s life, and anything else to share. There are no time-window controls or requirement checklists. Answers are sent as labeled paragraphs in `description`; exact scheduling and onboarding are left to a conversation with the ministry lead. Nothing is sent to a lead automatically.
+
+Skipping all answers returns the ministry catalog and contacts without calling AI or claiming a personalized match. With answers, AI suggests teams to talk to; general availability prose is context, not a verified schedule. The structured preference API below remains supported for callers that supply explicit constraints, but is not part of the connection form.
+
+`POST /api/matches` accepts:
+
+```json
+{
+  "description": "I enjoy welcoming people and organizing events.",
+  "preferences": {
+    "availability": [{"day": "Sunday", "start_time": "08:00", "end_time": "12:00"}],
+    "preferred_service": "sunday-9",
+    "frequency": "monthly",
+    "earliest_start_date": "2026-10-11",
+    "unavailable_requirements": ["midweek_rehearsal"]
+  }
+}
+```
+
+The server filters before calling AI: entire shifts must fit a single availability window, on/after the start date and today (server calendar date); selected service and frequency must appear in shift metadata; declined requirements exclude ministries; compatible shifts must have capacity. Only surviving shifts and their coverage totals enter the AI catalog and response. Invalid/duplicate/excluded ministry IDs from AI are rejected. With no candidates, the server returns a helpful empty result without calling AI.
+
+Service IDs are `sunday-9`, `sunday-11`, `wednesday-1830`, and `outside-services`; blank means no preference. Frequency is `one-time`, `weekly`, or `monthly`, or null. Windows use local church time in `HH:MM`, with end after start (maximum 21 windows). Requirements are `background_check`, `onboarding`, `shadowing`, `audition`, `midweek_rehearsal`, `care_training`, and `confidentiality`. Unchecked requirements still require confirmation, not proof of completion. Recurring frequency metadata means the team accepts that commitment, not that every future date has been scheduled.
+
+Startup adds missing eligibility metadata to sample ministries and known shift IDs without replacing saved times, counts, or existing metadata. Unknown service/frequency metadata is excluded when that preference is selected. Legacy nonempty `days_and_times` prose or unrecognized service text returns a clarification rather than bypassing checks. Description-only clients still work, with availability confirmation shown. Schedule restrictions in prose are not independently parsed; confirm availability directly with the team. The website chat reads ministry facts without ranking them and points visitors to Find a place for personalized recommendations.

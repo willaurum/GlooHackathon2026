@@ -1,0 +1,4 @@
+- Format the get connected questions to have none of them be required and for it to not be too annoying to fill out.
+  - Remove the time windows
+  - Remove the anything you ar eunable to do
+  - This is meant to get you in contact with a person.
