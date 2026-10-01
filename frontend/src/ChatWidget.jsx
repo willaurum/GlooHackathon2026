@@ -1,16 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE } from './api.js';
 import Icon from './Icon.jsx';
+import { chatHistory } from './chatHistory.js';
+import { navigationPage, followSuggestion } from './chatNavigation.js';
+import { formatReply } from './chatFormat.js';
 
 const greeting = 'Hi! I’m Belong, Grace Community’s assistant. I can help with service times, events, small groups, or finding a place to serve.';
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
 const actionLabels = {
-  request_connection: 'Connection request sent to staff for review',
-  hand_off_to_staff: 'Passed to the church staff'
+  request_connection: 'Connection request saved for staff review',
+  hand_off_to_staff: 'Request saved for staff review'
 };
+const Segments = ({ segments }) => segments.map((s, i) =>
+  s.bold ? <strong key={i}>{s.text}</strong> : s.italic ? <em key={i}>{s.text}</em> : s.text);
+const Reply = ({ text }) => <div className="chat-text">{formatReply(text).map((block, i) => block.type === 'p'
+  ? <p key={i}><Segments segments={block.segments} /></p>
+  : <block.type key={i}>{block.items.map((item, j) => <li key={j}><Segments segments={item} /></li>)}</block.type>)}</div>;
 const newSessionId = () => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
 
-export default function ChatWidget({ open, setOpen, onRequestFiled }) {
+export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }) {
   const [messages, setMessages] = useState([]),
     [input, setInput] = useState(''),
     [busy, setBusy] = useState(false),
@@ -31,13 +39,13 @@ export default function ChatWidget({ open, setOpen, onRequestFiled }) {
       const response = await fetch(API_BASE + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, messages: history.filter(m => !m.error).map(({ role, content }) => ({ role, content })) })
+        body: JSON.stringify({ session_id: sessionId, messages: chatHistory(history) })
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Something went wrong. Please try again.');
       setConfigured(body.configured);
       setMessages(previous => [...previous, { role: 'assistant', content: body.reply, actions: body.actions }]);
-      if (body.actions?.length) onRequestFiled?.();
+      if (body.actions?.some(a => a.request_id)) onRequestFiled?.();
     } catch (err) {
       setMessages(previous => [...previous, { role: 'assistant', content: err.message, error: true }]);
     } finally { setBusy(false); }
@@ -49,8 +57,14 @@ export default function ChatWidget({ open, setOpen, onRequestFiled }) {
       <div className="chat-log" ref={log} aria-live="polite">
         <p className="bubble assistant">{greeting}</p>
         {messages.map((m, i) => <div key={i} className={'bubble ' + m.role + (m.error ? ' error' : '')}>
-          {m.content}
-          {m.actions?.map(a => <span className="chat-action" key={a.request_id}><Icon name="check" size={16} />{actionLabels[a.tool] ?? 'Done'}</span>)}
+          {m.role === 'assistant' && !m.error ? <Reply text={m.content} /> : m.content}
+          {m.actions?.map(a => {
+            const page = navigationPage(a);
+            if (page) return <div className="chat-page" key={a.page}><strong>{page}</strong><button type="button" className="secondary" aria-label={'Take me to ' + page} onClick={() => {
+              if (followSuggestion(a, onNavigate)) setOpen(false);
+            }}>Take me there<Icon name="arrow" size={16} /></button></div>;
+            return a.request_id && actionLabels[a.tool] ? <span className="chat-action" key={a.request_id}><Icon name="check" size={16} />{actionLabels[a.tool]}</span> : null;
+          })}
         </div>)}
         {busy && <p className="bubble assistant typing">Thinking…</p>}
         {!messages.length && <div className="chat-starters">{starters.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}</div>}

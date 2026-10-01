@@ -358,6 +358,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .bubble.error { background: var(--danger-50); color: var(--danger); }
 .bubble.typing { color: var(--faint); font-style: italic; }
 .chat-action { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; color: var(--green-700); }
+.chat-page { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-strong); white-space: normal; }
+.chat-page strong { font-size: 13px; }
+.chat-page .secondary { font-size: 14px; padding: 8px 12px; }
+.chat-text p, .chat-text ul, .chat-text ol { margin: 0; }
+.chat-text > * + * { margin-top: 8px; }
+.chat-text ul, .chat-text ol { padding-left: 20px; white-space: normal; }
+.chat-text li + li { margin-top: 4px; }
 .chat-starters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .chat-starters button { min-height: 38px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--card); color: var(--green-700); font-size: 14px; }
 .chat-starters button:hover { border-color: var(--green-600); background: var(--green-50); }
