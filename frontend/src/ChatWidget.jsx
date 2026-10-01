@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { chatHistory } from './chatHistory.js';
 import { navigationPage, followSuggestion } from './chatNavigation.js';
+import { formatReply } from './chatFormat.js';
 
 const greeting = 'Hi! I’m Belong, your guide to the church and this site. Ask about service times, events, or small groups—or let me point you to the right page.';
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
@@ -8,7 +9,12 @@ const actionLabels = {
   request_connection: 'Connection request saved for staff review',
   hand_off_to_staff: 'Request saved for staff review'
 };
-const newSessionId = () => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
+const Segments = ({ segments }) => segments.map((s, i) =>
+  s.bold ? <strong key={i}>{s.text}</strong> : s.italic ? <em key={i}>{s.text}</em> : s.text);
+const Reply = ({ text }) => <div className="chat-text">{formatReply(text).map((block, i) => block.type === 'p'
+  ? <p key={i}><Segments segments={block.segments} /></p>
+  : <block.type key={i}>{block.items.map((item, j) => <li key={j}><Segments segments={item} /></li>)}</block.type>)}</div>;
+const newSessionId =() => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
 
 export default function ChatWidget({ onRequestFiled, onNavigate }) {
   const [open, setOpen] = useState(false),
@@ -50,7 +56,7 @@ export default function ChatWidget({ onRequestFiled, onNavigate }) {
       <div className="chat-log" ref={log} aria-live="polite">
         <p className="bubble assistant">{greeting}</p>
         {messages.map((m, i) => <div key={i} className={'bubble ' + m.role + (m.error ? ' error' : '')}>
-          {m.content}
+          {m.role === 'assistant' && !m.error ? <Reply text={m.content} /> : m.content}
           {m.actions?.map(a => {
             const page = navigationPage(a);
             if (page) return <div className="chat-page" key={a.page}><strong>{page}</strong><button type="button" className="secondary" aria-label={'Take me to ' + page} onClick={() => {

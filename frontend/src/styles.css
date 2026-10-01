@@ -30,3 +30,4 @@
 .requirement-choices input { width: auto; }
 .eligibility-notes { padding-left: 18px; font-size: 12px; line-height: 1.6; }
 @media(max-width:1100px) { .availability-window { grid-template-columns: 1fr 1fr; } }
+.chat-text p,.chat-text ul,.chat-text ol{margin:0}.chat-text>*+*{margin-top:7px}.chat-text ul,.chat-text ol{padding-left:18px;white-space:normal}.chat-text li+li{margin-top:4px}.chat-text strong{font-weight:700}
