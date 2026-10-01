@@ -61,6 +61,24 @@ class ChatTests(unittest.TestCase):
         chat.collect_action(self.actions, 'suggest_page', result)
         self.assertEqual(len(self.actions), 1)
 
+    def test_sections_are_allowlisted_per_page(self):
+        result = chat.call_tool('suggest_page', json.dumps({'page': 'plan-visit', 'section': 'map'}))
+        self.assertEqual((result['section'], result['section_title']), ('map', 'Map & directions'))
+        chat.collect_action(self.actions, 'suggest_page', result)
+        self.assertEqual(self.actions, [{'tool': 'suggest_page', 'page': 'plan-visit', 'title': 'Plan your visit',
+                                         'section': 'map', 'section_title': 'Map & directions'}])
+        for page, section in (('home', 'map'), ('give', 'service-times'), ('plan-visit', 'https://example.com'),
+                              ('plan-visit', '__proto__'), ('plan-visit', ['map'])):
+            self.assertIn('error', chat.call_tool('suggest_page', json.dumps({'page': page, 'section': section})))
+        self.assertNotIn('section', chat.suggest_page('plan-visit', ''))
+
+    def test_demo_questions_land_on_a_section(self):
+        for question, section in [('Where do I park?', 'good-to-know'), ('Can I get directions?', 'map')]:
+            with self.subTest(question=question):
+                self.actions.clear()
+                self.reply(question)
+                self.assertEqual([(a['page'], a.get('section')) for a in self.actions], [('plan-visit', section)])
+
     def test_ai_navigation_tool_is_returned_to_frontend(self):
         call = SimpleNamespace(id='nav1', function=SimpleNamespace(name='suggest_page', arguments='{"page":"find-place"}'))
         responses = [

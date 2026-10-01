@@ -23,7 +23,8 @@ export default function App() {
   const [route, setRoute] = useState(currentRoute),
     [chatOpen, setChatOpen] = useState(false),
     [requestsVersion, setRequestsVersion] = useState(0),
-    [savedCount, setSavedCount] = useState(0);
+    [savedCount, setSavedCount] = useState(0),
+    [scrollTarget, setScrollTarget] = useState(null);
   const params = new URLSearchParams(window.location.search);
   const giveSession = window.location.pathname.startsWith('/give') ? params.get('session_id') || '' : '';
   const giveStatus = giveSession ? params.get('status') || '' : '';
@@ -37,13 +38,28 @@ export default function App() {
   // Lock page scroll behind the full-screen chat on phones.
   useEffect(() => { document.body.classList.toggle('chat-open', chatOpen); }, [chatOpen]);
 
-  function go(next) {
+  // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
+  function go(next, sectionId) {
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/#/' + next);
     setRoute(next);
     setChatOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setScrollTarget({ id: sectionId ?? null });
   }
+  useEffect(() => {
+    if (!scrollTarget) return;
+    const top = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!scrollTarget.id) return top();
+    // A section can render only after its page loads data, so wait up to 5 seconds for it.
+    let tries = 0;
+    const timer = setInterval(() => {
+      const element = document.getElementById(scrollTarget.id);
+      if (!element && ++tries < 50) return;
+      clearInterval(timer);
+      element ? element.scrollIntoView({ behavior: 'smooth', block: 'start' }) : top();
+    }, 100);
+    return () => clearInterval(timer);
+  }, [scrollTarget]);
 
   const section = route.split('/')[0];
   return <div className="app">

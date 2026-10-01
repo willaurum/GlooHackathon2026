@@ -195,6 +195,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .feature .progress { width: 100%; }
 .feature .link { margin-top: 4px; }
 .week { padding: 24px; }
+/* Chat links can scroll straight to these sections; leave room above them. */
+#home-service-times, .visit-section { scroll-margin-top: 24px; }
 .week-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .week-head small { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 .services { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -405,6 +407,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 @media (max-width: 860px) {
   .sidebar { display: none; }
   .content { margin-left: 0; }
+  #home-service-times, .visit-section { scroll-margin-top: calc(var(--topbar) + 16px); }
   .topbar {
     position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px;
     height: var(--topbar); padding: 0 8px 0 12px;

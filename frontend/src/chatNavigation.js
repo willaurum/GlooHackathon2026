@@ -9,14 +9,31 @@ const pages = {
   give: ['Give', 'give'],
   'prayer-map': ['Prayer map', 'prayer/map'],
 };
+// Sections within a page (backend chat.SITE_SECTIONS): [label, element id to scroll to].
+const sections = {
+  home: { 'service-times': ['Service times', 'home-service-times'] },
+  'plan-visit': {
+    'service-times': ['Service times', 'visit-service-times'],
+    'what-to-expect': ['What to expect', 'visit-what-to-expect'],
+    'good-to-know': ['Kids, parking & accessibility', 'visit-good-to-know'],
+    map: ['Map & directions', 'visit-map'],
+    'next-steps': ['A good place to start', 'visit-next-steps'],
+    'sign-up': ['Let us know you’re coming', 'visit-sign-up'],
+  },
+};
+
+// An unknown section falls back to the top of a valid page.
+const section = action => Object.hasOwn(sections, action.page) && Object.hasOwn(sections[action.page], action.section)
+  ? sections[action.page][action.section] : null;
 
 export function navigationPage(action) {
-  return action?.tool === 'suggest_page' && Object.hasOwn(pages, action.page)
-    ? pages[action.page][0] : null;
+  if (action?.tool !== 'suggest_page' || !Object.hasOwn(pages, action.page)) return null;
+  const part = section(action);
+  return pages[action.page][0] + (part ? ' · ' + part[0] : '');
 }
 
 export function followSuggestion(action, onNavigate) {
   if (!navigationPage(action) || !onNavigate) return false;
-  onNavigate(pages[action.page][1]);
+  onNavigate(pages[action.page][1], section(action)?.[1]);
   return true;
 }

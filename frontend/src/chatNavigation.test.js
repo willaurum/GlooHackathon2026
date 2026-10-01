@@ -27,3 +27,15 @@ test('unknown pages, external URLs, and request actions cannot navigate', () => 
   }
   assert.deepEqual(navigated, []);
 });
+
+test('sections scroll to an allowlisted element and unknown sections fall back to the page top', () => {
+  const calls = [];
+  const go = (route, id) => calls.push([route, id]);
+  const map = { tool: 'suggest_page', page: 'plan-visit', section: 'map' };
+  assert.equal(navigationPage(map), 'Plan your visit · Map & directions');
+  followSuggestion(map, go);
+  for (const section of ['map', 'constructor', '__proto__', 'visit-map', '#top'])
+    followSuggestion({ tool: 'suggest_page', page: 'home', section }, go);
+  assert.equal(navigationPage({ tool: 'suggest_page', page: 'give', section: 'map' }), 'Give');
+  assert.deepEqual(calls, [['guests/plan', 'visit-map'], ...Array(5).fill(['', undefined])]);
+});

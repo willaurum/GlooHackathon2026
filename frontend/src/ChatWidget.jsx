@@ -60,7 +60,7 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
           {m.role === 'assistant' && !m.error ? <Reply text={m.content} /> : m.content}
           {m.actions?.map(a => {
             const page = navigationPage(a);
-            if (page) return <div className="chat-page" key={a.page}><strong>{page}</strong><button type="button" className="secondary" aria-label={'Take me to ' + page} onClick={() => {
+            if (page) return <div className="chat-page" key={a.page + '/' + (a.section ?? '')}><strong>{page}</strong><button type="button" className="secondary" aria-label={'Take me to ' + page} onClick={() => {
               if (followSuggestion(a, onNavigate)) setOpen(false);
             }}>Take me there<Icon name="arrow" size={16} /></button></div>;
             return a.request_id && actionLabels[a.tool] ? <span className="chat-action" key={a.request_id}><Icon name="check" size={16} />{actionLabels[a.tool]}</span> : null;

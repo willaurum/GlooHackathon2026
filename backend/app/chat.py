@@ -38,18 +38,40 @@ SITE_PAGES = {
     'give': ('Give', 'Give to the church online.'),
     'prayer-map': ('Prayer map', "Pray for the church's missionaries and the regions where they serve."),
 }
+# Parts of a page the visitor can be scrolled to. The frontend maps each one to an element id.
+SITE_SECTIONS = {
+    'home': {'service-times': 'Service times'},
+    'plan-visit': {
+        'service-times': 'Service times',
+        'what-to-expect': 'What to expect',
+        'good-to-know': 'Kids, parking & accessibility',
+        'map': 'Map & directions',
+        'next-steps': 'A good place to start',
+        'sign-up': "Let us know you're coming",
+    },
+}
+SECTION_KEYS = sorted({key for sections in SITE_SECTIONS.values() for key in sections})
 
 
-def suggest_page(page):
+def suggest_page(page, section=None):
     if not isinstance(page, str) or page not in SITE_PAGES:
         return {'error': 'Choose an existing page: ' + ', '.join(SITE_PAGES)}
     title, description = SITE_PAGES[page]
-    return {'page': page, 'title': title, 'message': description}
+    result = {'page': page, 'title': title, 'message': description}
+    if section:
+        sections = SITE_SECTIONS.get(page, {})
+        if not isinstance(section, str) or section not in sections:
+            return {'error': f'{page} has no section {section!r}. ' + (
+                'Choose one of: ' + ', '.join(sections) if sections else 'Leave section out for this page.')}
+        result |= {'section': section, 'section_title': sections[section]}
+    return result
 
 
 def collect_action(actions, tool, result):
     if tool == 'suggest_page' and result.get('page') in SITE_PAGES:
         action = {'tool': tool, 'page': result['page'], 'title': SITE_PAGES[result['page']][0]}
+        if result.get('section') in SITE_SECTIONS.get(result['page'], {}):
+            action |= {'section': result['section'], 'section_title': SITE_SECTIONS[result['page']][result['section']]}
         if action not in actions:
             actions.append(action)
     elif 'request_id' in result:
@@ -89,6 +111,7 @@ How to work:
 - You are a site guide. For personalized serving or ministry recommendations, call suggest_page with find-place. Briefly explain that they can share a little about themselves there. Do not interview them, rank ministries, or duplicate the Find a place experience in chat.
 - For browsing teams or contacts, suggest ministries. Use search_ministries only for factual questions about specific teams or when a person explicitly requests a connection to a named team; it does not rank matches.
 - Call suggest_page whenever recommending a page so the visitor gets a clickable Take me there button. Available pages: {pages}. Never invent pages or URLs. Navigation happens only when the visitor clicks. The button appears only when you call the tool, so never write "Take me there" or a page key in your reply text.
+- When one part of a page answers the question, also pass section so the visitor lands on it: {sections}. For example, parking or accessibility questions go to plan-visit with good-to-know, and directions go to plan-visit with map.
 - Answer questions about upcoming events, service times, FAQs, and small groups with the information tools. You may also suggest calendar for events or plan-visit for first-time visitors. There is no Small groups page; answer those questions here instead of inventing links.
 - Only call request_connection after the person clearly says yes to being connected and has given their name and an email or phone number. Tell them a staff member reviews every request before anyone reaches out.
 - Requests are only saved in the church workspace for staff review. No notification, email, or introduction is sent automatically, even after approval. Never claim staff have been notified or promise a response time.
@@ -104,6 +127,8 @@ TOOLS = [
         'description': 'Offer a clickable Take me there suggestion for an existing site page. Use find-place for personalized ministry recommendations, ministries for team browsing, plan-visit for first-time visitors, calendar for events, home for service times and the site overview, saved-connections for saved connections, give for giving, prayer-map for missions prayer.',
         'parameters': {'type': 'object', 'properties': {
             'page': {'type': 'string', 'enum': list(SITE_PAGES)},
+            'section': {'type': 'string', 'enum': SECTION_KEYS, 'description': 'Optional part of the page to scroll to. Valid sections: ' + '; '.join(
+                f"{page}: {', '.join(sections)}" for page, sections in SITE_SECTIONS.items()) + '.'},
         }, 'required': ['page'], 'additionalProperties': False},
     }},
     {'type': 'function', 'function': {
@@ -235,7 +260,7 @@ def call_tool(name, arguments):
         if not isinstance(args, dict):
             return {'error': 'Arguments must be a JSON object.'}
         if name == 'suggest_page':
-            return suggest_page(args.get('page'))
+            return suggest_page(args.get('page'), args.get('section'))
         if name == 'get_church_info':
             return {'church': db.get_church_info(), 'faqs': db.list_content('faqs')}
         if name == 'list_events':
@@ -328,7 +353,7 @@ def demo_tools(session_id, actions):
                    contact=contact.group(0), note=details[:500])
 
     return {
-        'suggest_page': lambda page: use('suggest_page', page=page),
+        'suggest_page': lambda page, section=None: use('suggest_page', page=page, **({'section': section} if section else {})),
         'get_church_info': lambda: use('get_church_info'),
         'list_events': lambda: use('list_events')['events'],
         'list_small_groups': lambda: use('list_small_groups')['groups'],
@@ -378,19 +403,21 @@ def demo_reply(message: str, tools: dict, history=None) -> str:
                                   if saved else " I couldn't save your request for staff review.")
         if text.strip(' .!') in ('cancel', 'never mind', 'nevermind', 'no thanks'):
             return 'Okay, I will not save a connection request. ' + DEMO_MENU
-        page = next((key for key, phrases in (
-            ('find-place', ['find a place', 'recommend', 'where can i serve', 'where should i serve']),
-            ('saved-connections', ['saved connections', 'saved requests', 'my connections']),
-            ('plan-visit', ['plan a visit', 'plan my visit', 'first visit', 'first time visiting']),
-            ('calendar', ['calendar', 'church calendar']),
-            ('give', ['give online', 'donate', 'giving', 'tithe']),
-            ('prayer-map', ['prayer map', 'missionaries']),
-            ('home', ['home page', 'homepage', 'main page']),
-            ('ministries', ['browse ministries', 'all ministries', 'ministry contacts', 'ministry teams', 'ministries page']),
-        ) if any(phrase in text for phrase in phrases)), None)
+        page, section = next(((key, part) for key, part, phrases in (
+            ('find-place', None, ['find a place', 'recommend', 'where can i serve', 'where should i serve']),
+            ('saved-connections', None, ['saved connections', 'saved requests', 'my connections']),
+            ('plan-visit', 'good-to-know', ['parking', 'where do i park', 'accessib', 'wheelchair', 'kids check-in']),
+            ('plan-visit', 'map', ['directions', 'how do i get there', 'where are you located']),
+            ('plan-visit', None, ['plan a visit', 'plan my visit', 'first visit', 'first time visiting']),
+            ('calendar', None, ['calendar', 'church calendar']),
+            ('give', None, ['give online', 'donate', 'giving', 'tithe']),
+            ('prayer-map', None, ['prayer map', 'missionaries']),
+            ('home', None, ['home page', 'homepage', 'main page']),
+            ('ministries', None, ['browse ministries', 'all ministries', 'ministry contacts', 'ministry teams', 'ministries page']),
+        ) if any(phrase in text for phrase in phrases)), (None, None))
         # Care and event questions go to their tools; the prayer map is a page, not a prayer request.
         if page and not any(word in text.replace('prayer map', '') for word in ('event', 'small group', 'prayer', 'struggling')):
-            return format_demo_result(tools['suggest_page'](page=page))
+            return format_demo_result(tools['suggest_page'](page=page, section=section))
         intent = demo_intent(text)
         details = message
         # Continue only an unfinished connection flow, stopping at a topic change or completed request.
@@ -447,7 +474,8 @@ def run(messages, session_id, clients=None):
         reply = OFF_TOPIC.format(**info)
         db.log_chat(session_id, 'guardrail', {'content': reply})
         return {'reply': reply, 'configured': True, 'actions': []}
-    convo = [{'role': 'system', 'content': SYSTEM_PROMPT.format(church=info['name'], pages=', '.join(SITE_PAGES))}, *messages]
+    convo = [{'role': 'system', 'content': SYSTEM_PROMPT.format(church=info['name'], pages=', '.join(SITE_PAGES), sections='; '.join(
+        f"{page}: {', '.join(sections)}" for page, sections in SITE_SECTIONS.items()))}, *messages]
     actions = []
     for _ in range(MAX_STEPS):
         response, provider = complete(clients, convo, session_id)

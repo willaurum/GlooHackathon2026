@@ -53,7 +53,7 @@ export default function Home({ go, onAsk }) {
       </a>
     </div>
 
-    {info?.services?.length > 0 && <section className="card week">
+    {info?.services?.length > 0 && <section className="card week" id="home-service-times">
       <div className="week-head">
         <div><div className="eyebrow">Join us</div><h2>Service times</h2></div>
         {info.address && <small><Icon name="pin" size={16} />{info.address}</small>}
