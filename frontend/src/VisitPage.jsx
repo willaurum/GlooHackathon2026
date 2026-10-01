@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import ChurchMap from './ChurchMap.jsx';
+import { EXAMPLE_CAMPUS, MAP_SPOTS } from './visitMap.js';
 
 const TOKEN_KEY = 'belong.visitToken';
-const practicalIds = [0, 1, 3];
 
 function readToken() {
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
@@ -26,7 +26,8 @@ export default function VisitPage() {
     [service, setService] = useState(''),
     [partySize, setPartySize] = useState(1),
     [kids, setKids] = useState(''),
-    [wantsHost, setWantsHost] = useState(true);
+    [wantsHost, setWantsHost] = useState(true),
+    [spotId, setSpotId] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -90,7 +91,7 @@ export default function VisitPage() {
   if (loading) return <p role="status" className="muted">Loading…</p>;
   if (error && !church) return <div className="api-message" role="alert">{error}</div>;
   const info = church.info;
-  const faqs = church.faqs.filter(f => practicalIds.includes(f.id));
+  const directions = encodeURIComponent(EXAMPLE_CAMPUS.directionsQuery);
   const nextSteps = church.events.filter(ev => ev.audience === 'Newcomers' || ev.audience === 'Everyone' || ev.audience === 'Families').slice(0, 3);
 
   return <div className="visit-page">
@@ -114,15 +115,25 @@ export default function VisitPage() {
     </section>
 
     <section className="card visit-section">
-      <div className="eyebrow">GOOD TO KNOW</div>
-      <h2>Kids, parking &amp; accessibility</h2>
-      {faqs.map(f => <p key={f.id}><b>{f.question}</b> {f.answer}</p>)}
-    </section>
-
-    <section className="card visit-section">
-      <div className="eyebrow">FIND US</div>
-      <h2>Map &amp; directions</h2>
-      <ChurchMap query={info.map_query} address={info.address} />
+      <div className="eyebrow">FIND YOUR WAY</div>
+      <h2>Parking, entrances &amp; kids check-in</h2>
+      <p>Tap a spot to see it on the map.</p>
+      <div className="find-your-way">
+        <ul className="spot-list">
+          {MAP_SPOTS.map(s => <li key={s.id}>
+            <button type="button" className={'spot' + (s.id === spotId ? ' active' : '')} aria-pressed={s.id === spotId} onClick={() => setSpotId(s.id === spotId ? null : s.id)}>
+              <span className={'spot-icon ' + s.kind} aria-hidden="true" />
+              <span><strong>{s.label}</strong>{s.id === spotId && <small>{s.text}</small>}</span>
+            </button>
+          </li>)}
+        </ul>
+        <ChurchMap building={EXAMPLE_CAMPUS.building} spots={MAP_SPOTS} activeId={spotId} onSelect={setSpotId} />
+      </div>
+      <div className="map-links">
+        <a className="btn primary" href={`https://www.google.com/maps/dir/?api=1&destination=${directions}`} target="_blank" rel="noopener noreferrer">Get directions</a>
+        <a className="btn secondary" href={`https://maps.apple.com/?daddr=${directions}`} target="_blank" rel="noopener noreferrer">Open in Apple Maps</a>
+      </div>
+      <p className="map-address">Example campus: {EXAMPLE_CAMPUS.name}, {EXAMPLE_CAMPUS.address}. Parking and door labels are illustrative.</p>
     </section>
 
     {nextSteps.length > 0 && <section className="card visit-section">
