@@ -1,18 +1,23 @@
 """One-sentence summaries for live headlines, written by an LLM.
 
 Providers follow the same env vars as the chat agent (AI_PROVIDER, AI_FALLBACK,
-GLOO_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY); all speak the OpenAI
-chat-completions format. With no key, or if every call fails, each summary
-falls back to the headline plus its source so the map still works.
+OLLAMA_BASE_URL, GLOO_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY); all speak the
+OpenAI chat-completions format. The default is the team's Ollama server (reached
+through the SSH tunnel), which needs no key and has no content guardrails. If no
+provider answers, each summary stays as the article's own description so the map
+still works.
 """
 
 import json
 import logging
 import os
+import re
 
 log = logging.getLogger(__name__)
 
 PROVIDERS = {
+    "ollama": {"base_url": "http://localhost:11434/v1", "key": "OLLAMA_API_KEY",
+               "model": ("OLLAMA_MODEL", "gpt-oss:20b"), "extra_body": {}},
     "gloo": {"base_url": "https://platform.ai.gloo.com/ai/v2/guarded", "key": "GLOO_API_KEY",
              "model": ("GLOO_MODEL", "gloo-anthropic-claude-haiku-4.5"), "extra_body": {"auto_routing": False}},
     "openai": {"base_url": "https://api.openai.com/v1", "key": "OPENAI_API_KEY",
@@ -22,20 +27,34 @@ PROVIDERS = {
 }
 
 PROMPT = """You write short context lines for a prayer map used by a church. You are given numbered news stories from {country}, each a headline and a snippet.
-For each story write ONE neutral sentence (under 35 words) saying what happened and who it affects.
+For each story write ONE neutral sentence (under 35 words) saying what happened. Mention who is affected only if the text says so.
 Use ONLY what the headline and snippet say. Do not add names, numbers, causes or details they do not state. Do not editorialize.
 Reply with only a JSON array of {n} strings, in the same order."""
 
 
 def _chain():
     chain = []
-    for name in (os.environ.get("AI_PROVIDER", "gloo"), os.environ.get("AI_FALLBACK", "")):
+    for name in (os.environ.get("AI_PROVIDER", "ollama"), os.environ.get("AI_FALLBACK", "")):
         name = name.strip().lower()
         spec = PROVIDERS.get(name)
         key = os.environ.get(spec["key"], "").strip() if spec else ""
+        if name == "ollama":
+            key = key or "ollama"  # the SDK requires a value; a local Ollama server ignores it
         if key and name not in [c[0] for c in chain]:
             chain.append((name, os.environ.get(*spec["model"]), spec["extra_body"], key))
     return chain
+
+
+def _base_url(name):
+    if name == "ollama":
+        return os.environ.get("OLLAMA_BASE_URL", "").strip() or PROVIDERS[name]["base_url"]
+    return PROVIDERS[name]["base_url"]
+
+
+def _strip_thinking(text):
+    """Drop <think>...</think> reasoning blocks that some local models emit."""
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text)
+    return re.sub(r"<think>[\s\S]*", "", text).strip()
 
 
 def _fallback(item):
@@ -52,6 +71,7 @@ def _ask(clients, country, stories):
         try:
             text = client.chat.completions.create(
                 model=model, messages=messages, extra_body=extra_body).choices[0].message.content or ""
+            text = _strip_thinking(text)
             start, end = text.find("["), text.rfind("]")
             summaries = json.loads(text[start:end + 1])
             if len(summaries) == len(headlines) and all(isinstance(s, str) and s.strip() for s in summaries):
@@ -69,8 +89,8 @@ def add_summaries(items):
     if chain:
         try:
             from openai import OpenAI
-            clients = [(name, model, extra, OpenAI(api_key=key, base_url=PROVIDERS[name]["base_url"],
-                                                   timeout=45, max_retries=1))
+            clients = [(name, model, extra, OpenAI(api_key=key, base_url=_base_url(name),
+                                                   timeout=180, max_retries=0))
                        for name, model, extra, key in chain]
         except ImportError:
             log.warning("openai package not installed; using fallback summaries")

@@ -21,7 +21,8 @@ API = "https://newsdata.io/api/1/latest"
 LIVE_ID_BASE = 1000  # synthetic seed rows use ids below this
 PER_COUNTRY = 5
 MIN_DESCRIPTION = 60
-SKIP_TITLE = re.compile(r"epaper|lotto|horoscope|price today|shares (down|up)|stock|^\$\d|esim|\(CVE:", re.I)
+MAX_PAGES = 2  # a thin first page (duplicates, ads) gets one more page
+SKIP_TITLE = re.compile(r"rehab|^best |\$\d|epaper|lotto|horoscope|price today|shares (down|up)|stock|^\$\d|esim|\(CVE:", re.I)
 # Some English-tagged items carry Albanian text; skip those descriptions.
 NON_ENGLISH = re.compile(r"\b(në|të|dhe|është|për|nga)\b", re.I)
 
@@ -43,19 +44,29 @@ def _clean(text):
     return " ".join(text.split())
 
 
-def _fetch(name, api_key):
-    query = urllib.parse.urlencode({
-        "apikey": api_key, "qInTitle": name, "language": "en", "size": 10,
-        "excludecategory": "entertainment,sports,lifestyle,food",
-    })
+def _fetch(name, api_key, page=None):
+    """One page of results plus the token for the next page (None when there is no more)."""
+    params = {"apikey": api_key, "qInTitle": name, "language": "en", "size": 10,
+              "excludecategory": "entertainment,sports,lifestyle,food"}
+    if page:
+        params["page"] = page
     try:
-        with urllib.request.urlopen(f"{API}?{query}", timeout=30) as response:
-            return json.loads(response.read().decode("utf-8")).get("results") or []
+        with urllib.request.urlopen(f"{API}?{urllib.parse.urlencode(params)}", timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data.get("results") or [], data.get("nextPage")
     except urllib.error.HTTPError as err:
         log.warning("NewsData %s returned HTTP %s", name, err.code)
     except (urllib.error.URLError, TimeoutError, ValueError) as err:
         log.warning("NewsData %s failed: %r", name, err)
-    return []
+    return [], None
+
+
+def is_usable(name, title, description):
+    return bool(title and description and len(description) >= MIN_DESCRIPTION
+                and not SKIP_TITLE.search(title)
+                and not description.lower().startswith(title.lower()[:60])
+                and not NON_ENGLISH.search(description)
+                and name.lower() in title.lower())
 
 
 def _item(code, article, title, description):
@@ -82,18 +93,20 @@ def fetch_news(api_key=None):
         raise RuntimeError("NEWSDATA_API_KEY is not set")
     items = []
     for code, (name, *_rest) in COUNTRIES.items():
-        picked, seen = [], set()
-        for article in _fetch(name, api_key):
-            title = _clean(article.get("title"))
-            description = _clean(article.get("description"))
-            key = re.sub(r"\W+", " ", title.lower()).strip()
-            if (not title or not article.get("link") or key in seen or SKIP_TITLE.search(title)
-                    or len(description) < MIN_DESCRIPTION or description.lower().startswith(title.lower()[:60])
-                    or NON_ENGLISH.search(description) or name.lower() not in title.lower()):
-                continue
-            seen.add(key)
-            picked.append(_item(code, article, title, description))
-            if len(picked) == PER_COUNTRY:
+        picked, seen, page = [], set(), None
+        for _ in range(MAX_PAGES):
+            articles, page = _fetch(name, api_key, page)
+            for article in articles:
+                title = _clean(article.get("title"))
+                description = _clean(article.get("description"))
+                key = re.sub(r"\W+", " ", title.lower()).strip()
+                if not article.get("link") or key in seen or not is_usable(name, title, description):
+                    continue
+                seen.add(key)
+                picked.append(_item(code, article, title, description))
+                if len(picked) == PER_COUNTRY:
+                    break
+            if len(picked) == PER_COUNTRY or not page:
                 break
         log.info("%s: %d articles", name, len(picked))
         items.extend(picked)

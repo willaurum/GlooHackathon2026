@@ -20,10 +20,14 @@ services:
   backend:
     build: ./backend
     container_name: gloo-backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-gloo}:${POSTGRES_PASSWORD:-gloo}@db:5432/${POSTGRES_DB:-gloo}
       NEWSDATA_API_KEY: ${NEWSDATA_API_KEY:-}
-      AI_PROVIDER: ${AI_PROVIDER:-gloo}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss:20b}
       AI_FALLBACK: ${AI_FALLBACK:-}
       GLOO_API_KEY: ${GLOO_API_KEY:-}
       GLOO_MODEL: ${GLOO_MODEL:-gloo-anthropic-claude-haiku-4.5}
