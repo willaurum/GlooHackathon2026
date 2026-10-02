@@ -22,6 +22,15 @@ services:
     container_name: gloo-backend
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-gloo}:${POSTGRES_PASSWORD:-gloo}@db:5432/${POSTGRES_DB:-gloo}
+      NEWSDATA_API_KEY: ${NEWSDATA_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-gloo}
+      AI_FALLBACK: ${AI_FALLBACK:-}
+      GLOO_API_KEY: ${GLOO_API_KEY:-}
+      GLOO_MODEL: ${GLOO_MODEL:-gloo-anthropic-claude-haiku-4.5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
     depends_on:
       db:
         condition: service_healthy

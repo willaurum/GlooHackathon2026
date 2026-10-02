@@ -55,6 +55,10 @@ def initialize():
         for news in json.loads(Path(__file__).with_name('news.json').read_text(encoding='utf-8')):
             conn.execute("INSERT INTO news_events VALUES (%s, %s) ON CONFLICT DO NOTHING",
                          (news['id'], Jsonb(news)))
+    # Real headlines pre-fetched by scripts/fetch_news.py; refreshed on every startup.
+    live = Path(__file__).with_name('news_live.json')
+    if live.exists():
+        replace_live_news(json.loads(live.read_text(encoding='utf-8')), 1000)
 
 
 def list_ministries():
@@ -99,6 +103,15 @@ def get_region(region_id):
 def list_news():
     with pool.connection() as conn:
         return [row['data'] for row in conn.execute("SELECT data FROM news_events ORDER BY id").fetchall()]
+
+
+def replace_live_news(items, id_floor):
+    """Swap the previous live rows (id >= id_floor) for fresh ones; synthetic seed rows stay."""
+    with pool.connection() as conn:
+        conn.execute("DELETE FROM news_events WHERE id >= %s", (id_floor,))
+        for news in items:
+            conn.execute("INSERT INTO news_events VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data",
+                         (news['id'], Jsonb(news)))
 
 
 def news_for_country(country_code):

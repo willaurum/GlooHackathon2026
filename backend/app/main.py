@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Literal
 
-from . import ai, db
+from . import ai, db, newsdata, summarize
 
 
 @asynccontextmanager
@@ -122,6 +122,17 @@ def regions():
 @app.get('/api/news', response_model=list[NewsEventOut])
 def news():
     return db.list_news()
+
+
+@app.post('/api/news/refresh')
+def refresh_news():
+    """Pull live headlines from NewsData.io and summarize them."""
+    items = newsdata.fetch_news()
+    if not items:
+        raise HTTPException(status_code=502, detail='NewsData returned no articles; synthetic news unchanged')
+    providers = summarize.add_summaries(items)
+    db.replace_live_news(items, newsdata.LIVE_ID_BASE)
+    return {'articles': len(items), 'summaries_by': providers or 'fallback'}
 
 
 @app.get('/api/regions/{region_id}/prayer-angles', response_model=list[PrayerAngleOut])
