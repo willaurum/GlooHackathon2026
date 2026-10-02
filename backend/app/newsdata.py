@@ -18,7 +18,7 @@ import zlib
 log = logging.getLogger(__name__)
 
 API = "https://newsdata.io/api/1/latest"
-LIVE_ID_BASE = 1000  # synthetic seed rows use ids below this
+LIVE_ID_BASE = 1000  # keeps live ids clear of the fictional news.json ids (0-11)
 PER_COUNTRY = 5
 MIN_DESCRIPTION = 60
 MAX_PAGES = 2  # a thin first page (duplicates, ads) gets one more page

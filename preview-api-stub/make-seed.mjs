@@ -15,13 +15,12 @@ for (const name of NAMES) {
   if (existsSync(file)) seed[name] = JSON.parse(readFileSync(file, 'utf8'));
 }
 
-// news_live.json holds real headlines pre-fetched by backend/scripts/fetch_news.py; the backend
-// loads it on top of news.json, so the stand-in API does the same (live items win on a matching id).
+// news_live.json holds real headlines pre-fetched by backend/scripts/fetch_news.py. Like the backend,
+// the stand-in API serves them instead of the fictional news.json, which is only the fallback.
 const liveFile = join(root, 'backend', 'app', 'news_live.json');
 if (existsSync(liveFile)) {
   const live = JSON.parse(readFileSync(liveFile, 'utf8'));
-  const liveIds = new Set(live.map(item => item.id));
-  seed.news = [...(seed.news ?? []).filter(item => !liveIds.has(item.id)), ...live];
+  if (live.length) seed.news = live;
 }
 
 const out = join(here, 'seed.js');

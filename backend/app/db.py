@@ -52,13 +52,17 @@ def initialize():
         for region in json.loads(Path(__file__).with_name('regions.json').read_text(encoding='utf-8')):
             conn.execute("INSERT INTO regions VALUES (%s, %s) ON CONFLICT DO NOTHING",
                          (region['id'], Jsonb(region)))
-        for news in json.loads(Path(__file__).with_name('news.json').read_text(encoding='utf-8')):
-            conn.execute("INSERT INTO news_events VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                         (news['id'], Jsonb(news)))
-    # Real headlines pre-fetched by scripts/fetch_news.py; refreshed on every startup.
-    live = Path(__file__).with_name('news_live.json')
-    if live.exists():
-        replace_live_news(json.loads(live.read_text(encoding='utf-8')), 1000)
+    # Real headlines pre-fetched by scripts/fetch_news.py replace the news on every startup.
+    # The fictional news.json is only the fallback for when there is no live snapshot.
+    live_file = Path(__file__).with_name('news_live.json')
+    live = json.loads(live_file.read_text(encoding='utf-8')) if live_file.exists() else []
+    if live:
+        replace_news(live)
+    else:
+        with pool.connection() as conn:
+            for news in json.loads(Path(__file__).with_name('news.json').read_text(encoding='utf-8')):
+                conn.execute("INSERT INTO news_events VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                             (news['id'], Jsonb(news)))
 
 
 def list_ministries():
@@ -105,10 +109,10 @@ def list_news():
         return [row['data'] for row in conn.execute("SELECT data FROM news_events ORDER BY id").fetchall()]
 
 
-def replace_live_news(items, id_floor):
-    """Swap the previous live rows (id >= id_floor) for fresh ones; synthetic seed rows stay."""
+def replace_news(items):
+    """Replace every news row (live or fictional) with `items`."""
     with pool.connection() as conn:
-        conn.execute("DELETE FROM news_events WHERE id >= %s", (id_floor,))
+        conn.execute("DELETE FROM news_events")
         for news in items:
             conn.execute("INSERT INTO news_events VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data",
                          (news['id'], Jsonb(news)))

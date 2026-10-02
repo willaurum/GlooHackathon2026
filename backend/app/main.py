@@ -131,7 +131,7 @@ def refresh_news():
     if not items:
         raise HTTPException(status_code=502, detail='NewsData returned no articles; synthetic news unchanged')
     providers = summarize.add_summaries(items)
-    db.replace_live_news(items, newsdata.LIVE_ID_BASE)
+    db.replace_news(items)
     return {'articles': len(items), 'summaries_by': providers or 'fallback'}
 
 
