@@ -5,6 +5,8 @@ A note comes from a YouTube URL (downloaded here with yt-dlp) or an uploaded fil
 ffmpeg cuts the audio into 10-minute mono parts, Workers AI transcribes each part
 (`workers-ai` host, whisper-large-v3-turbo), and the segments are grouped into
 chunks and embedded (bge-base-en-v1.5) so the Worker can answer questions later.
+Finally an LLM (`/llm`) tags passages by category (Bible quotes, personal stories, ...)
+so the transcript can highlight them.
 
 One background worker runs one job at a time. Jobs are claimed atomically in the
 database, so a note is never processed twice at once.
@@ -18,6 +20,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -37,6 +40,8 @@ PART_SECONDS = 600
 CHUNK_WORDS = 50
 CHUNK_SECONDS = 30
 EMBED_BATCH = 50
+CATEGORIZE_WORDS = 1500
+MIN_CONFIDENCE = 0.5
 
 YOUTUBE_HOSTS = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'}
 VIDEO_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
@@ -83,9 +88,41 @@ def run_tool(args, timeout):
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
-def download_youtube(url, workdir):
+def youtube_retry_delays():
+    """Seconds to wait before each extra attempt when YouTube refuses a download.
+    YOUTUBE_RETRY_DELAYS is a comma-separated list; empty means no retries."""
+    raw = os.environ.get('YOUTUBE_RETRY_DELAYS', '30,120')
+    delays = []
+    for part in raw.split(','):
+        try:
+            delays.append(max(0, int(part.strip())))
+        except ValueError:
+            continue
+    return delays
+
+
+def download_youtube(url, workdir, sleep=time.sleep):
+    """Download the audio, trying again with backoff when YouTube rate-limits or bot-checks
+    the request. That refusal is per-IP and often temporary, so a spaced-out retry can
+    recover the link; any other error fails right away."""
+    delays = youtube_retry_delays()
+    for attempt in range(len(delays) + 1):
+        try:
+            return _download_youtube_once(url, workdir)
+        except NoteError as err:
+            if err.code != 'youtube_blocked' or attempt == len(delays):
+                raise
+            log.info('YouTube refused the download (attempt %d); retrying in %ds', attempt + 1, delays[attempt])
+            sleep(delays[attempt])
+
+
+def _download_youtube_once(url, workdir):
     args = ['yt-dlp', '--no-playlist', '--no-progress', '-f', 'bestaudio/best',
             '--max-filesize', '200M', '--match-filter', f'duration <= {MAX_DURATION_SEC}',
+            # Pace the extraction requests and let yt-dlp retry its own transient
+            # failures with exponential backoff instead of failing on the first 429.
+            '--sleep-requests', '1', '--extractor-retries', '3',
+            '--retry-sleep', 'extractor:exp=2:30', '--retry-sleep', 'http:exp=1:30',
             '-o', str(workdir / 'src.%(ext)s')]
     cookies = os.environ.get('YTDLP_COOKIES', '').strip()
     if cookies:
@@ -99,7 +136,10 @@ def download_youtube(url, workdir):
     if result.returncode == 0 and files:
         return files[0]
     log.warning('yt-dlp failed (%s): %s', result.returncode, (result.stderr or result.stdout)[-1500:])
-    if ('confirm you' in output and 'bot' in output) or 'sign in to confirm' in output or 'http error 429' in output:
+    # YouTube's rate limit reads "Video unavailable. This content isn't available, try again
+    # later.", so it must be checked before the real "unavailable" case below.
+    if (('confirm you' in output and 'bot' in output) or 'sign in to confirm' in output
+            or 'http error 429' in output or 'rate-limited' in output or 'try again later' in output):
         raise NoteError('youtube_blocked')
     if 'does not pass filter' in output:
         raise NoteError('too_long')
@@ -206,6 +246,81 @@ def embed(texts):
     return [[round(x, 5) for x in v] for v in vectors]
 
 
+CATEGORIZE_PROMPT = """You tag passages in a sermon transcript. Each line is one segment: [index] text.
+
+Categories:
+- bible_quote: the speaker reads or quotes Bible text directly
+- bible_paraphrase: retells or refers to a Bible story, character or teaching without quoting it
+- recent_event: mentions a recent or current news event
+- political_event: mentions politics, elections, government or politicians
+- personal_story: the speaker tells a personal anecdote or story from their own life
+- inerrancy_claim: claims the Bible is accurate, without error, or divinely authored
+
+Tag only passages that clearly fit. A passage is a run of consecutive segments (seg_from to seg_to, inclusive).
+label is a short description, with the verse reference when there is one (e.g. "Luke 10:25-37, the Good Samaritan").
+confidence is 0 to 1.
+
+Return JSON only: {"annotations": [{"seg_from": 0, "seg_to": 2, "category": "bible_quote", "label": "...", "confidence": 0.9}]}
+If nothing fits, return {"annotations": []}.
+
+Segments:
+"""
+
+
+def _windows(segments):
+    """Consecutive (first_index, segments) runs of about CATEGORIZE_WORDS words, so each prompt fits a small model."""
+    first, words = 0, 0
+    for i, s in enumerate(segments):
+        words += len(s['text'].split())
+        if words >= CATEGORIZE_WORDS:
+            yield first, segments[first:i + 1]
+            first, words = i + 1, 0
+    if first < len(segments):
+        yield first, segments[first:]
+
+
+def _parse_annotations(text, first, last):
+    """Valid annotations from a model reply, clamped to segments first..last. Bad items are dropped."""
+    start, end = text.find('{'), text.rfind('}')
+    try:
+        items = json.loads(text[start:end + 1]).get('annotations') if 0 <= start < end else None
+    except (ValueError, AttributeError):
+        items = None
+    out = []
+    for a in items if isinstance(items, list) else []:
+        try:
+            seg_from, seg_to = int(a['seg_from']), int(a['seg_to'])
+            confidence = float(a.get('confidence', 1.0))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+        if a.get('category') not in db.ANNOTATION_CATEGORIES or confidence < MIN_CONFIDENCE:
+            continue
+        seg_from, seg_to = max(seg_from, first), min(seg_to, last)
+        if seg_from > seg_to:
+            continue
+        out.append({'seg_from': seg_from, 'seg_to': seg_to, 'category': a['category'],
+                    'label': str(a.get('label') or '')[:200], 'confidence': round(min(confidence, 1.0), 2)})
+    return out
+
+
+def categorize(segments):
+    """Tag passages by category. Best effort: a failed window is logged and skipped, never fails the note."""
+    annotations = []
+    for first, window in _windows(segments):
+        numbered = '\n'.join(f'[{first + i}] {s["text"]}' for i, s in enumerate(window))
+        try:
+            response = _ai.post('/llm', json={'prompt': CATEGORIZE_PROMPT + numbered})
+            if response.status_code != 200:
+                log.warning('categorize failed: %s %s', response.status_code, response.text[:300])
+                continue
+            text = response.json().get('text') or ''
+        except (httpx.HTTPError, ValueError, AttributeError) as err:
+            log.warning('categorize failed: %s', err)
+            continue
+        annotations += _parse_annotations(str(text), first, first + len(window) - 1)
+    return annotations
+
+
 # --- The job ---
 
 def process(note_id):
@@ -232,8 +347,10 @@ def process(note_id):
         chunks = make_chunks(segments)
         for chunk, vector in zip(chunks, embed([c['text'] for c in chunks])):
             chunk['embedding'] = vector
-        db.save_transcript(note_id, segments, chunks, round(duration, 2))
-        log.info('note %s ready: %d segments, %d chunks', note_id, len(segments), len(chunks))
+        annotations = categorize(segments)
+        db.save_transcript(note_id, segments, chunks, round(duration, 2), annotations)
+        log.info('note %s ready: %d segments, %d chunks, %d annotations',
+                 note_id, len(segments), len(chunks), len(annotations))
     except NoteError as err:
         db.fail_note(note_id, err.code)
     except subprocess.TimeoutExpired:
@@ -350,6 +467,12 @@ def transcript(note_id: str):
 def segments(note_id: str):
     _ready_note(note_id)
     return [{**s, 'timestamp': timestamp(s['start'])} for s in db.list_segments(note_id)]
+
+
+@router.get('/api/notes/{note_id}/annotations')
+def annotations(note_id: str):
+    _ready_note(note_id)
+    return db.list_annotations(note_id)
 
 
 @router.post('/api/notes/{note_id}/retry', status_code=202)
