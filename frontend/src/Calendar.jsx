@@ -14,14 +14,14 @@ const CATEGORIES = [
 ];
 
 const CATEGORY_COLORS = {
-  'Worship': '#2b6248',
-  'Youth & Kids': '#7f6330',
-  'Discipleship': '#3a7a5c',
-  'Outreach': '#8a6d1f',
-  'Fellowship': '#1d4636',
-  'Hospitality': '#7a5c2e',
-  'Creative Arts': '#2f7d6b',
-  'Next Generation': '#5a6b2f',
+  'Worship': '#729564',
+  'Youth & Kids': '#b88963',
+  'Discipleship': '#9b8bbd',
+  'Outreach': '#b4a057',
+  'Fellowship': '#819fbd',
+  'Hospitality': '#b98da0',
+  'Creative Arts': '#5b9b8b',
+  'Next Generation': '#bd7b60',
 };
 
 export default function Calendar({ setError = () => {} }) {
