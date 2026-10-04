@@ -7,7 +7,7 @@ import ChurchSetup from './ChurchSetup.jsx';
 import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import ChurchStart from './ChurchStart.jsx';
 import Give from './Give.jsx';
-import { givingCapabilities } from './giving.js';
+import { churchApi, givingCapabilities } from './giving.js';
 import Home from './Home.jsx';
 import { PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
@@ -93,6 +93,11 @@ export default function App() {
       let found = null, missing = false;
       if ((await givingCapabilities()).churches) {
         try { found = await gapi('/api/directory/' + encodeURIComponent(slug)); } catch (err) { missing = err.status === 404; }
+        // An older giving service has no /api/directory route, so a 404 there is not proof the church
+        // is missing. Its public church page has the same name and city, so ask that before giving up.
+        if (missing) {
+          try { found = await churchApi(slug); missing = false; } catch (err) { missing = err.status === 404; }
+        }
       }
       if (!found && !missing && (await churchCapabilities()).churches) found = await api('/info').catch(() => null);
       if (live) setListing(found ? { slug, name: found.name, city: found.city || '' } : { slug, name: titleCase(slug), city: '', missing });

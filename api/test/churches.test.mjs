@@ -14,7 +14,23 @@ const giving = {
     m = /^\/api\/churches\/([^/]+)\/admin\/session/.exec(path);
     const token = (new Headers(init.headers).get('Authorization') || '').replace('Bearer ', '');
     if (m && TOKENS[token] === m[1]) return Response.json({ ok: true, slug: m[1] });
-    return Response.json({ error: 'no' }, { status: 401 });
+    if (m) return Response.json({ error: 'no' }, { status: 401 });
+    return Response.json({ error: 'Not found' }, { status: 404 });
+  },
+};
+
+// The giving Worker as deployed before this change: no /api/directory and no admin/session route.
+const OLDER = { 'hope-church': { slug: 'hope-church', name: 'Hope Church', city: 'Austin' } };
+const olderGiving = {
+  async fetch(url, init = {}) {
+    const path = new URL(url).pathname;
+    let m = /^\/api\/churches\/([^/]+)$/.exec(path);
+    if (m) return m[1] in OLDER ? Response.json({ ...OLDER[m[1]], funds: [] }) : Response.json({ error: 'Church not found' }, { status: 404 });
+    m = /^\/api\/churches\/([^/]+)\/admin$/.exec(path);
+    const token = (new Headers(init.headers).get('Authorization') || '').replace('Bearer ', '');
+    if (m && m[1] === 'hope-church' && token === 'c'.repeat(32)) return Response.json({ church: { slug: 'hope-church' } });
+    if (m) return Response.json({ error: 'no' }, { status: 401 });
+    return Response.json({ error: 'Not found' }, { status: 404 });
   },
 };
 const env = { GIVING: giving };
@@ -34,6 +50,14 @@ test('the registry decides which churches exist', async () => {
   assert.deepEqual(await findChurch(env, 'hope-chapel'), { slug: 'hope-chapel', name: 'Hope Chapel', city: 'Austin', demo: false });
   assert.equal(await findChurch(env, 'no-such-church'), null);
   assert.equal(await findChurch({}, 'some-church'), 'unavailable');
+});
+
+test('an older giving service without /api/directory still finds its churches', async () => {
+  const older = { GIVING: olderGiving };
+  assert.deepEqual(await findChurch(older, 'hope-church'), { slug: 'hope-church', name: 'Hope Church', city: 'Austin', demo: false });
+  assert.equal(await findChurch(older, 'not-a-church-here'), null);
+  assert.equal(await isStaff(asStaff('c'.repeat(32)), older, 'hope-church'), true);
+  assert.equal(await isStaff(asStaff('d'.repeat(32)), older, 'hope-church'), false);
 });
 
 test('a staff session only counts for its own church', async () => {

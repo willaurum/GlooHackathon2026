@@ -46,6 +46,15 @@ export async function findChurch(env: AppEnv, slug: string): Promise<Church | nu
 	} catch {
 		return 'unavailable';
 	}
+	// An older giving service has no /api/directory route, so a 404 there is not proof the church is
+	// missing. Its public church page carries the same name and city, so ask that before giving up.
+	if (response.status === 404) {
+		try {
+			response = await env.GIVING.fetch('https://giving.internal/api/churches/' + slug);
+		} catch {
+			return 'unavailable';
+		}
+	}
 	if (response.status === 404) {
 		directory.set(slug, { until: Date.now() + MISSING_TTL, church: null });
 		return null;
@@ -73,10 +82,12 @@ export async function isStaff(request: Request, env: AppEnv, slug: string): Prom
 	const key = slug + ':' + (await sha256(auth));
 	if ((sessions.get(key) ?? 0) > Date.now()) return true;
 	try {
-		const response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin/session`, { headers: { Authorization: auth } });
+		let response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin/session`, { headers: { Authorization: auth } });
+		// An older giving service has no session route; its staff overview needs the same login.
+		if (response.status === 404) response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin`, { headers: { Authorization: auth } });
 		if (!response.ok) return false;
-		const body = await response.json<{ slug?: string }>();
-		if (body.slug !== slug) return false;
+		const body = await response.json<{ slug?: string; church?: { slug?: string } }>();
+		if ((body.slug ?? body.church?.slug) !== slug) return false;
 	} catch {
 		return false;
 	}
