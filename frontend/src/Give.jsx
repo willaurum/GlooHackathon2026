@@ -3,27 +3,26 @@ import { fmt, gapi } from './api.js';
 import Icon from './Icon.jsx';
 import { PageHeader, SubNav } from './Layout.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
-import GiveSignup from './GiveSignup.jsx';
 import GiveStaff from './GiveStaff.jsx';
-import { DEMO_CHURCH, churchApi, friendly, getGiveChurch, loadChurch, percent, setGiveChurch, startCheckout, tripDates } from './giving.js';
+import { useChurch } from './ChurchContext.js';
+import { DEMO_CHURCH, churchApi, friendly, loadChurch, percent, startCheckout, tripDates } from './giving.js';
 
-const TABS = [['give', 'Give', 'heart'], ['give/trips', 'Mission trips', 'compass'], ['give/staff', 'Church staff', 'lock'], ['give/start', 'Add your church', 'plus']];
+const TABS = [['give', 'Give', 'heart'], ['give/trips', 'Mission trips', 'compass'], ['give/staff', 'Church staff', 'lock']];
 const HEADERS = {
   'give': ['Give with confidence.', 'Choose where your gift goes. Gifts are private: this page shows totals, never names.'],
   'give/trips': ['Go, or help send someone.', 'Mission trips and teams that need people and funding. Apply to go, or give toward a trip.'],
   'give/staff': ['For church staff.', 'Connect Stripe, manage funds and trips, review applications and see who gave.'],
-  'give/start': ['Bring your church.', 'Set up online giving in a few minutes: sign up, connect Stripe, share your link.'],
 };
 
+// Gives to the church the whole site is showing (church.js); the church search here switches the site.
 export default function Give({ route, go, sessionId = '', status = '', returnChurch = '' }) {
-  const [slug, setSlug] = useState(() => returnChurch || getGiveChurch()),
-    [church, setChurch] = useState(null),
+  const { slug, choose } = useChurch();
+  const [church, setChurch] = useState(null),
     [loadErr, setLoadErr] = useState(null),
     [fundId, setFundId] = useState(''),
     [version, setVersion] = useState(0);
   const tab = HEADERS[route] ? route : 'give';
 
-  useEffect(() => { if (returnChurch) setGiveChurch(returnChurch); }, [returnChurch]);
   useEffect(() => {
     let live = true;
     setLoadErr(null);
@@ -32,8 +31,7 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
   }, [slug, version]);
 
   function pickChurch(next) {
-    setGiveChurch(next);
-    if (next !== slug) { setChurch(null); setFundId(''); setSlug(next); }
+    if (next !== slug) choose(next, tab === 'give/staff' ? 'give/staff' : 'give');
     else setVersion(v => v + 1);
   }
   function giveTo(id) { setFundId(id); go('give'); }
@@ -41,7 +39,6 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
   const [title, text] = HEADERS[tab];
   let body;
   if (sessionId) body = <Confirmation id={sessionId} status={status} slug={returnChurch} go={go} />;
-  else if (tab === 'give/start') body = <GiveSignup onCreated={next => { pickChurch(next); go('give/staff'); }} />;
   else if (tab === 'give/staff') body = <GiveStaff slug={slug} church={church} go={go} onPickChurch={pickChurch} onChanged={() => setVersion(v => v + 1)} />;
   else if (loadErr) body = <LoadError err={loadErr} slug={slug} onPick={pickChurch} />;
   else if (!church) body = <div className="card give-pad"><p role="status">Loading giving options…</p></div>;

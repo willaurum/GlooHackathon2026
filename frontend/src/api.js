@@ -1,3 +1,5 @@
+import { DEMO_CHURCH, getStaffToken } from './church.js';
+
 // API origin; empty means same-origin /api (Vite proxy, nginx).
 export const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 // The giving API is its own Worker (api-giving/); the page calls it cross-origin.
@@ -8,13 +10,46 @@ const KEY_STORAGE = 'pastor-notes-api-key';
 export const getApiKey = () => sessionStorage.getItem(KEY_STORAGE) ?? '';
 export const setApiKey = key => (key ? sessionStorage.setItem(KEY_STORAGE, key) : sessionStorage.removeItem(KEY_STORAGE));
 
-export async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
+// The church every api() call is for. App sets it from church.js.
+let church = DEMO_CHURCH;
+export const setApiChurch = slug => { church = slug; };
+
+// /api/churches/<slug>/... is that church. The bare /api/... is the demo church, which every
+// API version understands, so the demo church keeps working against an older deploy.
+export const apiUrl = (path, slug = church) => API_BASE + (slug === DEMO_CHURCH ? '/api' : '/api/churches/' + encodeURIComponent(slug)) + path;
+
+let capabilities;
+// Whether the church API serves more than the demo church yet (it is deployed separately from the site).
+export function churchCapabilities() {
+  capabilities ||= fetch(API_BASE + '/api/health').then(r => r.json()).then(h => ({ churches: !!h.churches })).catch(() => ({ churches: false }));
+  return capabilities;
+}
+
+/** Headers for a church API call: the Sermon Notes key and, once the API supports it, the staff session. */
+export async function apiHeaders(slug = church, extra = {}) {
+  const headers = { ...extra };
   if (getApiKey()) headers['X-API-Key'] = getApiKey();
-  const response = await fetch(API_BASE + '/api' + path, { ...options, headers });
+  // An older API does not allow this header cross-origin, so only send it once the API knows churches.
+  if (getStaffToken(slug) && (await churchCapabilities()).churches) headers.Authorization = 'Bearer ' + getStaffToken(slug);
+  return headers;
+}
+
+export async function api(path, options = {}) {
+  const slug = church;
+  if (slug !== DEMO_CHURCH && !(await churchCapabilities()).churches) {
+    const error = new Error('This part of the site opens once the updated church service is deployed.');
+    error.status = 'not-ready';
+    throw error;
+  }
+  const headers = await apiHeaders(slug, { 'Content-Type': 'application/json', ...options.headers });
+  const response = await fetch(apiUrl(path, slug), { ...options, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    if (response.status === 401) throw new Error('Enter a valid API key on the Sermon Notes page.');
+    if (response.status === 401) {
+      const error = new Error(slug === DEMO_CHURCH && !getStaffToken(slug) ? 'Enter a valid API key on the Sermon Notes page.' : 'Sign in as church staff to see this.');
+      error.status = 401;
+      throw error;
+    }
     const error = new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${response.status}). Please try again.`);
     error.status = response.status;
     throw error;

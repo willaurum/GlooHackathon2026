@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-l
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
+import { SetUpThis } from './ChurchStates.jsx';
 import countryBorders from './data/countryBorders.json';
 
 const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [12, 12], iconAnchor: [6, 6] });
@@ -81,6 +82,9 @@ export default function PrayerMap() {
   return <div className="prayer-map">
     {error && <div className="api-message" role="alert">{error}</div>}
     {loading && <p role="status">Loading prayer map data…</p>}
+    {!loading && !error && !regions.length && <SetUpThis icon="compass" title="No prayer map yet."
+      text="This church has not added the places it prays for yet."
+      staffText="The prayer map shows the places your missionaries serve. Adding regions from Church setup is coming next." />}
     <div className="map-legend">
       <span><span className="legend-dot news-dot" /> Real news — exact city</span>
       <span><span className="legend-dot region-dot" /> Missionary presence — whole country only, never an exact point</span>

@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai, ai_client, chat, db, pastor_notes, recommendations
+from . import ai, ai_client, chat, church_content, db, pastor_notes, recommendations
+from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +28,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Belong API", lifespan=lifespan)
+# Every request runs against one church's database (X-Church); see church_scope.py.
+app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
+app.include_router(church_content.router)
 
 
 class AvailabilityWindow(BaseModel):

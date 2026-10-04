@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { API_BASE } from './api.js';
+import { apiUrl } from './api.js';
+import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import { chatHistory } from './chatHistory.js';
 import { navigationPage, followSuggestion } from './chatNavigation.js';
 import { formatReply } from './chatFormat.js';
 
-const greeting = 'Hi! I’m Belong, Grace Community’s assistant. I can help with service times, events, small groups, or finding a place to serve.';
+const greetingFor = name => `Hi! I’m Belong, ${name || 'the church'}’s assistant. I can help with service times, events, small groups, or finding a place to serve.`;
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
 const actionLabels = {
   request_connection: 'Connection request saved for staff review',
@@ -19,6 +20,8 @@ const Reply = ({ text }) => <div className="chat-text">{formatReply(text).map((b
 const newSessionId = () => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
 
 export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }) {
+  const church = useChurch();
+  const greeting = church.ready ? greetingFor(church.name) : `The ${church.name} assistant opens as soon as the updated church service is deployed.`;
   const [messages, setMessages] = useState([]),
     [input, setInput] = useState(''),
     [busy, setBusy] = useState(false),
@@ -26,7 +29,8 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
     [sessionId] = useState(newSessionId),
     log = useRef(null);
   useEffect(() => {
-    fetch(API_BASE + '/api/chat/status').then(r => r.json()).then(s => setConfigured(s.configured)).catch(() => {});
+    if (!church.ready) return;
+    fetch(apiUrl('/chat/status')).then(r => r.json()).then(s => setConfigured(s.configured)).catch(() => {});
   }, []);
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, busy, open]);
   async function send(text) {
@@ -36,7 +40,7 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
     const history = [...messages, { role: 'user', content: text }];
     setMessages(history); setInput(''); setBusy(true);
     try {
-      const response = await fetch(API_BASE + '/api/chat', {
+      const response = await fetch(apiUrl('/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, messages: chatHistory(history) })
@@ -67,10 +71,10 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
           })}
         </div>)}
         {busy && <p className="bubble assistant typing">Thinking…</p>}
-        {!messages.length && <div className="chat-starters">{starters.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}</div>}
+        {!messages.length && church.ready && <div className="chat-starters">{starters.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}</div>}
       </div>
       <form className="chat-input" onSubmit={e => { e.preventDefault(); send(input); }}>
-        <input aria-label="Message" value={input} maxLength={2000} onChange={e => setInput(e.target.value)} placeholder="Ask a question…" disabled={busy} />
+        <input aria-label="Message" value={input} maxLength={2000} onChange={e => setInput(e.target.value)} placeholder="Ask a question…" disabled={busy || !church.ready} />
         <button className="primary" aria-label="Send" disabled={busy || !input.trim()}><Icon name="arrow" size={18} /></button>
       </form>
       <small className="chat-note">Not for emergencies. In a crisis call or text 988, or call 911.</small>

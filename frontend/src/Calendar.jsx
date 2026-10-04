@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
 
 const CATEGORIES = [
   'All',
@@ -25,6 +26,9 @@ const CATEGORY_COLORS = {
 };
 
 export default function Calendar({ setError = () => {} }) {
+  const church = useChurch();
+  // Adding to the calendar is for staff, except on the shared demo church.
+  const canEdit = church.demo || church.staff;
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [aiStatus, setAiStatus] = useState(null);
@@ -410,9 +414,9 @@ export default function Calendar({ setError = () => {} }) {
               <>↻ Remake All Summaries</>
             )}
           </button>
-          <button className="primary" onClick={() => setShowAddModal(true)}>
+          {canEdit && <button className="primary" onClick={() => setShowAddModal(true)}>
             + Add New Event
-          </button>
+          </button>}
         </div>
       </div>
 

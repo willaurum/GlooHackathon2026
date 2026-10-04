@@ -186,6 +186,22 @@ console.log('disconnect');
 r = await call('DELETE', '/api/churches/' + slugB + '/admin/stripe', undefined, tokenB);
 check(r.status === 200 && !r.data.stripe.connected && r.data.stripe.mode === 'demo', 'disconnect returns to demo');
 
+console.log('sitewide: directory and staff session check');
+r = await call('GET', '/api/directory/' + slug);
+check(r.status === 200 && r.data.slug === slug && r.data.name.startsWith('Hope Chapel') && r.data.city === 'Austin' && !r.text.includes('password'), 'directory lists a church', r.data);
+r = await call('GET', '/api/directory/grace-community');
+check(r.status === 200 && r.data.name === 'Grace Community', 'directory lists the demo church', r.data);
+r = await call('GET', '/api/directory/no-such-church');
+check(r.status === 404, 'directory 404 for an unknown church');
+r = await call('GET', C + '/admin/session', undefined, token);
+check(r.status === 200 && r.data.ok && r.data.slug === slug, 'own staff session is valid', r.data);
+r = await call('GET', C + '/admin/session', undefined, tokenB);
+check(r.status === 401, 'another church session is not valid here');
+r = await call('GET', C + '/admin/session');
+check(r.status === 401, 'no session, no staff');
+r = await call('GET', '/api/churches/grace-community/admin/session', undefined, token);
+check(r.status === 401, 'a new church session is not valid for the demo church');
+
 console.log('logout');
 r = await call('POST', C + '/admin/logout', {}, token);
 r = await call('GET', C + '/admin', undefined, token);
