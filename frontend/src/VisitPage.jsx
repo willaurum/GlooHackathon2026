@@ -101,7 +101,7 @@ export default function VisitPage() {
   return <div className="visit-page">
     {error && <div className="api-message" role="alert">{error}</div>}
 
-    <section className="card visit-section">
+    <section className="card visit-section" id="visit-service-times">
       <div className="eyebrow">SERVICE TIMES</div>
       <h2>Join us this week</h2>
       <div className="service-cards">
@@ -112,13 +112,13 @@ export default function VisitPage() {
       </div>
     </section>
 
-    <section className="card visit-section">
+    <section className="card visit-section" id="visit-what-to-expect">
       <div className="eyebrow">WHAT TO EXPECT</div>
       <h2>Before you arrive</h2>
       <p>{info.first_visit}</p>
     </section>
 
-    <section className="card visit-section">
+    <section className="card visit-section" id="visit-map">
       <div className="eyebrow">FIND YOUR WAY</div>
       <h2>Parking, entrances &amp; kids check-in</h2>
       <p>Tap a spot to see it on the map.</p>
@@ -140,7 +140,7 @@ export default function VisitPage() {
       <p className="map-address">Example campus: {EXAMPLE_CAMPUS.name}, {EXAMPLE_CAMPUS.address}. Parking and door labels are illustrative.</p>
     </section>
 
-    {nextSteps.length > 0 && <section className="card visit-section">
+    {nextSteps.length > 0 && <section className="card visit-section" id="visit-next-steps">
       <div className="eyebrow">YOUR NEXT STEP</div>
       <h2>A good place to start</h2>
       <div className="service-cards">
@@ -152,7 +152,7 @@ export default function VisitPage() {
       </div>
     </section>}
 
-    <section className="card visit-section">
+    <section className="card visit-section" id="visit-sign-up">
       {!visit ? <>
         <div className="eyebrow">LET US KNOW YOU'RE COMING</div>
         <h2>Plan your visit</h2>
