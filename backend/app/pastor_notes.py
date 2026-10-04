@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -83,9 +84,41 @@ def run_tool(args, timeout):
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
-def download_youtube(url, workdir):
+def youtube_retry_delays():
+    """Seconds to wait before each extra attempt when YouTube refuses a download.
+    YOUTUBE_RETRY_DELAYS is a comma-separated list; empty means no retries."""
+    raw = os.environ.get('YOUTUBE_RETRY_DELAYS', '30,120')
+    delays = []
+    for part in raw.split(','):
+        try:
+            delays.append(max(0, int(part.strip())))
+        except ValueError:
+            continue
+    return delays
+
+
+def download_youtube(url, workdir, sleep=time.sleep):
+    """Download the audio, trying again with backoff when YouTube rate-limits or bot-checks
+    the request. That refusal is per-IP and often temporary, so a spaced-out retry can
+    recover the link; any other error fails right away."""
+    delays = youtube_retry_delays()
+    for attempt in range(len(delays) + 1):
+        try:
+            return _download_youtube_once(url, workdir)
+        except NoteError as err:
+            if err.code != 'youtube_blocked' or attempt == len(delays):
+                raise
+            log.info('YouTube refused the download (attempt %d); retrying in %ds', attempt + 1, delays[attempt])
+            sleep(delays[attempt])
+
+
+def _download_youtube_once(url, workdir):
     args = ['yt-dlp', '--no-playlist', '--no-progress', '-f', 'bestaudio/best',
             '--max-filesize', '200M', '--match-filter', f'duration <= {MAX_DURATION_SEC}',
+            # Pace the extraction requests and let yt-dlp retry its own transient
+            # failures with exponential backoff instead of failing on the first 429.
+            '--sleep-requests', '1', '--extractor-retries', '3',
+            '--retry-sleep', 'extractor:exp=2:30', '--retry-sleep', 'http:exp=1:30',
             '-o', str(workdir / 'src.%(ext)s')]
     cookies = os.environ.get('YTDLP_COOKIES', '').strip()
     if cookies:
@@ -99,7 +132,10 @@ def download_youtube(url, workdir):
     if result.returncode == 0 and files:
         return files[0]
     log.warning('yt-dlp failed (%s): %s', result.returncode, (result.stderr or result.stdout)[-1500:])
-    if ('confirm you' in output and 'bot' in output) or 'sign in to confirm' in output or 'http error 429' in output:
+    # YouTube's rate limit reads "Video unavailable. This content isn't available, try again
+    # later.", so it must be checked before the real "unavailable" case below.
+    if (('confirm you' in output and 'bot' in output) or 'sign in to confirm' in output
+            or 'http error 429' in output or 'rate-limited' in output or 'try again later' in output):
         raise NoteError('youtube_blocked')
     if 'does not pass filter' in output:
         raise NoteError('too_long')
