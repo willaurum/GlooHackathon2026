@@ -103,7 +103,7 @@ export default function App() {
           <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
         </div>}
         {section === 'calendar' && <div className="page">
-          <PageHeader eyebrow="Calendar" title="Church life & gatherings." text="Every service, class, and outreach — with optional AI summaries. Add the next thing on the calendar." />
+          <PageHeader eyebrow="Calendar" title="Church Life & Gatherings." text="Explore upcoming gatherings, services, and outreach with AI-generated summaries." />
           <Calendar />
         </div>}
         {section === 'guests' && <div className="page">
