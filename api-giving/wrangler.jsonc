@@ -6,17 +6,25 @@
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
-      { "name": "GIVING", "class_name": "GivingDO" }
+      // One object per church ("main" is the original demo church).
+      { "name": "GIVING", "class_name": "GivingDO" },
+      // Church names and URL slugs.
+      { "name": "GIVING_REGISTRY", "class_name": "GivingRegistry" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["GivingDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["GivingDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["GivingRegistry"] }
   ],
   "vars": {
     // Comma-separated frontend origins; the first is the default.
     "ALLOWED_ORIGIN": "https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-donate-giving-gloo-hackathon2026.jaronwilson2025.workers.dev",
     "PUBLIC_ORIGIN": "https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev",
+    // Staff password for the built-in demo church only. Real churches set their own at sign-up.
     "ADMIN_KEY": "gloo-donate-demo"
   },
+  // Secrets (npx wrangler secret put NAME):
+  //   STRIPE_KEY_ENCRYPTION_KEY  32 random bytes, base64. Encrypts each church's Stripe key at rest.
+  // Optional var for local testing only: STRIPE_API_BASE (defaults to https://api.stripe.com).
   "observability": { "enabled": true }
 }
