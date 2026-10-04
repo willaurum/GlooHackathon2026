@@ -774,7 +774,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 @media (max-width: 900px) {
   .calendar-layout { grid-template-columns: 1fr; }
-  .calendar-section .form-row { grid-template-columns: 1fr; }
+  /* Stacked fields: plain blocks so their margins collapse like the other fields. */
+  .calendar-section .form-row { display: block; }
 }
 @media (max-width: 750px) {
   .events-list { grid-template-columns: 1fr; }
