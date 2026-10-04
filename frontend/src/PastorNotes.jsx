@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, api, getApiKey, setApiKey } from './api.js';
 import Icon from './Icon.jsx';
 
@@ -145,14 +145,28 @@ function NoteView({ note, onChange }) {
   </section>;
 }
 
-export default function PastorNotes() {
+// The open sermon lives in the route (#/notes/<id>). On phones it takes over the page, with a back button to the list.
+export default function PastorNotes({ route, go }) {
   const [hasKey, setHasKey] = useState(Boolean(getApiKey())), [church, setChurch] = useState(null),
-    [notes, setNotes] = useState([]), [selected, setSelected] = useState(null), [error, setError] = useState('');
+    [notes, setNotes] = useState([]), [loaded, setLoaded] = useState(false), [error, setError] = useState('');
+  const selected = route.startsWith('notes/') ? route.slice('notes/'.length) : null;
+  // True when the open sermon was tapped from the list, so Back can return to that same history entry.
+  const openedFromList = useRef(false);
   async function load() {
     try {
       const [info, list] = await Promise.all([api('/church'), api('/notes')]);
       setChurch(info); setNotes(list); setError('');
     } catch (err) { setError(err.message); }
+    finally { setLoaded(true); }
+  }
+  function open(id) {
+    if (id === selected) return;
+    openedFromList.current = true;
+    go('notes/' + id);
+  }
+  function back() {
+    if (openedFromList.current) { openedFromList.current = false; window.history.back(); }
+    else go('notes');
   }
   useEffect(() => { if (hasKey) load(); }, [hasKey]);
   // Poll while anything is still being transcribed.
@@ -163,7 +177,7 @@ export default function PastorNotes() {
   }, [notes]);
   if (!hasKey) return <KeyForm onChange={() => setHasKey(true)} />;
   const current = notes.find(n => n.id === selected);
-  return <div className="pn">
+  return <div className={'pn' + (selected ? ' pn-detail' : '')}>
     <div className="pn-bar">
       <div className="eyebrow">{church ? church.name : ' '}</div>
       <button className="ghost" onClick={() => { setApiKey(''); setHasKey(false); setNotes([]); }}>Forget key</button>
@@ -173,13 +187,18 @@ export default function PastorNotes() {
       <div>
         <section className="card pn-list"><h2>Sermons <small className="count">{notes.length}</small></h2>
           {notes.length ? <ul>{notes.map(n => <li key={n.id}>
-            <button className={n.id === selected ? 'selected' : ''} onClick={() => { setSelected(n.id); if (matchMedia('(max-width: 860px)').matches) requestAnimationFrame(() => document.getElementById('pn-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }}>
+            <button className={n.id === selected ? 'selected' : ''} aria-current={n.id === selected ? 'page' : undefined} onClick={() => open(n.id)}>
               <strong>{n.title}</strong><small><Icon name={n.source_kind === 'youtube' ? 'play' : 'book'} size={14} />{n.source_kind === 'youtube' ? 'YouTube' : 'Upload'} · <span className={'status ' + n.status}>{n.status}</span></small>
             </button></li>)}</ul> : <p className="muted">No sermons yet. Add a YouTube link or upload a file.</p>}
         </section>
         <NewNote onCreated={load} />
       </div>
-      <div id="pn-view">{current ? <NoteView note={current} onChange={load} /> : <section className="card pn-pick"><Icon name="book" size={40} /><h2>Pick a sermon</h2><p>Read its transcript and ask questions. Answers quote the sermon with timestamps.</p></section>}</div>
+      <div id="pn-view">
+        {selected && <button className="ghost pn-back" onClick={back}><Icon name="back" size={18} />All sermons</button>}
+        {current ? <NoteView note={current} onChange={load} />
+          : selected ? <section className="card pn-pick"><Icon name="book" size={40} /><h2>{loaded ? 'Sermon not found' : 'Loading sermon…'}</h2>{loaded && <p>It may have been removed. Go back to the list to pick another.</p>}</section>
+          : <section className="card pn-pick"><Icon name="book" size={40} /><h2>Pick a sermon</h2><p>Read its transcript and ask questions. Answers quote the sermon with timestamps.</p></section>}
+      </div>
     </div>
   </div>;
 }
