@@ -1,3 +1,5 @@
+import { useChurch } from './ChurchContext.js';
+import ChurchSwitcher from './ChurchSwitcher.jsx';
 import Icon from './Icon.jsx';
 
 // One navigation for every screen size: a sidebar on desktop, a tab bar on phones.
@@ -7,7 +9,7 @@ export const SECTIONS = [
   { route: 'serve', label: 'Serve', icon: 'users', children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book' },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
-  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff'], ['give/start', 'Add your church']] },
+  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
 ];
 
@@ -27,7 +29,7 @@ export function Brand({ onClick }) {
 export function Sidebar({ route, go, onAsk, savedCount }) {
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
-    <div className="church"><span>G</span><div><strong>Grace Community</strong><small>Springfield</small></div></div>
+    <ChurchSwitcher />
     <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
       {SECTIONS.map(s => <div key={s.route}>
@@ -57,7 +59,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
 export function TopBar({ go, onAsk }) {
   return <header className="topbar">
     <Brand onClick={() => go('')} />
-    <span className="topbar-church">Grace Community</span>
+    <ChurchSwitcher compact />
     <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />
@@ -66,8 +68,9 @@ export function TopBar({ go, onAsk }) {
 
 // Desktop-only strip in the top-right corner; phones get the avatar in the TopBar instead.
 export function WorkspaceBar() {
+  const church = useChurch();
   return <div className="workspace-bar">
-    <span className="demo-pill">● Demo workspace</span>
+    {church.demo ? <span className="demo-pill">● Demo workspace</span> : church.staff && <span className="demo-pill">● Signed in as staff</span>}
     <Avatar />
   </div>;
 }

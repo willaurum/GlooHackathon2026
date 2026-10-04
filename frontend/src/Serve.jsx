@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
+import { SetUpThis, StaffOnly } from './ChurchStates.jsx';
 import Icon from './Icon.jsx';
 import { PageHeader, SubNav } from './Layout.jsx';
 
-const urgent = m => (m.total - m.filled) / m.total >= .35;
+const urgent = m => m.total > 0 && (m.total - m.filled) / m.total >= .35;
 const TABS = [['serve', 'Ministries', 'grid'], ['serve/find', 'Find a place', 'compass'], ['serve/saved', 'Saved', 'bookmark']];
 const HEADERS = {
   'serve': ['Many teams. One purpose.', 'See where help is needed and meet the people who lead each team.'],
@@ -12,6 +14,9 @@ const HEADERS = {
 };
 
 export default function Serve({ route, go, requestsVersion, onCount }) {
+  const church = useChurch();
+  // Saved connections and chat requests carry names and contacts: staff only, except on the shared demo church.
+  const staffView = church.demo || church.staff;
   const [query, setQuery] = useState(''),
     [filter, setFilter] = useState(false),
     [detail, setDetail] = useState(null),
@@ -30,14 +35,14 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
   async function load() {
     setLoading(true); setError('');
     try {
-      const [ministries, connections, filed] = await Promise.all([api('/ministries'), api('/connections'), api('/requests')]);
+      const [ministries, connections, filed] = await Promise.all([api('/ministries'), staffView ? api('/connections') : [], staffView ? api('/requests') : []]);
       setTeams(ministries); setSaved(connections); setRequests(filed);
     } catch (err) { setError('Could not load church data. ' + err.message); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
   // The chat widget filed a request; refresh the staff queue.
-  useEffect(() => { if (requestsVersion) api('/requests').then(setRequests).catch(() => {}); }, [requestsVersion]);
+  useEffect(() => { if (requestsVersion && staffView) api('/requests').then(setRequests).catch(() => {}); }, [requestsVersion]);
   const pending = requests.filter(r => r.status === 'pending');
   useEffect(() => { onCount(saved.length + pending.length); }, [saved.length, pending.length]);
   useEffect(() => {
@@ -94,7 +99,10 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
     {error && <div className="banner error" role="alert"><span>{error}</span><button className="secondary" onClick={load} disabled={loading || busy}>Reload</button></div>}
     {loading && <p className="muted" role="status">Loading church data…</p>}
 
-    {route === 'serve' && <>
+    {route === 'serve' && !loading && !error && !teams.length && <SetUpThis icon="users" title="No serving teams listed yet."
+      text={church.name + ' has not listed its serving teams yet. Ask Belong or the church office how to get involved.'}
+      staffText="Add your teams, what they do and who leads them, and people can find a place to serve here." />}
+    {route === 'serve' && teams.length > 0 && <>
       <div className="stats">
         {[['Filled shift positions', teams.reduce((sum, t) => sum + t.filled, 0), 'Across the listed shifts', 'users'],
           ['Open spots', teams.reduce((sum, t) => sum + t.total - t.filled, 0), `Across ${teams.length} ministry teams`, 'plus'],
@@ -115,7 +123,7 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
           <h3>{m.name}</h3>
           <p>{m.description}</p>
           <div className="coverage"><span><b>{m.total - m.filled}</b> open spots</span><span>{m.filled} / {m.total} filled</span></div>
-          <div className="progress" role="meter" aria-label={m.name + ' volunteer coverage'} aria-valuenow={m.filled} aria-valuemin={0} aria-valuemax={m.total}><span style={{ width: m.filled / m.total * 100 + '%' }} /></div>
+          <div className="progress" role="meter" aria-label={m.name + ' volunteer coverage'} aria-valuenow={m.filled} aria-valuemin={0} aria-valuemax={m.total}><span style={{ width: (m.total ? m.filled / m.total * 100 : 0) + '%' }} /></div>
           <Shifts ministry={m} />
           <div className="card-bottom"><span><Icon name="clock" size={16} />{m.day}</span><button className="link" onClick={() => setDetail(m)}>View team<Icon name="arrow" size={16} /></button></div>
         </article>)}
@@ -179,7 +187,8 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
       </section>
     </div>}
 
-    {route === 'serve/saved' && <section>
+    {route === 'serve/saved' && !staffView && <StaffOnly what="Saved connections and chat requests" />}
+    {route === 'serve/saved' && staffView && <section>
       {saved.length ? saved.map(m => <article className="card saved" key={m.id + '-' + m.member}>
         <span className={'icon color' + m.id}>{m.icon}</span>
         <div><h3>{m.member} → {m.name}</h3><Contact m={m} /><small>Introduction not yet sent</small></div>
@@ -195,12 +204,13 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
 }
 
 function Shifts({ ministry }) {
+  const { demo } = useChurch();
   if (!ministry.shifts?.length) return <p className="shift-empty">Contact the team for upcoming shifts.</p>;
   const time = value => {
     const [hours, minutes] = value.split(':').map(Number);
     return `${hours % 12 || 12}:${String(minutes).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
   };
-  return <div className="shifts"><h4>Scheduled shifts</h4><small>Sample schedule · Local church time</small><ul>{ministry.shifts.map(shift => <li key={shift.id}>
+  return <div className="shifts"><h4>Scheduled shifts</h4><small>{demo ? 'Sample schedule · ' : ''}Local church time</small><ul>{ministry.shifts.map(shift => <li key={shift.id}>
     <strong>{new Date(`${shift.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</strong>
     <span>{time(shift.start_time)}–{time(shift.end_time)}</span>
     <span className="shift-capacity">{shift.filled} of {shift.total} positions filled{shift.filled >= shift.total ? ' · Full' : ''}</span>
@@ -208,7 +218,9 @@ function Shifts({ ministry }) {
 }
 
 function Contact({ m }) {
-  return <div className="contact"><strong>{m.head}</strong><small>Ministry lead · Sample contact</small><a href={'mailto:' + m.email}><Icon name="mail" size={16} />{m.email}</a></div>;
+  const { demo } = useChurch();
+  if (!m.head && !m.email) return null;
+  return <div className="contact"><strong>{m.head}</strong><small>{demo ? 'Ministry lead · Sample contact' : 'Team leader'}</small>{m.email && <a href={'mailto:' + m.email}><Icon name="mail" size={16} />{m.email}</a>}</div>;
 }
 
 const requestLabels = { connection: 'Connection', pastoral_care: 'Pastoral care', prayer: 'Prayer', crisis: 'Crisis', other: 'Question' };

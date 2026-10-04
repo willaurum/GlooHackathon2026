@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import ChurchMap from './ChurchMap.jsx';
+import { useChurch } from './ChurchContext.js';
 import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS } from './visitMap.js';
 
 const TOKEN_KEY = 'belong.visitToken';
 
-function readToken() {
-  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+// Each church keeps its own visit token (the demo church keeps the original key).
+function readToken(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
 }
-function writeToken(token) {
+function writeToken(key, token) {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    if (token) localStorage.setItem(key, token);
+    else localStorage.removeItem(key);
   } catch { /* ignore */ }
 }
 
 export default function VisitPage() {
+  const site = useChurch();
+  const tokenKey = site.demo ? TOKEN_KEY : TOKEN_KEY + ':' + site.slug;
   const [church, setChurch] = useState(null),
     [visit, setVisit] = useState(null),
     [loading, setLoading] = useState(true),
@@ -39,11 +43,11 @@ export default function VisitPage() {
         setChurch({ ...data, events: Array.isArray(data.events) ? data.events : [] });
         const first = data.info.services[0];
         if (first) setService(prev => prev || `${first.day} ${first.time}`);
-        const token = readToken();
+        const token = readToken(tokenKey);
         if (token) {
           try { setVisit(await api('/visits/' + token)); }
           catch (err) {
-            if (err.status === 404) writeToken(null);
+            if (err.status === 404) writeToken(tokenKey, null);
             else setError('Could not load your visit. Refresh to try again.');
           }
         }
@@ -71,7 +75,7 @@ export default function VisitPage() {
         method: 'POST',
         body: JSON.stringify({ name, contact, service, party_size: partySize, kids, wants_host: wantsHost })
       });
-      writeToken(created.token);
+      writeToken(tokenKey, created.token);
       setVisit(created);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
@@ -88,14 +92,16 @@ export default function VisitPage() {
   }
 
   function planAnother() {
-    writeToken(null);
+    writeToken(tokenKey, null);
     setVisit(null);
   }
 
   if (loading) return <p role="status" className="muted">Loading…</p>;
   if (error && !church) return <div className="api-message" role="alert">{error}</div>;
   const info = church.info;
-  const directions = encodeURIComponent(EXAMPLE_CAMPUS.directionsQuery);
+  // The parking and entrances map is an illustration made for the demo church; other churches get directions to their address.
+  const place = site.demo ? EXAMPLE_CAMPUS.directionsQuery : [info.address, info.city].filter(Boolean).join(', ') || info.map_query || '';
+  const directions = encodeURIComponent(place);
   const nextSteps = church.events.filter(ev => ev.audience === 'Newcomers' || ev.audience === 'Everyone' || ev.audience === 'Families').slice(0, 3);
 
   return <div className="visit-page">
@@ -104,21 +110,31 @@ export default function VisitPage() {
     <section className="card visit-section" id="visit-service-times">
       <div className="eyebrow">SERVICE TIMES</div>
       <h2>Join us this week</h2>
-      <div className="service-cards">
+      {info.services.length ? <div className="service-cards">
         {info.services.map(s => <article key={s.day + s.time} className="service-card">
           <strong>{s.day} {s.time}</strong>
           <p>{s.note}</p>
         </article>)}
-      </div>
+      </div> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Belong or the church office in the meantime.'}</p>}
     </section>
 
-    <section className="card visit-section" id="visit-what-to-expect">
+    {info.first_visit && <section className="card visit-section" id="visit-what-to-expect">
       <div className="eyebrow">WHAT TO EXPECT</div>
       <h2>Before you arrive</h2>
       <p>{info.first_visit}</p>
-    </section>
+    </section>}
 
-    <section className="card visit-section" id="visit-map">
+    {!site.demo && place && <section className="card visit-section" id="visit-map">
+      <div className="eyebrow">FIND YOUR WAY</div>
+      <h2>Where we meet</h2>
+      <p>{info.address || place}</p>
+      <div className="map-links">
+        <a className="btn primary" href={`https://www.google.com/maps/dir/?api=1&destination=${directions}`} target="_blank" rel="noopener noreferrer">Get directions</a>
+        <a className="btn secondary" href={`https://maps.apple.com/?daddr=${directions}`} target="_blank" rel="noopener noreferrer">Open in Apple Maps</a>
+      </div>
+    </section>}
+
+    {site.demo && <section className="card visit-section" id="visit-map">
       <div className="eyebrow">FIND YOUR WAY</div>
       <h2>Parking, entrances &amp; kids check-in</h2>
       <p>Tap a spot to see it on the map.</p>
@@ -138,7 +154,7 @@ export default function VisitPage() {
         <a className="btn secondary" href={`https://maps.apple.com/?daddr=${directions}`} target="_blank" rel="noopener noreferrer">Open in Apple Maps</a>
       </div>
       <p className="map-address">Example campus: {EXAMPLE_CAMPUS.name}, {EXAMPLE_CAMPUS.address}. Parking and door labels are illustrative.</p>
-    </section>
+    </section>}
 
     {nextSteps.length > 0 && <section className="card visit-section" id="visit-next-steps">
       <div className="eyebrow">YOUR NEXT STEP</div>
@@ -152,7 +168,8 @@ export default function VisitPage() {
       </div>
     </section>}
 
-    <section className="card visit-section" id="visit-sign-up">
+    {/* Guests pick a service time, so the form waits until the church has one. */}
+    {(info.services.length > 0 || visit) && <section className="card visit-section" id="visit-sign-up">
       {!visit ? <>
         <div className="eyebrow">LET US KNOW YOU'RE COMING</div>
         <h2>Plan your visit</h2>
@@ -208,6 +225,6 @@ export default function VisitPage() {
         </>}
         <button type="button" className="plan-another" onClick={planAnother}>Plan a different visit</button>
       </div>}
-    </section>
+    </section>}
   </div>;
 }

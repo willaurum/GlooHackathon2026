@@ -2,14 +2,26 @@ import { Container, ContainerProxy, getContainer } from '@cloudflare/containers'
 import { DurableObject } from 'cloudflare:workers';
 import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
+import { DEMO_SLUG, access, churchHeaders, churchPath, findChurch, isStaff, onBaseDomain, validSlug } from './churches';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
 export { ContainerProxy };
 
 type Statement = { sql: string; params?: (string | number | null)[] };
 
-/** The church database: SQLite in a Durable Object. Each POST /sql batch runs as one transaction. */
+/** One church's database: SQLite in a Durable Object. Each POST /sql batch runs as one transaction. */
 export class ChurchDB extends DurableObject<AppEnv> {
+	// The demo church's object also remembers which other churches have Sermon Notes, so the
+	// container can be kept awake while any of them is transcribing.
+	async rememberNotesChurch(slug: string): Promise<void> {
+		await this.ctx.storage.put('notes-church:' + slug, Date.now());
+	}
+
+	async notesChurches(): Promise<string[]> {
+		const found = await this.ctx.storage.list({ prefix: 'notes-church:', limit: 1000 });
+		return [...found.keys()].map((k) => k.slice('notes-church:'.length));
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		if (request.method !== 'POST' || new URL(request.url).pathname !== '/sql') {
 			return new Response('Not found', { status: 404 });
@@ -36,24 +48,6 @@ const YOUTUBE_HOSTS = ['youtube.com', '*.youtube.com', 'youtu.be', '*.googlevide
 // The website chat (backend/app/chat.py) calls these AI providers when a key is set.
 const AI_PROVIDER_HOSTS = ['platform.ai.gloo.com', 'api.openai.com', 'api.anthropic.com'];
 
-// Belong routes are public, like the church website they sit on. Sermon notes keep the API key.
-const PUBLIC_ROUTES: [string, RegExp][] = [
-	['GET', /^\/api\/(health|church|info|ministries|connections|requests|events|chat\/status|ai\/status|ollama\/status|visits|regions|news)$/],
-	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
-	['GET', /^\/api\/verse$/],
-	['GET', /^\/api\/events\/\d+$/],
-	['GET', /^\/api\/regions\/\d+\/prayer-angles$/],
-	['POST', /^\/api\/(matches|connections|chat|events|visits)$/],
-	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
-	['POST', /^\/api\/visits\/\d+\/(claim|met)$/],
-	['POST', /^\/api\/events\/\d+\/summarize$/],
-	['POST', /^\/api\/(events\/summarize-all|ai\/model|ollama\/model)$/],
-	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
-	['DELETE', /^\/api\/(connections|requests)\/\d+$/],
-	['PATCH', /^\/api\/requests\/\d+$/],
-];
-const isPublic = (method: string, path: string) => PUBLIC_ROUTES.some(([m, re]) => m === method && re.test(path));
-
 /** The FastAPI backend (backend/Dockerfile). */
 export class ChurchAPI extends Container<AppEnv> {
 	defaultPort = 8000;
@@ -64,11 +58,15 @@ export class ChurchAPI extends Container<AppEnv> {
 	// allowedHosts gates everything, including outboundByHost, so the bridge hosts must be listed.
 	allowedHosts = ['church-db', 'notes-media', 'workers-ai', ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS];
 
-	// Every instance shares one database, so the Worker's /ask reads what the container wrote.
+	// The container and the Worker's /ask share each church's database.
 	// Assigned (not declared as a class field) so the library's static setter registers it.
 	static {
 		this.outboundByHost = {
-			'church-db': (request: Request, env: AppEnv) => churchDb(env).fetch(request),
+			// The container names the church in X-Church; each church has its own database.
+			'church-db': (request: Request, env: AppEnv) => {
+				const slug = request.headers.get('X-Church') || DEMO_SLUG;
+				return validSlug(slug) ? churchDb(env, slug).fetch(request) : new Response('Bad church', { status: 400 });
+			},
 			'notes-media': (request: Request, env: AppEnv) => mediaBridge(request, env),
 			'workers-ai': (request: Request, env: AppEnv) => aiBridge(request, env),
 		};
@@ -99,21 +97,71 @@ export class ChurchAPI extends Container<AppEnv> {
 	}
 }
 
-/** ALLOWED_ORIGIN is a comma-separated list; the request's Origin is echoed back when it is on it. */
+/** ALLOWED_ORIGIN is a comma-separated list. The Origin of a request is allowed when it is on it,
+ * or when it is a church subdomain of BASE_DOMAIN. */
 function allowOrigin(request: Request, env: AppEnv): string {
 	const list = (env.ALLOWED_ORIGIN || '').split(',').map((o) => o.trim()).filter(Boolean);
 	if (!list.length) return '*';
 	const origin = request.headers.get('Origin') ?? '';
-	return list.includes(origin) ? origin : list[0];
+	return list.includes(origin) || onBaseDomain(origin, env.BASE_DOMAIN) ? origin : list[0];
 }
 
 function withCors(response: Response, env: AppEnv, request: Request): Response {
 	const headers = new Headers(response.headers);
 	headers.set('Access-Control-Allow-Origin', allowOrigin(request, env));
 	headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-	headers.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Admin-Key');
+	headers.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Admin-Key, Authorization');
 	headers.set('Vary', 'Origin');
 	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+// Notes routes that can start a transcription; the container is kept awake for that church.
+const STARTS_NOTE = /^\/api\/notes(\/upload|\/[0-9a-f-]{36}\/retry)?$/;
+// The content import carries a whole church (FAQs, ministries, calendar), so it may be larger.
+const MAX_IMPORT_BYTES = 512 * 1024;
+
+async function route(request: Request, env: AppEnv, url: URL): Promise<Response> {
+	// /api/churches/<slug>/... is that church; a bare /api/... is the demo church.
+	const target = churchPath(url.pathname);
+	if (!target) return json({ detail: 'Church not found' }, 404);
+	const path = target.path;
+	// Internal routes are only called by this Worker.
+	if (path.startsWith('/api/internal/')) return json({ detail: 'Not Found' }, 404);
+	if (path === '/api/verse' && request.method === 'GET') return handleVerse(url, env);
+
+	const church = await findChurch(env, target.slug);
+	if (church === 'unavailable') return json({ detail: 'The church directory is unavailable right now. Please try again.' }, 503);
+	if (!church) return json({ detail: 'Church not found' }, 404);
+
+	const rule = access(request.method, path, church.demo);
+	if (rule === 'staff' && !(await isStaff(request, env, church.slug))) return json({ detail: 'Please sign in as church staff.' }, 401);
+	if (rule === 'key') {
+		const denied = await authorize(request, env);
+		if (denied) return denied;
+	}
+	if (rule === 'key-or-staff' && !(await isStaff(request, env, church.slug))) {
+		const denied = await authorize(request, env);
+		if (denied) return denied;
+	}
+	if (path !== '/api/notes/upload') {
+		const rejected = tooLarge(request, path === '/api/church/content' ? MAX_IMPORT_BYTES : undefined);
+		if (rejected) return rejected;
+	}
+
+	// One named instance, so every request hits the same container. It reads the church from X-Church.
+	const container = getContainer(env.CHURCH_API, 'main');
+	const plain = new URL(url);
+	plain.pathname = path;
+	const forwarded = new Request(plain, { method: request.method, headers: churchHeaders(request.headers, church), body: request.body });
+	if (!church.demo && request.method === 'POST' && STARTS_NOTE.test(path)) {
+		await churchDb(env).rememberNotesChurch(church.slug).catch(() => {});
+	}
+	const handled = await handleNotes(forwarded, env, plain, container, church);
+	if (handled) return handled;
+	const response = await container.fetch(forwarded);
+	// Builds of the site check this to know the API serves more than the demo church.
+	if (path === '/api/health' && response.ok) return json({ ...(await response.json<object>()), churches: true });
+	return response;
 }
 
 export default {
@@ -125,24 +173,6 @@ export default {
 		if (request.method === 'OPTIONS') {
 			return withCors(new Response(null, { status: 204 }), env, request);
 		}
-		// Internal routes are only called by this Worker.
-		if (url.pathname.startsWith('/api/internal/')) {
-			return withCors(json({ detail: 'Not Found' }, 404), env, request);
-		}
-		if (url.pathname === '/api/verse' && request.method === 'GET') {
-			return withCors(await handleVerse(url, env), env, request);
-		}
-		if (!isPublic(request.method, url.pathname)) {
-			const denied = await authorize(request, env);
-			if (denied) return withCors(denied, env, request);
-		}
-		if (url.pathname !== '/api/notes/upload') {
-			const rejected = tooLarge(request);
-			if (rejected) return withCors(rejected, env, request);
-		}
-		// One named instance, so every request hits the same container.
-		const container = getContainer(env.CHURCH_API, 'main');
-		const handled = await handleNotes(request, env, url, container);
-		return withCors(handled ?? (await container.fetch(request)), env, request);
+		return withCors(await route(request, env, url), env, request);
 	},
 } satisfies ExportedHandler<AppEnv>;

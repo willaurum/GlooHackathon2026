@@ -2,7 +2,7 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-belong. is one site for a church community, **Grace Community Church** (fictional), with these areas:
+belong. is a church website any church can sign up for ("Add your church"), so each church gets the whole site below, with its own data. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
@@ -41,19 +41,21 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/give/start`, `#/give/c/<church>`, `#/prayer/map`. A section with sub-pages opens its first sub-page. |
+| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/start` (Add your church) and `#/setup` (Church setup). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` and `#/give/start` still work. A section with sub-pages opens its first sub-page. |
+| `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
+| `frontend/src/ChurchSwitcher.jsx`, `ChurchStart.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The "your church" picker in the sidebar and top bar, Add your church, Church setup for staff, and the shared empty, staff-only and not-yet-deployed states. |
 | `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
 | `frontend/src/PastorNotes.jsx`, `verses.js` | Sermon Notes, and the Bible reference parser and passage loader. |
-| `frontend/src/Give.jsx`, `GiveChurchBar.jsx`, `GiveSignup.jsx`, `GiveStaff.jsx`, `giving.js` | Giving, the church picker, church sign-up, the staff area, and the giving API client. |
+| `frontend/src/Give.jsx`, `GiveChurchBar.jsx`, `GiveStaff.jsx`, `giving.js` | Giving, the giving church bar, the giving staff area, and the giving API client. |
 | `frontend/src/ChatWidget.jsx`, `chatFormat.js`, `chatHistory.js`, `chatNavigation.js` | Ask Belong. |
 | `frontend/src/styles.css` | Design tokens (`:root`) and all styles. |
-| `frontend/src/api.js` | API helpers. `VITE_API_BASE` is the church API; `VITE_GIVING_API_BASE` is the giving API. |
+| `frontend/src/api.js` | API helpers. `VITE_API_BASE` is the church API; `VITE_GIVING_API_BASE` is the giving API. `api()` calls go to the current church. |
 | `frontend/src/data/` | Static data bundled into the site (`countryBorders.json` for the Prayer map). |
-| `api/` | Church API Worker: container, church database Durable Object, Sermon Notes routes, `/api/verse`. |
+| `api/` | Church API Worker: container, one church database Durable Object per church, who may call what (`churches.ts`), Sermon Notes routes, `/api/verse`. Tests in `api/test/`. |
 | `api-giving/` | Giving Worker, with tests in `api-giving/test/`. |
-| `backend/app/` | FastAPI app that runs in the container: ministries, matching, chat (`chat.py`), visits, events, prayer map, Sermon Notes (`pastor_notes.py`), SQL (`db.py`). Seed content is in the `*.json` files next to it. |
+| `backend/app/` | FastAPI app that runs in the container: ministries, matching, chat (`chat.py`), visits, events, prayer map, Sermon Notes (`pastor_notes.py`), SQL (`db.py`), the church for each request (`church_scope.py`) and the church content import (`church_content.py`). Seed content is in the `*.json` files next to it. |
 | `docker-compose.yml`, `db/` | Legacy local Postgres setup from the base branch. `db.py` now talks to the Durable Object, so this is not a working local stack on its own. |
 
 ## Build and deploy
@@ -78,6 +80,107 @@ cd ../api-giving && npm ci && npx wrangler deploy
 
 For local API development run `npx wrangler dev` in `api/` or `api-giving/`.
 
+## Churches
+
+Any church can sign up and get the whole site. Grace Community is just the demo church.
+
+### Which church the site shows
+
+`frontend/src/church.js` picks the church, in this order:
+
+1. **Subdomain**: `<slug>.<VITE_BASE_DOMAIN>` (for example `hope-chapel.belong.example.org`), when the build sets `VITE_BASE_DOMAIN`. Off until there is a domain.
+2. **Link**: a hash that names the church, `#/c/<slug>/serve`. The older giving link `#/give/c/<slug>` is rewritten to `#/c/<slug>/give`.
+3. **Saved**: the church this browser picked last (localStorage `belong-church`). Opening a church link also saves it.
+4. **Demo**: `grace-community`.
+
+Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church picker ("your church", top of the sidebar, or the church name in the phone top bar) searches the registry, switches the whole site, and has **Add your church** (`#/start`) and **Staff sign in / Church setup** (`#/setup`).
+
+### One registry, one staff login
+
+The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: sign-up (`POST /api/churches`), unique slugs, search, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
+
+### How the church API knows the church
+
+- Every call goes to `/api/churches/<slug>/...`, the same scheme as the giving API. The bare `/api/...` is the demo church, so the live site on `main`, open previews and older builds keep working unchanged against the new API.
+- The Worker (`api/index.ts`, `api/churches.ts`) checks the slug with the registry (`GET /api/directory/<slug>` on the giving Worker over the `GIVING` service binding, cached for a minute), checks who may call the route, and forwards to the container with `X-Church`, `X-Church-Name` and `X-Church-City`. Headers with those names from a browser are dropped.
+- In the container, `church_scope.py` puts that church around the whole request, and `db.run()` sends it with every SQL batch. The Worker routes each batch to that church database.
+
+### Where the data lives
+
+One SQLite Durable Object per church, named after the slug (`church:<slug>`). The demo church keeps the original database (`church`), so all existing data stays with Grace Community and there is nothing to migrate. Church info, service times, FAQs, events and groups, ministries and shifts, the calendar, visits and guests, connections and requests, the chat log, the prayer map and Sermon Notes are all in that one database, so one church can never read another church data. Uploaded sermon files go to the shared R2 bucket under a random id; only the church that owns the note can reach it.
+
+The first request for a church creates its tables. Only the demo church is seeded from the JSON files (in `db.initialize`, every `INSERT` in the setup batch is skipped for other churches). A new church starts with its name and city from sign-up and empty sections, and each page shows a plain "not set up yet" state, with a button to Church setup for signed-in staff.
+
+### Who may call what
+
+| Routes | Demo church | Any other church |
+|---|---|---|
+| Info, church, ministries, events, matches, chat, guest sign-up and "I am here", prayer map, verse | public | public |
+| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | public, as before (shared demo workspace) | that church staff |
+| Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
+| Sermon Notes and the chat log | `NOTES_API_KEY` or that church staff | `NOTES_API_KEY` or that church staff |
+| The shared AI model setting (`POST /api/ai/model`) | public, as before | `NOTES_API_KEY` |
+
+The demo church staff password is the `ADMIN_KEY` var in `api-giving/wrangler.jsonc`.
+
+### Church content import (the target for a site importer)
+
+A church is one JSON document, read with `GET /api/church/content` and written with `PUT /api/church/content` (staff only, up to 512 KB). Church setup saves through it, and it is what a future importer (a church gives us its old website, we build its belong. site) should produce. Every section is optional; a section that is sent replaces that whole section, and the rest is left alone. Items without an `id` get one. It is exactly the demo seed files combined, so `church.json` + `{"ministries": ministries.json}` + `{"calendar": events.json}` is a valid import (a test checks this). The schema is in `backend/app/church_content.py`:
+
+```jsonc
+{
+  "info": {                       // church.json "info"
+    "name": "Hope Chapel",         // required
+    "city": "Austin, TX", "address": "120 Example Street", "phone": "", "email": "", "office_hours": "",
+    "services": [{ "day": "Sunday", "time": "10:00am", "note": "Kids programs during the service" }],
+    "about": "", "first_visit": "", "care_team": "", "map_query": ""
+  },
+  "faqs":   [{ "id": 0, "question": "Where do I park?", "answer": "Behind the building." }],
+  "events": [{ "id": 0, "name": "Newcomer lunch", "when": "First Sunday, 12:30pm", "where": "Hall", "audience": "Newcomers", "description": "" }],
+  "groups": [{ "id": 0, "name": "Young adults", "when": "Tuesdays, 7pm", "where": "", "audience": "Ages 20 to 35", "description": "" }],
+  "ministries": [{                 // ministries.json; leaders are "head" and "email"
+    "id": 0, "name": "Greeters", "category": "", "icon": "", "description": "", "day": "Sunday mornings",
+    "head": "Pat Example", "email": "pat@example.com", "note": "", "skills": [], "style": "",
+    "total": 6, "filled": 0, "requirements": [],
+    "shifts": [{ "id": "0-1", "date": "2026-10-11", "start_time": "08:30", "end_time": "10:30", "filled": 0, "total": 6,
+                 "services": ["sunday-9"], "frequencies": ["one-time", "weekly", "monthly"] }]
+  }],
+  "calendar": [{ "id": 1, "title": "Serve Day", "category": "Outreach", "date": "2026-10-17", "time": "9:00 AM", "location": "", "description": "" }]
+}
+```
+
+Extra fields are kept. A ministry that saved connections or requests still point at is not deleted by an import, so those stay readable. Giving funds and mission trips are not part of this document: they live in the giving Worker (`/api/churches/<slug>/admin/funds`), with the same staff session. The prayer map regions are not in it yet.
+
+### Adding an endpoint
+
+Nothing extra: any endpoint that goes through `db.py` already runs against the church of the request. In the Worker, add the route to the right list in `api/churches.ts` (public, staff work that the demo church leaves open, or staff only); a route on no list needs the API key or a staff session. A new table goes in `db.initialize` as usual. Its seed `INSERT`s only run for the demo church.
+
+### Making it live
+
+1. Merge to `main` (or run Actions > Deploy backend). Deploy `api-giving/` first or together with `api/`: the church API needs the giving `/api/directory/<slug>` and `/admin/session` routes and the `GIVING` service binding in `api/wrangler.jsonc`.
+2. No new secrets, no new Durable Object classes, no migrations. Existing data stays with Grace Community.
+3. Until the church API is deployed, the site shows Grace Community as before, and a new church shows giving plus a short "this part opens once the updated church service is deployed" page. The site checks `GET /api/health` for `churches: true` (both APIs).
+
+### Subdomains, once there is a domain
+
+Nothing here buys or sets up a domain. When there is one (say `belong.example.org`):
+
+1. DNS: add the domain to Cloudflare and a proxied wildcard record `*.belong.example.org` (and the apex), pointing at the frontend Worker.
+2. Frontend Worker (repo root `wrangler.jsonc`): add routes `belong.example.org/*` and `*.belong.example.org/*` with `zone_name`, and build with `VITE_BASE_DOMAIN=belong.example.org`. Then `hope-chapel.belong.example.org` shows Hope Chapel, the demo church is `grace-community.belong.example.org`, the picker moves between subdomains, and shared links use them.
+3. APIs: set the `BASE_DOMAIN` var to `belong.example.org` in both `api/wrangler.jsonc` and `api-giving/wrangler.jsonc`. Their CORS check then accepts `https://belong.example.org` and `https://<slug>.belong.example.org` on top of `ALLOWED_ORIGIN`. Optionally give the APIs their own hostnames (`api.belong.example.org`, `giving.belong.example.org`) and update `VITE_API_BASE` and `VITE_GIVING_API_BASE`.
+4. Stripe: checkout returns to the origin that started the gift, so a gift from `hope-chapel.belong.example.org` comes back there once that origin is allowed (step 3). Set `PUBLIC_ORIGIN` in `api-giving/` to the giving API hostname and press "Re-run Stripe setup" for each connected church so its webhook points at the new address.
+5. Slugs: a subdomain is the church slug, so slugs are already DNS-safe (lowercase letters, digits and dashes, up to 40 characters), and the registry never hands out names like `www`, `api`, `app`, `admin` or `mail`.
+
+### Testing churches locally
+
+```bash
+python -m unittest backend.tests.test_churches        # isolation, the demo default, new churches, the import
+node --test api/test/churches.test.mjs frontend/src/church.test.js
+node api/test/sitewide.e2e.mjs                        # both APIs running locally; see the comment at the top
+```
+
+`api/test/sitewide.e2e.mjs` signs up two made-up churches and checks that staff-only routes need that church session, that one church cannot read or change another, and that requests with no church still go to Grace Community. It needs `api-giving` (`npx wrangler dev --port 8799`) and the church API reachable at `API` with its `GIVING` binding connected.
+
 ## Keys and access
 
 Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory (or with `--name <worker>` from anywhere). They are never in the repo.
@@ -92,7 +195,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
 
-The Serve, Guests, Calendar, Prayer map, verse and chat routes are public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key.
+The Serve, Guests, Calendar, Prayer map, verse and chat routes are public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key or that church staff session; screens with people and their contact details are staff only on every church except the demo church (see [Who may call what](#who-may-call-what)). Churches add no new secrets: the church API reaches the giving Worker through the `GIVING` service binding.
 
 ## First-time guests
 
@@ -118,7 +221,7 @@ Six fictional ministries, each with dated shifts, capacity, and onboarding requi
 - `GET /api/requests`, `PATCH /api/requests/{request_id}`: requests filed by the chat; approving a connection request also saves the connection.
 - `GET /api/info`: public church details (address, service times) for the home page.
 
-Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. This is a single shared demo workspace without login.
+Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. On the demo church this is a shared demo workspace without login; on every other church, Saved (connections and chat requests) is for signed-in staff.
 
 ### Website chat (Ask Belong)
 
@@ -145,8 +248,8 @@ Then set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=
 #### Tests
 
 ```bash
-python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts
-node --test frontend/src/chatFormat.test.js frontend/src/chatHistory.test.js frontend/src/chatNavigation.test.js
+python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts backend.tests.test_churches
+node --test frontend/src/*.test.js api/test/churches.test.mjs
 ```
 
 Run the Python tests from the repo root with the backend requirements installed. They mock the database, so no church DB is needed.
@@ -221,7 +324,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 
 **For a church:**
 
-1. **Sign up** (`#/give/start`, "Add your church"): name, city, currency and a staff password. The church gets a shareable giving link, `#/give/c/<slug>`, and starts with three funds: General giving, Tithes & offerings, and Missions. It stays in demo mode until Stripe is connected.
+1. **Sign up** (`#/start`, "Add your church", also in the church picker): name, city, a staff password and (under More options) the currency. The church gets the whole site at `#/c/<slug>/` (giving link `#/c/<slug>/give`), and starts with three funds: General giving, Tithes & offerings, and Missions. It stays in demo mode until Stripe is connected.
 2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions and Webhook Endpoints. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
    - one Product per fund and per mission trip, with preset Prices found again by `lookup_key` (plus monthly Prices for Tithes);
    - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, and monthly tithes renew.
@@ -240,6 +343,8 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 |---|---|---|---|
 | `GET` | `/api/health` | none | Liveness; `churches: true` means church support is deployed. |
 | `GET` / `POST` | `/api/churches` | none (rate-limited) | Search churches (`?q=`) / sign up a church. |
+| `GET` | `/api/directory/{slug}` | none | One church listing (slug, name, city) from the registry. The church API uses it to check a church exists. |
+| `GET` | `/api/churches/{slug}/admin/session` | staff session | 200 when the session is valid for that church. The church API uses it for its staff-only routes. |
 | `GET` | `/api/churches/{slug}` | none | Public church page: funds, trips, totals, presets, mode. |
 | `POST` | `/api/churches/{slug}/checkout` | none (rate-limited) | Start a gift to a fund or trip (one-time or monthly); returns a Checkout URL (real or simulated). |
 | `GET` | `/api/churches/{slug}/confirm/{session_id}` | own session | A gift's status after checkout. |

@@ -1,10 +1,15 @@
+import { DEMO_SLUG, churchHeaders, type Church } from './churches';
+
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
 type Secrets = {
 	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
 	GLOO_API_KEY?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string;
 	YOUVERSION_APP_KEY?: string; YOUVERSION_BIBLE_ID?: string;
+	// Optional: the base domain once churches have subdomains (grace.<BASE_DOMAIN>).
+	BASE_DOMAIN?: string;
 };
-export type AppEnv = Env & Secrets;
+// GIVING is a service binding to the giving Worker: the church registry and staff sign-in.
+export type AppEnv = Env & Secrets & { GIVING?: Fetcher };
 
 type Statement = { sql: string; params?: (string | number | null)[] };
 type Chunk = { idx: number; start: number; end: number; seg_from: number; seg_to: number; text: string; embedding: string };
@@ -29,22 +34,33 @@ const detail = (message: string, status: number) => json({ detail: message }, st
 
 // --- The church database (same /sql batch contract the container uses) ---
 
-export const churchDb = (env: AppEnv) => env.CHURCH_DB.get(env.CHURCH_DB.idFromName('church'));
+// One database per church. The demo church keeps the original database ('church'), so its data stays put.
+export const churchDb = (env: AppEnv, slug = DEMO_SLUG) =>
+	env.CHURCH_DB.get(env.CHURCH_DB.idFromName(slug === DEMO_SLUG ? 'church' : 'church:' + slug));
 
-async function sql(env: AppEnv, ...batch: Statement[]): Promise<{ rows: any[] }[]> {
-	const response = await churchDb(env).fetch('http://church-db/sql', { method: 'POST', body: JSON.stringify({ batch }) });
+async function sql(env: AppEnv, slug: string, ...batch: Statement[]): Promise<{ rows: any[] }[]> {
+	const response = await churchDb(env, slug).fetch('http://church-db/sql', { method: 'POST', body: JSON.stringify({ batch }) });
 	if (!response.ok) throw new Error(await response.text());
 	return (await response.json<{ results: { rows: any[] }[] }>()).results;
 }
 
-/** True while a note is queued or being processed; keeps the container awake. */
+/** True while any church has a note queued or being processed; keeps the container awake. */
 export async function notesBusy(env: AppEnv): Promise<boolean> {
+	let slugs = [DEMO_SLUG];
 	try {
-		const [{ rows }] = await sql(env, { sql: "SELECT 1 AS x FROM notes WHERE status IN ('queued', 'processing') LIMIT 1" });
-		return rows.length > 0;
+		slugs = [DEMO_SLUG, ...(await churchDb(env).notesChurches())];
 	} catch {
-		return false;
+		/* just the demo church */
 	}
+	for (const slug of slugs) {
+		try {
+			const [{ rows }] = await sql(env, slug, { sql: "SELECT 1 AS x FROM notes WHERE status IN ('queued', 'processing') LIMIT 1" });
+			if (rows.length) return true;
+		} catch {
+			/* that church has no notes table yet */
+		}
+	}
+	return false;
 }
 
 // --- Auth ---
@@ -71,9 +87,9 @@ async function authorizeAdmin(request: Request, env: AppEnv): Promise<Response |
 }
 
 /** Rejects oversized JSON bodies before they reach the container. */
-export function tooLarge(request: Request): Response | null {
+export function tooLarge(request: Request, max = MAX_JSON_BYTES): Response | null {
 	const length = Number(request.headers.get('Content-Length') ?? 0);
-	return length > MAX_JSON_BYTES ? detail('Request body too large', 413) : null;
+	return length > max ? detail('Request body too large', 413) : null;
 }
 
 async function readJson(request: Request): Promise<any> {
@@ -150,17 +166,19 @@ async function embed(env: AppEnv, texts: string[]): Promise<number[][]> {
 
 type ContainerStub = { fetch(request: Request): Promise<Response> };
 
-const internal = (container: ContainerStub, method: string, path: string, body?: unknown) =>
+// Internal calls carry the church headers, so the container works in that church's database.
+const internal = (container: ContainerStub, church: Church, method: string, path: string, body?: unknown) =>
 	container.fetch(new Request('http://container' + path, {
 		method,
-		headers: { 'Content-Type': 'application/json' },
+		headers: churchHeaders(new Headers({ 'Content-Type': 'application/json' }), church),
 		body: body === undefined ? undefined : JSON.stringify(body),
 	}));
 
-/** Handles upload, ask, admin config and delete. Returns null for routes the container serves. */
-export async function handleNotes(request: Request, env: AppEnv, url: URL, container: ContainerStub): Promise<Response | null> {
+/** Handles upload, ask, admin config and delete. Returns null for routes the container serves.
+ * `url` has the plain /api/... path; `church` is the church the request is for. */
+export async function handleNotes(request: Request, env: AppEnv, url: URL, container: ContainerStub, church: Church): Promise<Response | null> {
 	const path = url.pathname;
-	if (request.method === 'POST' && path === '/api/notes/upload') return upload(request, env, url, container);
+	if (request.method === 'POST' && path === '/api/notes/upload') return upload(request, env, url, container, church);
 	if (request.method === 'PUT' && path === '/api/admin/config') {
 		const denied = await authorizeAdmin(request, env);
 		if (denied) return denied;
@@ -170,13 +188,13 @@ export async function handleNotes(request: Request, env: AppEnv, url: URL, conta
 		} catch {
 			return detail('Body must be JSON', 400);
 		}
-		return internal(container, 'PUT', '/api/internal/config', body);
+		return internal(container, church, 'PUT', '/api/internal/config', body);
 	}
 	const ask = path.match(/^\/api\/notes\/([0-9a-f-]{36})\/ask$/);
-	if (request.method === 'POST' && ask) return answer(request, env, url, ask[1]);
+	if (request.method === 'POST' && ask) return answer(request, env, url, ask[1], church.slug);
 	const note = path.match(/^\/api\/notes\/([0-9a-f-]{36})$/);
 	if (request.method === 'DELETE' && note) {
-		const response = await internal(container, 'DELETE', `/api/internal/notes/${note[1]}`);
+		const response = await internal(container, church, 'DELETE', `/api/internal/notes/${note[1]}`);
 		if (!response.ok) return response;
 		const { r2_key } = await response.json<{ r2_key: string | null }>();
 		if (r2_key) await env.MEDIA.delete(r2_key);
@@ -185,7 +203,7 @@ export async function handleNotes(request: Request, env: AppEnv, url: URL, conta
 	return null;
 }
 
-async function upload(request: Request, env: AppEnv, url: URL, container: ContainerStub): Promise<Response> {
+async function upload(request: Request, env: AppEnv, url: URL, container: ContainerStub, church: Church): Promise<Response> {
 	const lengthHeader = request.headers.get('Content-Length');
 	const length = Number(lengthHeader);
 	if (!lengthHeader || !Number.isFinite(length)) return detail('Content-Length is required', 411);
@@ -199,7 +217,7 @@ async function upload(request: Request, env: AppEnv, url: URL, container: Contai
 	const noteId = crypto.randomUUID();
 	const key = `notes/${noteId}/source`;
 	await env.MEDIA.put(key, request.body, { httpMetadata: { contentType } });
-	const response = await internal(container, 'POST', '/api/internal/notes', { title, r2_key: key, note_id: noteId });
+	const response = await internal(container, church, 'POST', '/api/internal/notes', { title, r2_key: key, note_id: noteId });
 	if (!response.ok) await env.MEDIA.delete(key);
 	return response;
 }
@@ -243,7 +261,7 @@ export function timestamp(seconds: number): string {
 	return h ? `${h}:${mmss}` : mmss;
 }
 
-async function answer(request: Request, env: AppEnv, url: URL, noteId: string): Promise<Response> {
+async function answer(request: Request, env: AppEnv, url: URL, noteId: string, slug: string): Promise<Response> {
 	let body;
 	try {
 		body = await readJson(request);
@@ -255,7 +273,7 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string): 
 
 	let results;
 	try {
-		results = await sql(env,
+		results = await sql(env, slug,
 			{ sql: 'SELECT status, source_kind, source_url FROM notes WHERE id = ?', params: [noteId] },
 			{ sql: 'SELECT idx, start, "end", seg_from, seg_to, text, embedding FROM chunks WHERE note_id = ? ORDER BY idx', params: [noteId] },
 			{ sql: "SELECT data FROM config WHERE key = 'church'" },

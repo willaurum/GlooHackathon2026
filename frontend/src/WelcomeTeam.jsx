@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
+import { StaffOnly } from './ChurchStates.jsx';
 
 const HOST_KEY = 'belong.hostName';
 
@@ -30,7 +32,13 @@ function announceArrival(v) {
   } catch { /* some browsers refuse page-level notifications; the queue still updates */ }
 }
 
+// Guests names and arrival times: staff only, except on the shared demo church.
 export default function WelcomeTeam() {
+  const church = useChurch();
+  return church.demo || church.staff ? <WelcomeQueue /> : <StaffOnly what="The welcome team screen" />;
+}
+
+function WelcomeQueue() {
   const [waiting, setWaiting] = useState([]),
     [planned, setPlanned] = useState([]),
     [loading, setLoading] = useState(true),
