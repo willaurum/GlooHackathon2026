@@ -230,12 +230,13 @@ jobs:
             echo ""
             echo "This is what merging into \`${{ steps.plan.outputs.branch }}\` would look like, rebuilt on every push here. Once merged, \`${{ steps.plan.outputs.branch }}\`'s own preview updates separately: ${{ steps.plan.outputs.target_url }}"
           } > /tmp/pr-preview-comment.md
+          jq -Rs '{body: .}' < /tmp/pr-preview-comment.md > /tmp/pr-preview-comment.json
           EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/issues/${{ github.event.pull_request.number }}/comments" --paginate \
             --jq --arg m "$MARKER" '.[] | select(.body | startswith($m)) | .id' | head -1)
           if [ -n "$EXISTING" ]; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING" -f body=@/tmp/pr-preview-comment.md
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING" --input /tmp/pr-preview-comment.json
           else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/${{ github.event.pull_request.number }}/comments" -f body=@/tmp/pr-preview-comment.md
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/${{ github.event.pull_request.number }}/comments" --input /tmp/pr-preview-comment.json
           fi
 
   cleanup:
