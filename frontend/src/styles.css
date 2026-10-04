@@ -587,3 +587,58 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .field textarea.story-input:focus { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
 .story-help { font-size: 13px; margin: -8px 0 16px; }
 .reason.considerations { background: var(--bg); }
+
+/* ---------- About, Beliefs, News, Directory, Connect ---------- */
+.about, .directory, .connect { display: flex; flex-direction: column; gap: 18px; }
+.about-block { padding: 24px 26px; }
+.about-block h2 { margin-top: 2px; }
+.about-block p { margin-top: 10px; font-size: 15px; }
+.about-mission { background: var(--green-800); border-color: var(--green-800); }
+.about-mission .eyebrow { color: var(--sage); }
+.about-mission h2 { color: #fff; font-size: clamp(20px, 3vw, 26px); line-height: 1.4; max-width: 760px; }
+.about-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.about-actions.stack { flex-direction: column; }
+.values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 4px; }
+.value { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.value p { font-size: 14px; }
+.beliefs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.belief { display: grid; grid-template-columns: 40px 1fr; column-gap: 14px; padding: 20px 22px; }
+.belief-num { font-family: var(--display); font-weight: 800; font-size: 18px; color: var(--green-600); }
+.belief p { font-size: 14px; margin-top: 6px; }
+.news-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+.news-list { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+.news-item { padding: 20px 22px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.news-item p { font-size: 15px; }
+.news-meta { display: flex; align-items: center; gap: 10px; }
+.news-side { padding: 20px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 24px; }
+.news-side ul { display: flex; flex-direction: column; gap: 10px; }
+.news-side li b { display: block; color: var(--ink); font-size: 14px; }
+.office { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 14px; }
+.dir-search { margin: 0; max-width: 420px; }
+.dir-search input { width: 100%; }
+.people { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+.person { padding: 18px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.person-role { font-size: 13px; font-weight: 600; color: var(--green-600); }
+.person p { font-size: 14px; margin: 6px 0 8px; flex: 1; }
+.person .link { word-break: break-all; }
+.paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.path { cursor: pointer; font: inherit; }
+.connect-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.connect-note { display: block; margin-top: 10px; }
+.know-us { margin: 20px 0; }
+.know-links { display: flex; flex-wrap: wrap; gap: 10px; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.footer-links a { color: var(--muted); text-decoration: none; }
+.footer-links a:hover { color: var(--green-700); text-decoration: underline; }
+@media (max-width: 1100px) { .values { grid-template-columns: repeat(2, minmax(0, 1fr)); } .people { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) {
+  .news-layout, .connect-grid { grid-template-columns: 1fr; }
+  .news-side { position: static; }
+  .beliefs, .paths { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .values, .people { grid-template-columns: 1fr; }
+  .about-block { padding: 20px; }
+  .about-actions > button { flex: 1 1 100%; }
+}
+.api-message { padding: 12px 16px; border-radius: var(--r); background: var(--danger-50); color: var(--danger); font-size: 14px; }

@@ -9,7 +9,12 @@ export const SECTIONS = [
   { route: 'give', label: 'Give', icon: 'heart' },
   { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
+  // Reached from the sidebar on desktop and the info button in the top bar on phones, so the tab bar stays uncrowded.
+  { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about', 'Our story'], ['about/beliefs', 'Statement of belief'], ['about/news', 'News'], ['about/directory', 'Contact directory']] },
+  { route: 'connect', label: 'Connect', icon: 'mail', tab: false },
 ];
+
+export const ABOUT_TABS = [['about', 'Our story', 'info'], ['about/beliefs', 'Beliefs', 'book'], ['about/news', 'News', 'news'], ['about/directory', 'Directory', 'phone']];
 
 const sectionOf = route => route.split('/')[0];
 
@@ -46,13 +51,14 @@ export function TopBar({ go, onAsk }) {
   return <header className="topbar">
     <Brand onClick={() => go('')} />
     <span className="topbar-church">Grace Community</span>
+    <button className="icon-btn" aria-label="About and contact" onClick={() => go('about')}><Icon name="info" /></button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
   </header>;
 }
 
 export function TabBar({ route, go, onAsk, chatOpen, savedCount }) {
   return <nav className="tabbar" aria-label="Main">
-    {SECTIONS.map(s => <button key={s.route} className={!chatOpen && sectionOf(route) === s.route ? 'active' : ''} onClick={() => go(s.route)}>
+    {SECTIONS.filter(s => s.tab !== false).map(s => <button key={s.route} className={!chatOpen && sectionOf(route) === s.route ? 'active' : ''} onClick={() => go(s.route)}>
       <span className="tab-icon"><Icon name={s.icon} size={22} />{s.route === 'serve' && savedCount > 0 && <b className="dot" />}</span>{s.short ?? s.label}
     </button>)}
     <button className={chatOpen ? 'active' : ''} onClick={onAsk}><span className="tab-icon"><Icon name="chat" size={22} /></span>Ask</button>

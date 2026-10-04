@@ -2,15 +2,20 @@ import { useEffect, useState } from 'react';
 import ChatWidget from './ChatWidget.jsx';
 import Give from './Give.jsx';
 import Home from './Home.jsx';
-import { PageHeader, Sidebar, TabBar, TopBar } from './Layout.jsx';
+import { ABOUT_TABS, PageHeader, Sidebar, SubNav, TabBar, TopBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
+import About from './About.jsx';
+import Beliefs from './Beliefs.jsx';
+import News from './News.jsx';
+import Directory from './Directory.jsx';
+import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'about', 'about/beliefs', 'about/news', 'about/directory', 'connect'];
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
@@ -18,6 +23,14 @@ function currentRoute() {
   if (ROUTES.includes(hash) && (hash || !window.location.pathname.startsWith('/give'))) return hash;
   return window.location.pathname.startsWith('/give') ? 'give' : '';
 }
+
+const ABOUT_TITLES = { about: 'Who we are.', 'about/beliefs': 'What we believe.', 'about/news': 'What’s happening.', 'about/directory': 'Who to contact.' };
+const ABOUT_TEXT = {
+  about: 'The story, the people and the heart behind Grace Community Church.',
+  'about/beliefs': 'The convictions that shape our teaching and our life together.',
+  'about/news': 'Announcements and stories from church life.',
+  'about/directory': 'Pastors, staff and ministry leaders, and how to reach them.',
+};
 
 export default function App() {
   const [route, setRoute] = useState(currentRoute),
@@ -75,9 +88,25 @@ export default function App() {
           <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
           <PrayerMap />
         </div>}
+        {section === 'about' && <div className="page">
+          <PageHeader eyebrow="About" title={ABOUT_TITLES[route]} text={ABOUT_TEXT[route]} />
+          <SubNav tabs={ABOUT_TABS} route={route} go={go} />
+          {route === 'about' && <About go={go} />}
+          {route === 'about/beliefs' && <Beliefs />}
+          {route === 'about/news' && <News go={go} />}
+          {route === 'about/directory' && <Directory />}
+        </div>}
+        {section === 'connect' && <div className="page">
+          <PageHeader eyebrow="Connect" title="Let’s get you connected." text="Whether you are new, curious or ready to jump in, here are a few ways to take the next step." />
+          <Connect go={go} onAsk={() => setChatOpen(true)} />
+        </div>}
         <footer className="site-footer">
           <b>belong.</b>
           <span>Grace Community Church · Helping people find their people.</span>
+          <nav className="footer-links" aria-label="About">
+            {ABOUT_TABS.map(([r, label]) => <a key={r} href={'#/' + r} onClick={e => { e.preventDefault(); go(r); }}>{label}</a>)}
+            <a href="#/connect" onClick={e => { e.preventDefault(); go('connect'); }}>Connect</a>
+          </nav>
           <small>Demo site. Church details, people and contacts are fictional.</small>
         </footer>
       </main>
