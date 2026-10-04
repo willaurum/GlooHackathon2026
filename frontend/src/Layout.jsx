@@ -10,7 +10,7 @@ export const SECTIONS = [
   { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
   // Reached from the sidebar on desktop and the info button in the top bar on phones, so the tab bar stays uncrowded.
-  { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about', 'Our story'], ['about/beliefs', 'Statement of belief'], ['about/news', 'News'], ['about/directory', 'Contact directory']] },
+  { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about/beliefs', 'Statement of belief'], ['about/news', 'News'], ['about/directory', 'Contact directory']] },
   { route: 'connect', label: 'Connect', icon: 'mail', tab: false },
 ];
 
