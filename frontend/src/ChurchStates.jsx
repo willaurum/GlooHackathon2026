@@ -26,9 +26,9 @@ export function ChurchMissing() {
     <section className="card church-state" role="alert">
       <span className="icon color0"><Icon name="search" size={24} /></span>
       <h1>We could not find that church.</h1>
-      <p>The link may be old, or the church may have changed its address. Pick a church from the list, or add yours.</p>
+      <p>The link may be old, or the church may have changed its address. Ask your church for its current link. You can also look around the demo church, or add your own church.</p>
       <div className="hero-actions">
-        <button className="primary" onClick={() => choose(DEMO_CHURCH)}>Go to Grace Community</button>
+        <button className="primary" onClick={() => choose(DEMO_CHURCH)}>See the demo church</button>
         <button className="secondary" onClick={() => go('start')}><Icon name="plus" size={18} />Add your church</button>
       </div>
     </section>

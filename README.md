@@ -43,7 +43,7 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 |---|---|
 | `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/start` (Add your church) and `#/setup` (Church setup). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` and `#/give/start` still work. A section with sub-pages opens its first sub-page. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
-| `frontend/src/ChurchSwitcher.jsx`, `ChurchStart.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The "your church" picker in the sidebar and top bar, Add your church, Church setup for staff, and the shared empty, staff-only and not-yet-deployed states. |
+| `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchStart.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Add your church, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
 | `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
@@ -93,11 +93,13 @@ Any church can sign up and get the whole site. Grace Community is just the demo 
 3. **Saved**: the church this browser picked last (localStorage `belong-church`). Opening a church link also saves it.
 4. **Demo**: `grace-community`.
 
-Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church picker ("your church", top of the sidebar, or the church name in the phone top bar) searches the registry, switches the whole site, and has **Add your church** (`#/start`) and **Staff sign in / Church setup** (`#/setup`).
+Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church name sits at the top of the sidebar (the phone top bar on phones), with **Staff sign in / Church setup** (`#/setup`) under it.
+
+**Churches do not see each other.** There is no church list, search or switcher anywhere on the site: a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup and the end of sign-up show the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church** and **Add your church**, and is not kept as the saved church. Grace Community stays a public demo.
 
 ### One registry, one staff login
 
-The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: sign-up (`POST /api/churches`), unique slugs, search, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
+The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: sign-up (`POST /api/churches`), unique slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
 
 ### How the church API knows the church
 
@@ -331,7 +333,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 
 **For a church:**
 
-1. **Sign up** (`#/start`, "Add your church", also in the church picker): name, city, a staff password and (under More options) the currency. The church gets the whole site at `#/c/<slug>/` (giving link `#/c/<slug>/give`), and starts with three funds: General giving, Tithes & offerings, and Missions. It stays in demo mode until Stripe is connected.
+1. **Sign up** (`#/start`, "Add your church"): name, city, a staff password and (under More options) the currency. The church gets the whole site at `#/c/<slug>/` (giving link `#/c/<slug>/give`), and starts with three funds: General giving, Tithes & offerings, and Missions. It stays in demo mode until Stripe is connected.
 2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
    - one Product per fund and per mission trip, with preset Prices found again by `lookup_key` (plus monthly Prices for Tithes);
    - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, monthly tithes renew, and canceled monthly gifts are marked;
@@ -350,7 +352,8 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 | Method | Path | Auth | What it does |
 |---|---|---|---|
 | `GET` | `/api/health` | none | Liveness; `churches: true` means church support is deployed. |
-| `GET` / `POST` | `/api/churches` | none (rate-limited) | Search churches (`?q=`) / sign up a church. |
+| `GET` | `/api/churches` | none | Only the public demo church, whatever the query. Churches are not listed or searchable; kept so older builds still render. |
+| `POST` | `/api/churches` | none (rate-limited) | Sign up a church. |
 | `GET` | `/api/directory/{slug}` | none | One church listing (slug, name, city) from the registry. The church API uses it to check a church exists. |
 | `GET` | `/api/churches/{slug}/admin/session` | staff session | 200 when the session is valid for that church. The church API uses it for its staff-only routes. |
 | `GET` | `/api/churches/{slug}` | none | Public church page: funds, trips, totals, presets, mode. |

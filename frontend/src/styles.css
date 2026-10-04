@@ -148,7 +148,6 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .brand > b { display: grid; place-items: center; width: 34px; height: 36px; margin-right: 9px; border-radius: 11px; background: var(--green-700); color: #d5e6b9; font-size: 26px; line-height: 1; padding-bottom: 4px; letter-spacing: 0; }
 .brand > span { color: var(--sage); }
 .church { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); text-align: left; }
-.church:hover, .church[aria-expanded=true] { border-color: var(--line-strong); background: var(--green-50); }
 .church > div { flex: 1; min-width: 0; }
 .church strong, .church small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .church > svg { flex: none; color: var(--faint); }
@@ -421,13 +420,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .give-church-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .give-church-name strong { color: var(--ink); font-size: 16px; overflow-wrap: anywhere; }
 .give-church-name small { font-size: 12px; }
-.give-church-search { margin-top: 4px; }
-.give-church-search .field { margin: 12px 0; }
-.give-church-search ul { display: grid; gap: 6px; max-height: 280px; overflow-y: auto; }
-.give-church-search li button { display: flex; flex-direction: column; align-items: flex-start; width: 100%; min-height: 48px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; text-align: left; }
-.give-church-search li button:hover { border-color: var(--line-strong); background: var(--green-50); }
-.give-church-search li button.chosen { border-color: var(--green-600); background: var(--green-50); }
-.give-church-search strong { color: var(--ink); }
 .give-funds { display: flex; flex-direction: column; gap: 8px; }
 .give-fund { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); text-align: left; }
 .give-fund:hover { border-color: var(--line-strong); }
@@ -598,7 +590,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   }
   .topbar .brand { font-size: 24px; padding: 0; }
   .topbar .brand > b { width: 30px; height: 32px; font-size: 22px; border-radius: 9px; }
-  /* Narrow phones: drop the first-visit button (Guests is in the tab bar) so the church picker fits. */
+  /* Narrow phones: drop the first-visit button (Guests is in the tab bar) so the church name fits. */
   @media (max-width: 430px) { .topbar .first-visit { display: none; } }
   .tabbar {
     /* One column per button, however many there are, so a tab never wraps
@@ -879,23 +871,12 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 @media(max-width:850px){.map-shell{height:380px}}
 @media(max-width:600px){.map-shell{height:300px}.map-legend{gap:6px 16px}}
 
-/* ---------- Your church: the sitewide church picker ---------- */
-.church-switcher { position: relative; margin: 22px 0 16px; }
-.church-menu {
-  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; right: 0;
-  padding: 14px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
-}
-.church-menu .field { margin-bottom: 10px; }
-.church-menu ul { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; margin-bottom: 10px; }
-.church-menu li button { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; width: 100%; min-height: 48px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; text-align: left; }
-.church-menu li button:hover { border-color: var(--line-strong); background: var(--green-50); }
-.church-menu li button.chosen { border-color: var(--green-600); background: var(--green-50); }
-.church-menu li strong { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
-.church-menu li small { grid-column: 1; font-size: 12px; }
-.church-menu li svg { grid-row: 1 / span 2; grid-column: 2; color: var(--green-700); }
-.church-menu-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
-.church-menu-actions .primary { flex: 1 1 100%; }
-.church-switcher.compact { display: none; margin: 0; }
+/* ---------- Your church: the church this site is for (no picker; churches do not see each other) ---------- */
+.church-name { margin: 22px 0 16px; }
+.church-name .church-staff { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-top: 2px; font-size: 12px; font-weight: 600; }
+.church-name.compact { display: none; margin: 0; }
+.church-link { margin-bottom: 18px; }
+.church-link .give-link .primary { flex: none; }
 
 /* Empty, staff-only and not-ready states. */
 .church-state { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 28px; }
@@ -922,13 +903,11 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .staff-signin { max-width: 560px; }
 
 @media (max-width: 860px) {
-  .church-switcher.compact { display: block; flex: 1; min-width: 0; }
-  .church-switcher.compact .church { padding: 4px 8px; border: 0; gap: 8px; background: transparent; }
-  .church-switcher.compact .church > span { width: 28px; height: 28px; font-size: 16px; border-radius: 8px; }
-  .church-switcher.compact .church strong { font-size: 14px; }
-  .church-switcher.compact .church small { font-size: 11px; }
-  .church-switcher.compact .church > svg { display: none; }
-  .church-switcher.compact .church-menu { position: fixed; top: calc(var(--topbar) + 6px); left: 12px; right: 12px; width: auto; max-width: none; }
+  .church-name.compact { display: block; flex: 1; min-width: 0; }
+  .church-name.compact .church { padding: 4px 8px; border: 0; gap: 8px; background: transparent; }
+  .church-name.compact .church > span { width: 28px; height: 28px; font-size: 16px; border-radius: 8px; }
+  .church-name.compact .church strong { font-size: 14px; }
+  .church-name.compact .church-staff { min-height: 20px; margin: 0; font-size: 11px; }
   .setup-row { grid-template-columns: 1fr 1fr; }
   .setup-row .setup-wide { grid-column: 1 / -1; }
   .setup-row .setup-remove { grid-column: 2; justify-self: end; }

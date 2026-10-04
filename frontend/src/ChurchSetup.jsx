@@ -4,6 +4,7 @@ import { setStaffToken } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { churchApi, friendly, givingCapabilities, staffApi } from './giving.js';
 import Icon from './Icon.jsx';
+import ChurchLink from './ChurchLink.jsx';
 import { PageHeader } from './Layout.jsx';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -19,6 +20,7 @@ export default function ChurchSetup() {
   return <>
     <PageHeader eyebrow="Church setup" title={'Set up ' + church.name + '.'} text="Fill in what you can. Each part saves on its own, and visitors see it right away."
       action={<button className="secondary" onClick={() => setStaffToken(church.slug, '')}>Sign out</button>} />
+    <ChurchLink />
     {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Give, then Church staff.</p></div>}
   </>;
 }

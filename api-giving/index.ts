@@ -1468,14 +1468,6 @@ export class GivingRegistry extends DurableObject<GivingEnv> {
     return this.ctx.storage.sql.exec('SELECT 1 FROM churches WHERE slug = ?', slug).toArray().length > 0;
   }
 
-  async search(q: string): Promise<{ slug: string; name: string; city: string }[]> {
-    const sql = this.ctx.storage.sql;
-    const like = '%' + q.replace(/[\\%_]/g, (ch) => '\\' + ch) + '%';
-    const rows = q
-      ? sql.exec("SELECT slug, name, city FROM churches WHERE name LIKE ?1 ESCAPE '\\' OR city LIKE ?1 ESCAPE '\\' OR slug LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT 20", like).toArray()
-      : sql.exec('SELECT slug, name, city FROM churches ORDER BY (slug = ?) DESC, created_at DESC LIMIT 12', DEMO_SLUG).toArray();
-    return rows.map((r: any) => ({ slug: String(r.slug), name: String(r.name), city: String(r.city) }));
-  }
 }
 
 function withCors(response: Response, env: GivingEnv, request: Request): Response {
@@ -1532,9 +1524,12 @@ async function route(request: Request, env: GivingEnv): Promise<Response> {
   if (p === '/api/checkout' && m === 'POST') return forward(env, request, 'main', DEMO_SLUG, '/legacy/checkout');
   if (p.startsWith('/api/confirm/') && m === 'GET') return forward(env, request, 'main', DEMO_SLUG, '/legacy/confirm/' + p.slice('/api/confirm/'.length));
 
+  // Churches do not see each other: each one is reached by its own link or subdomain, so there is no
+  // public list or search. Older builds still ask for a list, so this answers with only the public
+  // demo church, whatever the query.
   if (p === '/api/churches' && m === 'GET') {
-    const q = (url.searchParams.get('q') || '').trim().slice(0, 60);
-    return json({ churches: await env.GIVING_REGISTRY.getByName('registry').search(q) });
+    const demo = await env.GIVING_REGISTRY.getByName('registry').get(DEMO_SLUG);
+    return json({ churches: demo ? [demo] : [] });
   }
   if (p === '/api/churches' && m === 'POST') return signup(request, env);
   // One church's public listing (name and city), straight from the registry. The church API uses it to

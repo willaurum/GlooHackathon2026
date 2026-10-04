@@ -119,7 +119,7 @@ export default function App() {
     setChatOpen(false);
     setScrollTarget({ id: sectionId ?? null });
   }
-  // Switch the whole site to another church (the church picker, sign-up, or the Give church search).
+  // Switch the whole site to another church (after sign-up, or the demo church from the not-found page).
   function choose(next, nextRoute = '') {
     saveChurch(next);
     if (source === 'subdomain') {
@@ -153,10 +153,10 @@ export default function App() {
   const ready = demo || apiReady === true;
   const staff = !!getStaffToken(slug);
   const church = useMemo(() => ({
-    slug, source, demo, name, city: listing?.city || '', ready, staff, choose, go,
+    slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
     // After staff rename the church in Church setup.
     refresh: () => setListingVersion(v => v + 1),
-  }), [slug, source, demo, name, listing?.city, ready, staff, route, staffVersion]);
+  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion]);
 
   const section = route.split('/')[0];
   // A new church on an older church API: everything but giving waits for the deploy.
