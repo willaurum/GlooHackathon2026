@@ -298,6 +298,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .pn-bar .eyebrow { margin: 0; }
 .pn-grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 20px; align-items: start; }
+/* Lets a wide row inside a sermon shrink to the column instead of stretching it past the screen. */
+.pn-grid > * { min-width: 0; }
 .pn .card, .pn-key { display: flex; flex-direction: column; gap: 12px; padding: 22px; margin-bottom: 16px; }
 .pn .field { margin: 0; }
 .pn-key { max-width: 460px; align-items: flex-start; }
@@ -485,6 +487,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   /* An open sermon (#/notes/<id>) takes over the page on phones: hide the header, list and add form. */
   .page:has(> .pn-detail) > .page-header, .pn-detail .pn-bar, .pn-detail .pn-grid > :first-child { display: none; }
   .pn-detail .pn-back { display: inline-flex; min-height: 44px; margin: 0 0 12px -12px; }
+  /* One swipeable row of category chips instead of four stacked rows above the transcript. */
+  .pn-cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -22px; padding: 0 22px 2px; }
+  .pn-cats::-webkit-scrollbar { display: none; }
+  .pn-cats button { flex: none; }
   .site-footer small { margin-left: 0; width: 100%; }
   .chat { right: 0; bottom: 0; left: 0; }
   .chat-toggle { display: none; }
