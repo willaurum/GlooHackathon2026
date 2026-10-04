@@ -317,6 +317,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-new .filters { align-self: flex-start; }
 .pn-pick { align-items: center; text-align: center; padding: 48px 24px !important; color: var(--green-200); }
 .pn-pick p { max-width: 360px; }
+/* Desktop keeps the list beside the open sermon, so Back only shows on phones. */
+.pn-back { display: none; }
 .pn-ask { display: flex; gap: 10px; align-items: flex-end; }
 .pn-ask .field { flex: 1; }
 .pn-ask .primary { min-height: 48px; }
@@ -462,6 +464,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .request .actions { width: 100%; }
   .request .actions > * { flex: 1; }
   .pn-ask { flex-direction: column; align-items: stretch; }
+  /* An open sermon (#/notes/<id>) takes over the page on phones: hide the header, list and add form. */
+  .page:has(> .pn-detail) > .page-header, .pn-detail .pn-bar, .pn-detail .pn-grid > :first-child { display: none; }
+  .pn-detail .pn-back { display: inline-flex; min-height: 44px; margin: 0 0 12px -12px; }
   .site-footer small { margin-left: 0; width: 100%; }
   .chat { right: 0; bottom: 0; left: 0; }
   .chat-toggle { display: none; }

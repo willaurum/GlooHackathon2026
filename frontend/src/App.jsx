@@ -11,11 +11,13 @@ import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
+// One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
+const SERMON_ROUTE = /^notes\/[\w-]+$/;
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  if (ROUTES.includes(hash) && (hash || !window.location.pathname.startsWith('/give'))) return hash;
+  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return hash;
   return window.location.pathname.startsWith('/give') ? 'give' : '';
 }
 
@@ -73,7 +75,7 @@ export default function App() {
         <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>
         {section === 'notes' && <div className="page">
           <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
-          <PastorNotes />
+          <PastorNotes route={route} go={go} />
         </div>}
         {section === 'give' && <div className="page">
           <PageHeader eyebrow="Give" title="Give with confidence." text="Every gift moves the mission forward. Give online in a couple of taps." />
