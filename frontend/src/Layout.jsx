@@ -1,5 +1,5 @@
 import { useChurch } from './ChurchContext.js';
-import ChurchSwitcher from './ChurchSwitcher.jsx';
+import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 
 // One navigation for every screen size: a sidebar on desktop, a tab bar on phones.
@@ -29,7 +29,7 @@ export function Brand({ onClick }) {
 export function Sidebar({ route, go, onAsk, savedCount }) {
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
-    <ChurchSwitcher />
+    <ChurchName />
     <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
       {SECTIONS.map(s => <div key={s.route}>
@@ -59,7 +59,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
 export function TopBar({ go, onAsk }) {
   return <header className="topbar">
     <Brand onClick={() => go('')} />
-    <ChurchSwitcher compact />
+    <ChurchName compact />
     <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />

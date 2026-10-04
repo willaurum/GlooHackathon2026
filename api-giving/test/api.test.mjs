@@ -40,6 +40,17 @@ r = await call('POST', '/api/churches', { name: 'Hope Chapel ' + suffix, city: '
 check(r.status === 201 && r.data.slug !== slug, 'same name gets a different slug', r.data);
 const slugB = r.data.slug; const tokenB = r.data.token;
 
+console.log('churches cannot see each other');
+for (const q of ['', '?q=Hope', '?q=' + suffix, '?q=Austin', '?q=a']) {
+  r = await call('GET', '/api/churches' + q);
+  const slugs = (r.data.churches || []).map(c => c.slug);
+  check(r.status === 200 && slugs.length <= 1 && slugs.every(x => x === 'grace-community'), 'list ' + (q || 'with no query') + ' shows only the demo church', r.data);
+}
+r = await call('GET', '/api/directory/' + slug);
+check(r.status === 200 && r.data.slug === slug, 'exact lookup by link still works', r.data);
+r = await call('GET', C);
+check(r.status === 200 && r.data.slug === slug, 'public church page by link still works');
+
 console.log('auth');
 r = await call('GET', C + '/admin');
 check(r.status === 401, 'admin needs auth');
