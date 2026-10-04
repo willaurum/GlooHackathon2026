@@ -444,14 +444,16 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   /* Narrow phones: drop the church label so the avatar still fits. */
   @media (max-width: 430px) { .topbar-church { display: none; } .topbar .first-visit { margin-left: auto; } }
   .tabbar {
-    position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-template-columns: repeat(6, 1fr);
+    /* One column per button, however many there are, so a tab never wraps
+       into a cut-off second row when SECTIONS grows. */
+    position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
     height: calc(var(--tabbar) + var(--safe-bottom)); padding-bottom: var(--safe-bottom);
     background: rgb(255 255 255 / .96); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border-top: 1px solid var(--line);
   }
-  .tabbar button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; font-weight: 600; color: var(--faint); }
+  .tabbar button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0; padding: 0 2px; font-size: 12px; font-weight: 600; color: var(--faint); }
   .tabbar button.active { color: var(--green-700); }
-  .tab-icon { position: relative; display: grid; place-items: center; width: 52px; height: 28px; border-radius: 999px; transition: background .15s; }
+  .tab-icon { position: relative; display: grid; place-items: center; width: 100%; max-width: 52px; height: 28px; border-radius: 999px; transition: background .15s; }
   .tabbar button.active .tab-icon { background: var(--green-100); }
   .dot { position: absolute; top: 2px; right: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--sand-700); border: 2px solid #fff; box-sizing: content-box; }
   main { padding: 20px 16px calc(var(--tabbar) + var(--safe-bottom) + 24px); }
