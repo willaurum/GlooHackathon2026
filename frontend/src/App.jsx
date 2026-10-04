@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, churchCapabilities, gapi, setApiChurch } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
-import { DEMO_CHURCH, DEMO_INFO, getStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, shareLink } from './church.js';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import ChurchStart from './ChurchStart.jsx';
@@ -100,6 +100,7 @@ export default function App() {
         }
       }
       if (!found && !missing && (await churchCapabilities()).churches) found = await api('/info').catch(() => null);
+      if (missing) forgetSavedChurch(slug);
       if (live) setListing(found ? { slug, name: found.name, city: found.city || '' } : { slug, name: titleCase(slug), city: '', missing });
     })();
     return () => { live = false; };

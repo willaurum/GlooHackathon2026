@@ -60,6 +60,10 @@ export function shareLink(slug, route = '', { origin = globalThis.location?.orig
 export function savedChurch() {
   try { return localStorage.getItem(SAVED) || localStorage.getItem(OLD_SAVED) || ''; } catch { return ''; }
 }
+/** Drop the saved church when it turns out not to exist, so one bad link does not stick. */
+export function forgetSavedChurch(slug) {
+  try { if (localStorage.getItem(SAVED) === slug) localStorage.removeItem(SAVED); } catch { /* private mode */ }
+}
 export function saveChurch(slug) {
   try { localStorage.setItem(SAVED, slug); localStorage.removeItem(OLD_SAVED); } catch { /* private mode */ }
 }
