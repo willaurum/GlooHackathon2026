@@ -20,6 +20,7 @@ const NOT_FOUND = 'Not found in this note.';
 const TOP_K = 5;
 const MAX_JSON_BYTES = 16 * 1024;
 const MAX_ASR_BYTES = 8 * 1024 * 1024;
+const MAX_LLM_PROMPT_CHARS = 64 * 1024;
 const MEDIA_KEY = /^notes\/[0-9a-f-]{36}\/source$/;
 
 export const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -112,6 +113,18 @@ export async function aiBridge(request: Request, env: AppEnv): Promise<Response>
 			if (!Array.isArray(texts) || !texts.length || texts.length > 100 || !texts.every((t) => typeof t === 'string' && t))
 				return new Response('texts must be 1-100 non-empty strings', { status: 400 });
 			return json({ vectors: await embed(env, texts) });
+		}
+		if (request.method === 'POST' && path === '/llm') {
+			// Transcript categorization: one window of numbered segments per call.
+			const { prompt } = await request.json<{ prompt: unknown }>();
+			if (typeof prompt !== 'string' || !prompt || prompt.length > MAX_LLM_PROMPT_CHARS)
+				return new Response(`prompt must be 1-${MAX_LLM_PROMPT_CHARS} characters`, { status: 400 });
+			const out: any = await env.AI.run(env.NOTES_LLM_MODEL as any, {
+				messages: [{ role: 'user', content: prompt }],
+				temperature: 0,
+				max_tokens: 2048,
+			} as any);
+			return json({ text: typeof out.response === 'string' ? out.response : JSON.stringify(out.response ?? '') });
 		}
 	} catch (err) {
 		console.error('workers-ai bridge failed:', String(err));

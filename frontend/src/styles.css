@@ -330,6 +330,22 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-segments b, .pn-answer b, .pn-answer a { font-variant-numeric: tabular-nums; margin-right: 8px; color: var(--green-700); font-weight: 700; }
 .pn-error { color: var(--danger); }
 
+/* Transcript category highlights: the toggle chip and the passage share a color. */
+.pn-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.pn-cats button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--card); color: var(--muted); font-size: 13px; font-weight: 500; }
+.pn-cats button:hover:not(:disabled) { border-color: var(--hl-edge, var(--green-600)); }
+.pn-cats button:disabled { opacity: .45; cursor: default; }
+.pn-cats button.selected { background: var(--hl-bg); border-color: var(--hl-edge); color: var(--ink); font-weight: 600; }
+.pn-cats small { font-variant-numeric: tabular-nums; color: var(--faint); }
+.pn-segments li.hl { background: var(--hl-bg); border-left: 3px solid var(--hl-edge); border-radius: 6px; padding: 4px 8px; }
+.hl-legend { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--hl-edge); }
+.cat-bible_quote, .hl-bible_quote { --hl-bg: #fbf3dc; --hl-edge: #b8860b; }
+.cat-bible_paraphrase, .hl-bible_paraphrase { --hl-bg: #e6eef9; --hl-edge: #3f6ea8; }
+.cat-recent_event, .hl-recent_event { --hl-bg: #fcebdf; --hl-edge: #c4612a; }
+.cat-political_event, .hl-political_event { --hl-bg: #fbe4e4; --hl-edge: #b03a3a; }
+.cat-personal_story, .hl-personal_story { --hl-bg: #f1e7f6; --hl-edge: #7d4f9c; }
+.cat-inerrancy_claim, .hl-inerrancy_claim { --hl-bg: #e3f2ee; --hl-edge: #2f7d6b; }
+
 /* ---------- Give ---------- */
 .give { display: flex; flex-direction: column; gap: 16px; }
 .give .banner { margin: 0; }

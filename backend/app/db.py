@@ -19,6 +19,8 @@ _client = httpx.Client(base_url=CHURCH_DB_URL, timeout=30)
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
+ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
+                         'political_event', 'personal_story', 'inerrancy_claim')
 
 
 def run(*statements):
@@ -101,6 +103,16 @@ def initialize():
             text TEXT NOT NULL,
             embedding TEXT NOT NULL,
             PRIMARY KEY (note_id, idx)
+        )""", ()),
+        # Transcript passages tagged by category (Bible quote, personal story, ...), as segment ranges.
+        (f"""CREATE TABLE IF NOT EXISTS annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            seg_from INTEGER NOT NULL,
+            seg_to INTEGER NOT NULL,
+            category TEXT NOT NULL CHECK (category IN ({', '.join(repr(c) for c in ANNOTATION_CATEGORIES)})),
+            label TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 1.0
         )""", ()),
         # First-time guest sign-ups and their day-of arrival status.
         (f"""CREATE TABLE IF NOT EXISTS visits (
@@ -360,6 +372,11 @@ def list_segments(note_id):
     return query('SELECT idx, start, "end", text FROM segments WHERE note_id = ? ORDER BY idx', (note_id,))
 
 
+def list_annotations(note_id):
+    return query("""SELECT seg_from, seg_to, category, label, confidence FROM annotations
+        WHERE note_id = ? ORDER BY seg_from, id""", (note_id,))
+
+
 def claim_note(note_id, stale_minutes=30):
     """Atomically mark a note as processing. Returns False if another job holds it."""
     row = one(f"""UPDATE notes SET status = 'processing', error = NULL, started_at = {NOW}
@@ -379,17 +396,22 @@ def fail_note(note_id, error):
     query("UPDATE notes SET status = 'failed', error = ? WHERE id = ?", (error[:300], note_id))
 
 
-def save_transcript(note_id, segments, chunks, duration):
-    """Replace a note's segments and chunks and mark it ready, in one transaction."""
+def save_transcript(note_id, segments, chunks, duration, annotations=()):
+    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction."""
     text = ' '.join(s['text'] for s in segments).strip()
     statements = [("DELETE FROM segments WHERE note_id = ?", (note_id,)),
-                  ("DELETE FROM chunks WHERE note_id = ?", (note_id,))]
+                  ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
+                  ("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
     statements += [('INSERT INTO segments (note_id, idx, start, "end", text) VALUES (?, ?, ?, ?, ?)',
                     (note_id, i, s['start'], s['end'], s['text'])) for i, s in enumerate(segments)]
     statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding) '
                     'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'], json.dumps(c['embedding'])))
                    for i, c in enumerate(chunks)]
+    statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
+                   for a in annotations]
     statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?
         WHERE id = ?""", (text, duration, len(text.split()), note_id)))
     run(*statements)
@@ -404,6 +426,7 @@ def delete_note(note_id):
         return row, True
     run(("DELETE FROM segments WHERE note_id = ?", (note_id,)),
         ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
+        ("DELETE FROM annotations WHERE note_id = ?", (note_id,)),
         ("DELETE FROM notes WHERE id = ?", (note_id,)))
     return row, False
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { API_BASE, api, getApiKey, setApiKey } from './api.js';
 import Icon from './Icon.jsx';
 
@@ -11,6 +11,26 @@ const ERRORS = {
   no_speech: 'No speech was found in the audio.',
   interrupted: 'Processing was interrupted. Try again.',
 };
+
+// Transcript highlight categories, in toggle-bar order. Bible ones are on by default.
+const CATS = [
+  { key: 'bible_quote', label: 'Bible quotes', icon: 'book', on: true },
+  { key: 'bible_paraphrase', label: 'Bible references', icon: 'bookmark', on: true },
+  { key: 'recent_event', label: 'Current events', icon: 'clock' },
+  { key: 'political_event', label: 'Politics', icon: 'pin' },
+  { key: 'personal_story', label: 'Personal stories', icon: 'heart' },
+  { key: 'inerrancy_claim', label: 'Scripture claims', icon: 'check' },
+];
+const CAT_LABEL = Object.fromEntries(CATS.map(c => [c.key, c.label]));
+
+function CategoryToggles({ counts, active, onToggle }) {
+  return <div className="pn-cats" role="group" aria-label="Highlight in transcript">
+    {CATS.map(c => <button key={c.key} type="button" className={'cat-' + c.key + (active.has(c.key) ? ' selected' : '')}
+      aria-pressed={active.has(c.key)} disabled={!counts[c.key]} onClick={() => onToggle(c.key)}>
+      <Icon name={c.icon} size={14} />{c.label}<small>{counts[c.key] || 0}</small>
+    </button>)}
+  </div>;
+}
 
 function KeyForm({ onChange }) {
   const [value, setValue] = useState('');
@@ -59,11 +79,29 @@ function NewNote({ onCreated }) {
 
 function NoteView({ note, onChange }) {
   const [segments, setSegments] = useState([]), [question, setQuestion] = useState(''),
-    [answer, setAnswer] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+    [answer, setAnswer] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''),
+    [annotations, setAnnotations] = useState([]), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
   useEffect(() => {
-    setSegments([]); setAnswer(null);
-    if (note.status === 'ready') api(`/notes/${note.id}/segments`).then(setSegments).catch(err => setError(err.message));
+    setSegments([]); setAnnotations([]); setAnswer(null);
+    if (note.status !== 'ready') return;
+    api(`/notes/${note.id}/segments`).then(setSegments).catch(err => setError(err.message));
+    // Highlights are optional; a transcript without them still reads fine.
+    api(`/notes/${note.id}/annotations`).then(setAnnotations).catch(() => {});
   }, [note.id, note.status]);
+  // Segment idx -> its annotations, and passage counts per category.
+  const [bySegment, counts] = useMemo(() => {
+    const map = new Map(), counts = {};
+    for (const a of annotations) {
+      counts[a.category] = (counts[a.category] || 0) + 1;
+      for (let i = a.seg_from; i <= a.seg_to; i++) map.set(i, [...(map.get(i) || []), a]);
+    }
+    return [map, counts];
+  }, [annotations]);
+  const toggleCat = key => setActiveCats(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
   async function ask(e) {
     e.preventDefault(); setBusy(true); setError(''); setAnswer(null);
     try { setAnswer(await api(`/notes/${note.id}/ask`, { method: 'POST', body: JSON.stringify({ question }) })); }
@@ -94,7 +132,16 @@ function NoteView({ note, onChange }) {
         </div>
       : <div className="pn-answer none" aria-live="polite"><p>Not found in this note.</p></div>)}
     <h3>Transcript</h3>
-    <ol className="pn-segments">{segments.map(s => <li key={s.idx}><b>{s.timestamp}</b> {s.text}</li>)}</ol>
+    {annotations.length > 0 && <CategoryToggles counts={counts} active={activeCats} onToggle={toggleCat} />}
+    <ol className="pn-segments">{segments.map(s => {
+      const shown = (bySegment.get(s.idx) || []).filter(a => activeCats.has(a.category));
+      // A passage's label goes on its first segment; the first shown category picks the color.
+      const starts = shown.filter(a => a.seg_from === s.idx);
+      return <li key={s.idx} className={shown.length ? 'hl hl-' + shown[0].category : undefined}>
+        {starts.length > 0 && <span className="hl-legend">{starts.map(a => CAT_LABEL[a.category] + (a.label ? ': ' + a.label : '')).join(' · ')}</span>}
+        <b>{s.timestamp}</b> {s.text}
+      </li>;
+    })}</ol>
   </section>;
 }
 
