@@ -18,7 +18,7 @@
   ],
   "vars": {
     // Comma-separated frontend origins; the first is the default.
-    "ALLOWED_ORIGIN": "https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-donate-giving-gloo-hackathon2026.jaronwilson2025.workers.dev",
+    "ALLOWED_ORIGIN": "https://gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-donate-giving-gloo-hackathon2026.jaronwilson2025.workers.dev",
     "PUBLIC_ORIGIN": "https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev",
     // Staff password for the built-in demo church only. Real churches set their own at sign-up.
     "ADMIN_KEY": "gloo-donate-demo"

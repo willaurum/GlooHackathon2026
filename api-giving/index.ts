@@ -60,6 +60,17 @@ function frontendOrigin(request: Request, env: GivingEnv): string {
   return list.includes(origin) || onBaseDomain(origin, env.BASE_DOMAIN) ? origin : list[0];
 }
 
+// Branch and PR previews proxy to this Worker and say where they are in X-Return-Origin, so a donor
+// who starts a gift on a preview comes back to that preview from Stripe. Only preview Workers of
+// this app qualify; anything else falls back to the allowed origins.
+const PREVIEW_ORIGIN = /^https:\/\/preview-[a-z0-9-]+-gloo-hackathon2026\.jaronwilson2025\.workers\.dev$/;
+
+/** Where Stripe should send the donor back to. */
+function returnOrigin(request: Request, env: GivingEnv): string {
+  const preview = request.headers.get('x-return-origin') || '';
+  return PREVIEW_ORIGIN.test(preview) ? preview : frontendOrigin(request, env);
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 }
@@ -511,7 +522,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     const id = crypto.randomUUID();
     const created = new Date().toISOString();
     const mode = this.#mode(c);
-    const back = frontendOrigin(request, this.env) + '/give?church=' + encodeURIComponent(c.slug);
+    const back = returnOrigin(request, this.env) + '/give?church=' + encodeURIComponent(c.slug);
 
     if (mode === 'demo') {
       const sessionId = 'demo_' + id;
