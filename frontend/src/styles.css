@@ -343,6 +343,16 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-cats small { font-variant-numeric: tabular-nums; color: var(--faint); }
 .pn-segments li.hl { background: var(--hl-bg); border-left: 3px solid var(--hl-edge); border-radius: 6px; padding: 4px 8px; }
 .hl-legend { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--hl-edge); }
+.hl-verse-btn { font: inherit; letter-spacing: inherit; text-transform: none; color: inherit; background: none; border: 0; padding: 0; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.verse-card { margin: 8px 0 4px; padding: 12px 14px; background: #fff; border: 1px solid var(--hl-edge, #ddd); border-radius: 10px; font-size: 15px; line-height: 1.5; }
+.verse-head { display: flex; align-items: center; gap: 8px; }
+.verse-version { font-size: 11px; font-weight: 700; color: #666; border: 1px solid #ccc; border-radius: 4px; padding: 0 5px; }
+.verse-close { margin-left: auto; background: none; border: 0; font-size: 20px; line-height: 1; padding: 0 4px; cursor: pointer; color: #666; }
+.verse-text { margin: 6px 0; font-family: Georgia, serif; }
+.verse-loading { margin: 6px 0; color: #666; }
+.verse-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: baseline; }
+.verse-foot small { color: #666; }
+.verse-foot a { font-weight: 600; }
 .cat-bible_quote, .hl-bible_quote { --hl-bg: #fbf3dc; --hl-edge: #b8860b; }
 .cat-bible_paraphrase, .hl-bible_paraphrase { --hl-bg: #e6eef9; --hl-edge: #3f6ea8; }
 .cat-recent_event, .hl-recent_event { --hl-bg: #fcebdf; --hl-edge: #c4612a; }
