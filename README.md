@@ -166,7 +166,14 @@ YouTube link can fail with a clear `youtube_blocked` error. Two workarounds:
    reliable, never touches YouTubes servers.
 2. **Set the `YTDLP_COOKIES` secret** — a permanent fix for YouTube links.
 
-Retrying a YouTube link sometimes succeeds (the block is flaky, not total).
+The block is flaky, not total, so the container retries on its own: yt-dlp
+paces its requests and backs off on transient errors, and a bot check or rate
+limit ("try again later") is retried after 30 s and again after 120 s before
+the note fails with `youtube_blocked`. The delays come from
+`YOUTUBE_RETRY_DELAYS` in the container environment (comma-separated seconds,
+default `30,120`). yt-dlp is pinned with a minimum version rather than an exact
+one, since YouTube support breaks on stale releases; a rebuild picks up the
+latest.
 
 ## Donate / Giving
 
