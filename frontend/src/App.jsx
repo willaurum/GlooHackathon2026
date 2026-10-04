@@ -107,7 +107,6 @@ export default function App() {
             {ABOUT_TABS.map(([r, label]) => <a key={r} href={'#/' + r} onClick={e => { e.preventDefault(); go(r); }}>{label}</a>)}
             <a href="#/connect" onClick={e => { e.preventDefault(); go('connect'); }}>Connect</a>
           </nav>
-          <small>Demo site. Church details, people and contacts are fictional.</small>
         </footer>
       </main>
     </div>
