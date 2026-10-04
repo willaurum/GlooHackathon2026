@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import ChatWidget from './ChatWidget.jsx';
 import Give from './Give.jsx';
 import Home from './Home.jsx';
-import { PageHeader, Sidebar, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
+import { PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
@@ -14,10 +14,19 @@ const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'cale
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 
+const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
+
+// A section whose own route has no page (Guests, Prayer) opens its first sub-page,
+// so tapping it in the phone tab bar never lands on an empty page.
+function withDefault(route) {
+  const s = SECTIONS.find(x => x.route === route);
+  return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
+}
+
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return hash;
+  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return withDefault(hash);
   return window.location.pathname.startsWith('/give') ? 'give' : '';
 }
 
@@ -42,6 +51,7 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
+    next = withDefault(next);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/#/' + next);
     setRoute(next);
@@ -51,7 +61,9 @@ export default function App() {
   useEffect(() => {
     if (!scrollTarget) return;
     const top = () => window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (!scrollTarget.id) return top();
+    // Don't return top()'s value: newer browsers return a Promise from scrollTo, and React
+    // would call it as this effect's cleanup on the next navigation and crash the app.
+    if (!scrollTarget.id) { top(); return; }
     // A section can render only after its page loads data, so wait up to 5 seconds for it.
     let tries = 0;
     const timer = setInterval(() => {
@@ -87,6 +99,7 @@ export default function App() {
         </div>}
         {section === 'guests' && <div className="page">
           <PageHeader eyebrow="Guests" title={route === 'guests/plan' ? 'Plan your visit.' : 'Welcome team.'} text={route === 'guests/plan' ? 'Everything a first-time guest needs, and a way to let us know they’re coming.' : 'See who has arrived and get them to the right person.'} />
+          <SubNav tabs={GUEST_TABS} route={route} go={go} />
           {route === 'guests/plan' && <VisitPage />}
           {route === 'guests/welcome' && <WelcomeTeam />}
         </div>}

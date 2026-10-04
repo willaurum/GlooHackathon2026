@@ -298,6 +298,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .pn-bar .eyebrow { margin: 0; }
 .pn-grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 20px; align-items: start; }
+/* Lets a wide row inside a sermon shrink to the column instead of stretching it past the screen. */
+.pn-grid > * { min-width: 0; }
 .pn .card, .pn-key { display: flex; flex-direction: column; gap: 12px; padding: 22px; margin-bottom: 16px; }
 .pn .field { margin: 0; }
 .pn-key { max-width: 460px; align-items: flex-start; }
@@ -444,14 +446,16 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   /* Narrow phones: drop the church label so the avatar still fits. */
   @media (max-width: 430px) { .topbar-church { display: none; } .topbar .first-visit { margin-left: auto; } }
   .tabbar {
-    position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-template-columns: repeat(6, 1fr);
+    /* One column per button, however many there are, so a tab never wraps
+       into a cut-off second row when SECTIONS grows. */
+    position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
     height: calc(var(--tabbar) + var(--safe-bottom)); padding-bottom: var(--safe-bottom);
     background: rgb(255 255 255 / .96); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border-top: 1px solid var(--line);
   }
-  .tabbar button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; font-weight: 600; color: var(--faint); }
+  .tabbar button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0; padding: 0 2px; font-size: 12px; font-weight: 600; color: var(--faint); }
   .tabbar button.active { color: var(--green-700); }
-  .tab-icon { position: relative; display: grid; place-items: center; width: 52px; height: 28px; border-radius: 999px; transition: background .15s; }
+  .tab-icon { position: relative; display: grid; place-items: center; width: 100%; max-width: 52px; height: 28px; border-radius: 999px; transition: background .15s; }
   .tabbar button.active .tab-icon { background: var(--green-100); }
   .dot { position: absolute; top: 2px; right: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--sand-700); border: 2px solid #fff; box-sizing: content-box; }
   main { padding: 20px 16px calc(var(--tabbar) + var(--safe-bottom) + 24px); }
@@ -483,6 +487,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   /* An open sermon (#/notes/<id>) takes over the page on phones: hide the header, list and add form. */
   .page:has(> .pn-detail) > .page-header, .pn-detail .pn-bar, .pn-detail .pn-grid > :first-child { display: none; }
   .pn-detail .pn-back { display: inline-flex; min-height: 44px; margin: 0 0 12px -12px; }
+  /* One swipeable row of category chips instead of four stacked rows above the transcript. */
+  .pn-cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -22px; padding: 0 22px 2px; }
+  .pn-cats::-webkit-scrollbar { display: none; }
+  .pn-cats button { flex: none; }
   .site-footer small { margin-left: 0; width: 100%; }
   .chat { right: 0; bottom: 0; left: 0; }
   .chat-toggle { display: none; }
