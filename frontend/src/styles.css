@@ -381,8 +381,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .preset-row button { min-height: 48px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); color: var(--green-800); font-size: 16px; font-weight: 600; }
 .preset-row button:hover { border-color: var(--green-600); }
 .preset-row button.chosen { background: var(--green-700); border-color: var(--green-700); color: #fff; }
-.give-form .give-private { align-items: flex-start; margin: 4px 0 12px; }
-.give-form .give-private .i { flex: none; margin-top: 1px; }
 .give-manage-link { margin-top: 6px; text-align: center; }
 .continue { margin-top: 8px; min-height: 52px; font-size: 16px; }
 .give-form .banner { margin: 12px 0 0; }

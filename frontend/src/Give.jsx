@@ -89,8 +89,6 @@ function DonationFlow({ church, fundId, setFundId, go }) {
   const [amount, setAmount] = useState(0),
     [custom, setCustom] = useState(''),
     [monthly, setMonthly] = useState(false),
-    [name, setName] = useState(''),
-    [email, setEmail] = useState(''),
     [busy, setBusy] = useState(false),
     [formErr, setFormErr] = useState('');
 
@@ -104,11 +102,9 @@ function DonationFlow({ church, fundId, setFundId, go }) {
     setFormErr('');
     if (!current) return setFormErr('Choose an amount or enter your own.');
     if (current < 100) return setFormErr('The smallest online gift is ' + fmt(100, church.currency) + '.');
-    if (!name.trim()) return setFormErr('Add your name.');
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setFormErr('Add a valid email for your receipt.');
     setBusy(true);
     try {
-      const res = await startCheckout(church, { fund: fund.id, amount: current, cadence: recurring ? 'month' : 'once', name: name.trim(), email: email.trim() });
+      const res = await startCheckout(church, { fund: fund.id, amount: current, cadence: recurring ? 'month' : 'once' });
       window.location.href = res.url;
     } catch (err) {
       setFormErr(friendly(err));
@@ -148,13 +144,6 @@ function DonationFlow({ church, fundId, setFundId, go }) {
           </div>
           <input inputMode="decimal" aria-label="Other amount" placeholder="Or enter any amount" value={custom} onChange={e => { setCustom(e.target.value); setAmount(0); }} />
         </div>
-        <label className="field">Your name
-          <input value={name} maxLength={120} autoComplete="name" placeholder="e.g. Jamie Parker" required onChange={e => setName(e.target.value)} />
-        </label>
-        <label className="field">Email <small>For your receipt. Never shown publicly.</small>
-          <input type="email" value={email} maxLength={200} autoComplete="email" placeholder="you@example.com" required onChange={e => setEmail(e.target.value)} />
-        </label>
-        <p className="give-private"><Icon name="lock" size={16} />Your gift is private. Only your church's staff see your name, for giving records and receipts.</p>
         {formErr && <div className="banner error" role="alert">{formErr}</div>}
         <button className="primary wide continue" disabled={busy || !current}>
           {busy ? 'Starting…' : 'Continue to payment' + (current ? ' · ' + fmt(current, church.currency) + (recurring ? '/mo' : '') : '')}
