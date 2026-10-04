@@ -25,7 +25,11 @@ export async function api(path, options = {}) {
 export async function gapi(path, options = {}) {
   const res = await fetch(GIVING_API + path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `Request failed (${res.status}). Please try again.`);
+  if (!res.ok) {
+    const error = new Error(body.error || `Request failed (${res.status}). Please try again.`);
+    error.status = res.status;
+    throw error;
+  }
   return body;
 }
 

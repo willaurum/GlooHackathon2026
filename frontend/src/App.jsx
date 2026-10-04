@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import ChatWidget from './ChatWidget.jsx';
 import Give from './Give.jsx';
+import { setGiveChurch } from './giving.js';
 import Home from './Home.jsx';
 import { PageHeader, Sidebar, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
@@ -10,13 +11,21 @@ import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give/trips', 'give/staff', 'give/start', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
+// A church's shareable giving link (#/give/c/<slug>) picks that church, then opens Give.
+const GIVE_LINK = /^give\/c\/([a-z0-9-]{1,40})$/;
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
   const hash = window.location.hash.replace(/^#\/?/, '');
+  const link = GIVE_LINK.exec(hash);
+  if (link) {
+    setGiveChurch(link[1]);
+    window.history.replaceState(null, '', '/#/give');
+    return 'give';
+  }
   if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return hash;
   return window.location.pathname.startsWith('/give') ? 'give' : '';
 }
@@ -30,6 +39,7 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const giveSession = window.location.pathname.startsWith('/give') ? params.get('session_id') || '' : '';
   const giveStatus = giveSession ? params.get('status') || '' : '';
+  const giveChurch = giveSession ? params.get('church') || '' : '';
 
   useEffect(() => {
     const sync = () => setRoute(currentRoute());
@@ -51,7 +61,8 @@ export default function App() {
   useEffect(() => {
     if (!scrollTarget) return;
     const top = () => window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (!scrollTarget.id) return top();
+    // Newer browsers return a Promise from scrollTo, which must not become the effect cleanup.
+    if (!scrollTarget.id) { top(); return; }
     // A section can render only after its page loads data, so wait up to 5 seconds for it.
     let tries = 0;
     const timer = setInterval(() => {
@@ -78,8 +89,7 @@ export default function App() {
           <PastorNotes route={route} go={go} />
         </div>}
         {section === 'give' && <div className="page">
-          <PageHeader eyebrow="Give" title="Give with confidence." text="Every gift moves the mission forward. Give online in a couple of taps." />
-          <Give sessionId={giveSession} status={giveStatus} />
+          <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
         </div>}
         {section === 'calendar' && <div className="page">
           <PageHeader eyebrow="Calendar" title="Church life & gatherings." text="Every service, class, and outreach — with optional AI summaries. Add the next thing on the calendar." />
