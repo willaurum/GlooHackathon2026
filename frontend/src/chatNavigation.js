@@ -15,7 +15,8 @@ const sections = {
   'plan-visit': {
     'service-times': ['Service times', 'visit-service-times'],
     'what-to-expect': ['What to expect', 'visit-what-to-expect'],
-    'good-to-know': ['Kids, parking & accessibility', 'visit-good-to-know'],
+    // Parking and kids check-in live in the Find your way card, alongside the map.
+    'good-to-know': ['Parking, entrances & kids check-in', 'visit-map'],
     map: ['Map & directions', 'visit-map'],
     'next-steps': ['A good place to start', 'visit-next-steps'],
     'sign-up': ['Let us know you’re coming', 'visit-sign-up'],

@@ -53,7 +53,7 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
   return <div className="chat">
     {open && <section className="chat-panel" aria-label="Chat with Belong">
       <div className="chat-head"><span className="icon color1"><Icon name="sparkle" size={20} /></span><div><strong>Ask Belong</strong><small>AI assistant · Staff review every request</small></div><button className="close" aria-label="Close chat" onClick={() => setOpen(false)}><Icon name="x" /></button></div>
-      {!configured && <div className="chat-banner">Demo mode: no AI key is configured, so answers come from simple built-in replies.</div>}
+      {!configured && <div className="chat-banner">Demo mode: basic church information and requests are available. AI conversation is not configured.</div>}
       <div className="chat-log" ref={log} aria-live="polite">
         <p className="bubble assistant">{greeting}</p>
         {messages.map((m, i) => <div key={i} className={'bubble ' + m.role + (m.error ? ' error' : '')}>

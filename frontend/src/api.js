@@ -15,7 +15,9 @@ export async function api(path, options = {}) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) throw new Error('Enter a valid API key on the Sermon Notes page.');
-    throw new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${response.status}). Please try again.`);
+    const error = new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${response.status}). Please try again.`);
+    error.status = response.status;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 }

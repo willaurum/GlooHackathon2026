@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 
 const HOST_KEY = 'belong.hostName';
@@ -15,17 +15,37 @@ function minutesSince(timestamp) {
   return Math.max(0, Math.round((Date.now() - new Date(timestamp).getTime()) / 60000));
 }
 
+const notificationsSupported = () => typeof window !== 'undefined' && 'Notification' in window;
+const readPermission = () => notificationsSupported() ? Notification.permission : 'unsupported';
+
+// Pops a browser notification for a guest who just tapped "I'm here". Never includes their contact details.
+function announceArrival(v) {
+  if (readPermission() !== 'granted') return;
+  try {
+    const n = new Notification('Guest arrived', {
+      body: `${v.name} (party of ${v.party_size}) · ${v.service}` + (v.wants_host ? '' : ' · prefers not to be met'),
+      tag: 'visit-' + v.visit_id,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch { /* some browsers refuse page-level notifications; the queue still updates */ }
+}
+
 export default function WelcomeTeam() {
   const [waiting, setWaiting] = useState([]),
     [planned, setPlanned] = useState([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [hostName, setHostName] = useState(readHostName);
+    [hostName, setHostName] = useState(readHostName),
+    [permission, setPermission] = useState(readPermission),
+    seen = useRef(null);
 
   async function load() {
     try {
       const data = await api('/visits');
+      // The first load only records who is already here; after that, anyone new gets announced.
+      if (seen.current) data.waiting.filter(v => v.status === 'arrived' && !seen.current.has(v.visit_id)).forEach(announceArrival);
+      seen.current = new Set(data.waiting.map(v => v.visit_id));
       setWaiting(data.waiting); setPlanned(data.planned); setError('');
     } catch (err) { setError('Could not load the guest queue. ' + err.message); }
     finally { setLoading(false); }
@@ -38,6 +58,10 @@ export default function WelcomeTeam() {
   }, []);
 
   useEffect(() => { writeHostName(hostName); }, [hostName]);
+
+  async function enableAlerts() {
+    try { setPermission(await Notification.requestPermission()); } catch { setPermission(readPermission()); }
+  }
 
   async function claim(visitId) {
     setBusy(true); setError('');
@@ -62,6 +86,17 @@ export default function WelcomeTeam() {
       <label className="field">Your name
         <input maxLength={60} value={hostName} onChange={e => setHostName(e.target.value)} placeholder="Enter your name to claim guests" />
       </label>
+    </section>
+
+    <section className="card visit-section">
+      <div className="eyebrow">ARRIVAL ALERTS</div>
+      {permission === 'granted' && <p>● Alerts are on. You'll get a notification when a guest taps "I'm here". Keep this page open.</p>}
+      {permission === 'default' && <>
+        <p>Get a browser notification the moment a guest arrives. Keep this page open while you're on duty.</p>
+        <button className="btn secondary" onClick={enableAlerts}>Turn on arrival alerts</button>
+      </>}
+      {permission === 'denied' && <p>Alerts are blocked for this site. Allow notifications in your browser's site settings, then reload this page.</p>}
+      {permission === 'unsupported' && <p>This browser can't show notifications. Watch the queue below instead.</p>}
     </section>
 
     <section className="card visit-section">

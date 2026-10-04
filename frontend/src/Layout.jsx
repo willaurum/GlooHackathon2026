@@ -13,6 +13,13 @@ export const SECTIONS = [
 
 const sectionOf = route => route.split('/')[0];
 
+// Demo identity shown in the corners of the workspace.
+export const USER = { initials: 'AL', name: 'Alex Lewis', role: 'Church leadership · Demo' };
+
+export function Avatar() {
+  return <span className="avatar" role="img" aria-label={USER.name}>{USER.initials}</span>;
+}
+
 export function Brand({ onClick }) {
   return <a className="brand" href="#/" onClick={e => { e.preventDefault(); onClick(); }}><b>b</b>belong<span>.</span></a>;
 }
@@ -21,6 +28,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
     <div className="church"><span>G</span><div><strong>Grace Community</strong><small>Springfield</small></div></div>
+    <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
       {SECTIONS.map(s => <div key={s.route}>
         <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
@@ -39,6 +47,10 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
       <p>Service times, groups, or a place to serve. Staff review every request.</p>
       <button className="secondary wide" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
     </div>
+    <div className="profile">
+      <Avatar />
+      <div><strong>{USER.name}</strong><small>{USER.role}</small></div>
+    </div>
   </aside>;
 }
 
@@ -46,8 +58,18 @@ export function TopBar({ go, onAsk }) {
   return <header className="topbar">
     <Brand onClick={() => go('')} />
     <span className="topbar-church">Grace Community</span>
+    <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
+    <Avatar />
   </header>;
+}
+
+// Desktop-only strip in the top-right corner; phones get the avatar in the TopBar instead.
+export function WorkspaceBar() {
+  return <div className="workspace-bar">
+    <span className="demo-pill">● Demo workspace</span>
+    <Avatar />
+  </div>;
 }
 
 export function TabBar({ route, go, onAsk, chatOpen, savedCount }) {
