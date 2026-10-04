@@ -29,7 +29,7 @@
   "ai": { "binding": "AI" },
   "vars": {
     // Comma-separated frontend origins; the first is the default.
-    "ALLOWED_ORIGIN": "https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-pastor-notes-gloo-hackathon2026.jaronwilson2025.workers.dev",
+    "ALLOWED_ORIGIN": "https://gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-pastor-notes-gloo-hackathon2026.jaronwilson2025.workers.dev",
     // extractive (default, no AI answerer) | workers-ai. A GEMINI_API_KEY secret overrides both.
     "NOTES_ANSWER_ENGINE": "extractive",
     "NOTES_LLM_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8",
