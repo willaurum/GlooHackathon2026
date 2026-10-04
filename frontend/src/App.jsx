@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import ChatWidget from './ChatWidget.jsx';
 import Give from './Give.jsx';
+import { setGiveChurch } from './giving.js';
 import Home from './Home.jsx';
-import { PageHeader, Sidebar, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
+import { PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
@@ -10,14 +11,31 @@ import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give/trips', 'give/staff', 'give/start', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
+// A church's shareable giving link (#/give/c/<slug>) picks that church, then opens Give.
+const GIVE_LINK = /^give\/c\/([a-z0-9-]{1,40})$/;
+
+const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
+
+// A section whose own route has no page (Guests, Prayer) opens its first sub-page,
+// so tapping it in the phone tab bar never lands on an empty page.
+function withDefault(route) {
+  const s = SECTIONS.find(x => x.route === route);
+  return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
+}
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return hash;
+  const link = GIVE_LINK.exec(hash);
+  if (link) {
+    setGiveChurch(link[1]);
+    window.history.replaceState(null, '', '/#/give');
+    return 'give';
+  }
+  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return withDefault(hash);
   return window.location.pathname.startsWith('/give') ? 'give' : '';
 }
 
@@ -30,6 +48,7 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const giveSession = window.location.pathname.startsWith('/give') ? params.get('session_id') || '' : '';
   const giveStatus = giveSession ? params.get('status') || '' : '';
+  const giveChurch = giveSession ? params.get('church') || '' : '';
 
   useEffect(() => {
     const sync = () => setRoute(currentRoute());
@@ -42,6 +61,7 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
+    next = withDefault(next);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/#/' + next);
     setRoute(next);
@@ -51,7 +71,9 @@ export default function App() {
   useEffect(() => {
     if (!scrollTarget) return;
     const top = () => window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (!scrollTarget.id) return top();
+    // Don't return top()'s value: newer browsers return a Promise from scrollTo, and React
+    // would call it as this effect's cleanup on the next navigation and crash the app.
+    if (!scrollTarget.id) { top(); return; }
     // A section can render only after its page loads data, so wait up to 5 seconds for it.
     let tries = 0;
     const timer = setInterval(() => {
@@ -78,8 +100,7 @@ export default function App() {
           <PastorNotes route={route} go={go} />
         </div>}
         {section === 'give' && <div className="page">
-          <PageHeader eyebrow="Give" title="Give with confidence." text="Every gift moves the mission forward. Give online in a couple of taps." />
-          <Give sessionId={giveSession} status={giveStatus} />
+          <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
         </div>}
         {section === 'calendar' && <div className="page">
           <PageHeader eyebrow="Calendar" title="Church life & gatherings." text="Every service, class, and outreach — with optional AI summaries. Add the next thing on the calendar." />
@@ -87,6 +108,7 @@ export default function App() {
         </div>}
         {section === 'guests' && <div className="page">
           <PageHeader eyebrow="Guests" title={route === 'guests/plan' ? 'Plan your visit.' : 'Welcome team.'} text={route === 'guests/plan' ? 'Everything a first-time guest needs, and a way to let us know they’re coming.' : 'See who has arrived and get them to the right person.'} />
+          <SubNav tabs={GUEST_TABS} route={route} go={go} />
           {route === 'guests/plan' && <VisitPage />}
           {route === 'guests/welcome' && <WelcomeTeam />}
         </div>}
