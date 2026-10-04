@@ -49,7 +49,7 @@ const PUBLIC_ROUTES: [string, RegExp][] = [
 	['POST', /^\/api\/events\/\d+\/summarize$/],
 	['POST', /^\/api\/(events\/summarize-all|ai\/model|ollama\/model)$/],
 	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
-	['DELETE', /^\/api\/connections\/\d+$/],
+	['DELETE', /^\/api\/(connections|requests)\/\d+$/],
 	['PATCH', /^\/api\/requests\/\d+$/],
 ];
 const isPublic = (method: string, path: string) => PUBLIC_ROUTES.some(([m, re]) => m === method && re.test(path));
