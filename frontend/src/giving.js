@@ -43,9 +43,34 @@ function legacyChurch(cfg) {
   };
 }
 
-export function startCheckout(church, gift) {
-  if (church.legacy) return gapi('/api/checkout', { method: 'POST', body: JSON.stringify(gift) });
-  return churchApi(church.slug, '/checkout', { method: 'POST', body: JSON.stringify(gift) });
+export async function startCheckout(church, gift) {
+  const res = church.legacy
+    ? await gapi('/api/checkout', { method: 'POST', body: JSON.stringify(gift) })
+    : await churchApi(church.slug, '/checkout', { method: 'POST', body: JSON.stringify(gift) });
+  if (res.manage) {
+    try { saveManageLink(new URL(res.url).searchParams.get('session_id') || '', res.manage); } catch { /* keep going */ }
+  }
+  return res;
+}
+
+// Private links to manage a demo monthly gift, kept in this browser so the
+// donor can find them again from "Manage or cancel a monthly gift".
+const MANAGE_KEY = 'belong-monthly-gifts';
+export function savedManageLinks() {
+  try {
+    const list = JSON.parse(localStorage.getItem(MANAGE_KEY) || '[]');
+    return Array.isArray(list) ? list.filter(x => x && typeof x.token === 'string') : [];
+  } catch { return []; }
+}
+export function saveManageLink(session, token) {
+  try { localStorage.setItem(MANAGE_KEY, JSON.stringify([{ session, token, at: Date.now() }, ...savedManageLinks().filter(x => x.token !== token)].slice(0, 20))); }
+  catch { /* private mode */ }
+}
+export const manageLinkFor = session => savedManageLinks().find(x => x.session === session)?.token || '';
+// A manage token is "<church slug>.<secret>".
+export function splitManageToken(token) {
+  const m = /^([a-z0-9-]{1,40})\.([\w-]{20,100})$/.exec(token || '');
+  return m ? { slug: m[1], secret: m[2] } : null;
 }
 
 export const percent = (raised, goal) => (goal ? Math.min(100, Math.round((raised / goal) * 100)) : 0);

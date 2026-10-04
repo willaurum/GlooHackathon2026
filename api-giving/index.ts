@@ -17,7 +17,14 @@
 // built-in demo church (Grace Community) always stays in demo mode.
 //
 // Donor names and emails are private: public endpoints return totals, goal
-// progress and anonymous counts only. Staff see who gave after signing in.
+// progress and anonymous counts only. Every gift needs a name and email, and
+// signed-in staff see them for giving records and receipts.
+//
+// Donors can cancel a monthly gift on their own. With Stripe connected, setup
+// also creates a Stripe customer portal configuration (with a hosted login
+// page), and the thank-you screen can open the portal for that gift's own
+// customer. In demo mode a monthly gift gets a private manage link instead,
+// stored here only as a hash.
 
 import { DurableObject } from 'cloudflare:workers';
 
@@ -233,6 +240,12 @@ async function stripe(env: GivingEnv, key: string, method: string, path: string,
   return data;
 }
 
+// A Stripe field that is either an ID or an expanded object.
+function stripeId(v: any): string {
+  const id = typeof v === 'string' ? v : v && typeof v.id === 'string' ? v.id : '';
+  return /^[A-Za-z0-9_]{1,255}$/.test(id) ? id : '';
+}
+
 function keyInfo(key: string): { mode: 'test' | 'live'; hint: string } | null {
   const m = /^(sk|rk)_(test|live)_([A-Za-z0-9]{16,})$/.exec(key);
   if (!m) return null;
@@ -256,6 +269,9 @@ type ChurchRow = {
   webhook_id: string;
   webhook_secret: string;
   webhook_note: string;
+  portal_config_id: string;
+  portal_url: string;
+  portal_note: string;
   provisioned_at: string;
   provision_error: string;
   created_at: string;
@@ -291,6 +307,10 @@ type GiftRow = {
   status: string;
   cadence: string;
   created_at: string;
+  customer_id: string;
+  subscription_id: string;
+  manage_hash: string;
+  canceled_at: string;
 };
 
 const DEFAULT_FUNDS = [
@@ -298,6 +318,12 @@ const DEFAULT_FUNDS = [
   { id: 'tithes', name: 'Tithes & offerings', description: 'Your regular tithe. Give once or set up a monthly gift.', recurring: 1, sort: 1 },
   { id: 'missions', name: 'Missions', description: 'Send and support mission teams near and far.', recurring: 0, sort: 2 },
 ];
+
+// Events the per-church webhook listens for. Re-running setup adds any that are missing.
+const WEBHOOK_EVENTS = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.expired', 'invoice.paid', 'customer.subscription.deleted'];
+const MANAGE_TOKEN_RE = /^[A-Za-z0-9_-]{20,100}$/;
+// How long the thank-you screen's "Manage or cancel" button works for a Stripe gift.
+const PORTAL_FROM_CHECKOUT_TTL = 7 * 24 * 60 * 60 * 1000;
 
 const FUND_INSERT =
   'INSERT OR IGNORE INTO funds (id, kind, name, description, goal, recurring, active, sort, start_date, end_date, location, spots, applications_open, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)';
@@ -316,6 +342,9 @@ export class GivingDO extends DurableObject<GivingEnv> {
     );
     const giftCols = sql.exec('PRAGMA table_info(gifts)').toArray().map((r: any) => String(r.name));
     if (!giftCols.includes('cadence')) sql.exec("ALTER TABLE gifts ADD COLUMN cadence TEXT NOT NULL DEFAULT 'once'");
+    for (const col of ['customer_id', 'subscription_id', 'manage_hash', 'canceled_at']) {
+      if (!giftCols.includes(col)) sql.exec(`ALTER TABLE gifts ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+    }
     sql.exec('CREATE TABLE IF NOT EXISTS rate (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL)');
     sql.exec(
       "CREATE TABLE IF NOT EXISTS church (id INTEGER PRIMARY KEY CHECK (id = 1), slug TEXT NOT NULL, name TEXT NOT NULL, city TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'usd', presets TEXT NOT NULL DEFAULT '[]', password_hash TEXT NOT NULL DEFAULT '', demo_locked INTEGER NOT NULL DEFAULT 0, stripe_key TEXT NOT NULL DEFAULT '', stripe_hint TEXT NOT NULL DEFAULT '', stripe_mode TEXT NOT NULL DEFAULT '', stripe_account TEXT NOT NULL DEFAULT '', webhook_id TEXT NOT NULL DEFAULT '', webhook_secret TEXT NOT NULL DEFAULT '', webhook_note TEXT NOT NULL DEFAULT '', provisioned_at TEXT NOT NULL DEFAULT '', provision_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)"
@@ -326,6 +355,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS applications (id TEXT PRIMARY KEY, fund_id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
     );
+    const churchCols = sql.exec('PRAGMA table_info(church)').toArray().map((r: any) => String(r.name));
+    for (const col of ['portal_config_id', 'portal_url', 'portal_note']) {
+      if (!churchCols.includes(col)) sql.exec(`ALTER TABLE church ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+    }
     sql.exec('CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)');
   }
 
@@ -431,6 +464,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
       currency: c.currency,
       presets: this.#presets(c),
       mode: this.#mode(c),
+      // How donors manage a monthly gift: "link" (demo, private link per gift),
+      // "portal" (Stripe's hosted login page at portalUrl) or "" (not set up yet).
+      manage: this.#mode(c) === 'demo' ? 'link' : c.portal_url ? 'portal' : '',
+      portalUrl: this.#mode(c) === 'demo' ? '' : c.portal_url,
       funds: active.filter((f) => f.kind !== 'trip').map(shape),
       trips: active.filter((f) => f.kind === 'trip').map(shape),
       totals: { raised, gifts },
@@ -509,15 +546,14 @@ export class GivingDO extends DurableObject<GivingEnv> {
     if (!fund || !fund.active) return json({ error: 'That fund is not taking gifts right now.' }, 400);
     const amount = cents(body.amount);
     const cadence = body.cadence === 'month' && fund.recurring ? 'month' : 'once';
-    const anonymous = body.anonymous ? 1 : 0;
-    const name = anonymous ? '' : str(body.name, 120);
-    const email = anonymous ? '' : str(body.email, 200);
+    // Staff always see who gave, for giving records and receipts. An "anonymous"
+    // flag from an older page is ignored: name and email are required.
+    const name = str(body.name, 120);
+    const email = str(body.email, 200);
     if (amount < MIN_GIFT) return json({ error: 'Choose or enter an amount of at least 1.00.' }, 400);
     if (amount > MAX_GIFT) return json({ error: 'That amount is too large for an online gift.' }, 400);
-    if (!anonymous) {
-      if (!name) return json({ error: 'Please add your name, or choose anonymous.' }, 400);
-      if (!EMAIL_RE.test(email)) return json({ error: 'Please add a valid email, or choose anonymous.' }, 400);
-    }
+    if (!name) return json({ error: 'Please add your name.' }, 400);
+    if (!EMAIL_RE.test(email)) return json({ error: 'Please add a valid email for your receipt.' }, 400);
 
     const id = crypto.randomUUID();
     const created = new Date().toISOString();
@@ -526,11 +562,13 @@ export class GivingDO extends DurableObject<GivingEnv> {
 
     if (mode === 'demo') {
       const sessionId = 'demo_' + id;
+      // A demo monthly gift gets a private manage link. Only its hash is stored.
+      const manage = cadence === 'month' ? randomToken() : '';
       this.#sql.exec(
-        'INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        id, fund.id, amount, name || 'Anonymous', email, anonymous, sessionId, 'demo', cadence, created
+        "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at, manage_hash) VALUES (?, ?, ?, ?, ?, 0, ?, 'demo', ?, ?, ?)",
+        id, fund.id, amount, name, email, sessionId, cadence, created, manage ? await sha256(manage) : ''
       );
-      return json({ id, url: back + '&session_id=' + sessionId + '&status=demo', demo: true, mode });
+      return json({ id, url: back + '&session_id=' + sessionId + '&status=demo', demo: true, mode, ...(manage ? { manage: c.slug + '.' + manage } : {}) });
     }
 
     let key: string;
@@ -572,7 +610,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     } else {
       form.push(['submit_type', 'donate']);
     }
-    if (email) form.push(['customer_email', email]);
+    form.push(['customer_email', email]);
 
     let session: any;
     try {
@@ -582,8 +620,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
     }
     if (!session.url || !session.id) return json({ error: 'Checkout could not be started.' }, 502);
     this.#sql.exec(
-      'INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      id, f.id, amount, name || 'Anonymous', email, anonymous, String(session.id), 'pending', cadence, created
+      "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 'pending', ?, ?)",
+      id, f.id, amount, name, email, String(session.id), cadence, created
     );
     return json({ id, url: session.url, demo: false, mode });
   }
@@ -602,7 +640,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
         const status = s.status === 'complete' && (s.payment_status === 'paid' || s.payment_status === 'no_payment_required') ? 'completed' : s.status === 'expired' ? 'expired' : 'pending';
         if (status !== 'pending') {
           const amount = Number(s.amount_total) || Number(r.amount);
-          this.#sql.exec('UPDATE gifts SET status = ?, amount = ? WHERE session_id = ?', status, amount, sessionId);
+          this.#sql.exec(
+            "UPDATE gifts SET status = ?, amount = ?, customer_id = COALESCE(NULLIF(?, ''), customer_id), subscription_id = COALESCE(NULLIF(?, ''), subscription_id) WHERE session_id = ?",
+            status, amount, stripeId(s.customer), stripeId(s.subscription), sessionId
+          );
           r = { ...r, status, amount };
         }
       } catch {
@@ -619,7 +660,86 @@ export class GivingDO extends DurableObject<GivingEnv> {
       anonymous: !!Number(r.anonymous),
       demo: r.status === 'demo',
       church: c.name,
+      canceled: !!r.canceled_at,
+      // How this donor can manage the gift from the thank-you screen.
+      manage: r.cadence !== 'month' || r.canceled_at ? '' : r.status === 'demo' ? 'link' : r.status === 'completed' && this.#mode(c) !== 'demo' ? 'portal' : '',
     });
+  }
+
+  // ---------- Donors managing a monthly gift ----------
+
+  // Opens the Stripe customer portal for the customer who paid this checkout
+  // session, and only that customer. Used by the thank-you screen.
+  async #portal(request: Request): Promise<Response> {
+    const c = this.#church();
+    if (!c) return json({ error: 'Church not found.' }, 404);
+    const ip = request.headers.get('cf-connecting-ip') || 'anon';
+    if (!this.#rateOk('portal:' + ip, 10, 60_000)) return json({ error: 'Too many requests. Please slow down.' }, 429);
+    const body = await readJson(request);
+    const sessionId = str(body.session, 200);
+    if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId)) return json({ error: 'We could not find that gift.' }, 404);
+    const r = this.#sql.exec('SELECT * FROM gifts WHERE session_id = ?', sessionId).toArray()[0] as unknown as GiftRow | undefined;
+    if (!r) return json({ error: 'We could not find that gift.' }, 404);
+    if (r.cadence !== 'month' || r.status !== 'completed') return json({ error: 'Only a monthly gift can be managed here.' }, 400);
+    if (Date.now() - Date.parse(r.created_at) > PORTAL_FROM_CHECKOUT_TTL) return json({ error: 'This thank-you page is too old to open your gift. Use "Manage or cancel a monthly gift" on the Give page instead.' }, 400);
+    if (this.#mode(c) === 'demo') return json({ error: 'Online giving is not connected to Stripe right now.' }, 400);
+    let key: string;
+    try {
+      key = await unseal(this.env, c.stripe_key, 'stripe-key:' + c.slug);
+    } catch {
+      return json({ error: 'Online giving is not set up correctly. Please let the church know.' }, 503);
+    }
+    try {
+      // The customer always comes from this checkout session, never from the request.
+      const s = await stripe(this.env, key, 'GET', '/v1/checkout/sessions/' + sessionId);
+      const customer = stripeId(s.customer);
+      if (s.metadata?.belong_church !== c.slug || !customer) return json({ error: 'We could not find that gift.' }, 404);
+      if (!c.portal_config_id) await this.#ensurePortal(key, c).catch(() => null);
+      const configId = this.#church()!.portal_config_id;
+      const params: Params = [['customer', customer], ['return_url', returnOrigin(request, this.env) + '/#/give']];
+      if (configId) params.push(['configuration', configId]);
+      const portal = await stripe(this.env, key, 'POST', '/v1/billing_portal/sessions', params);
+      if (!portal.url) return json({ error: 'Stripe did not open the page. Please try again.' }, 502);
+      return json({ url: String(portal.url) });
+    } catch (e: any) {
+      return json({ error: e instanceof StripeError ? 'Stripe could not open the page: ' + e.message : 'Stripe could not open the page.' }, 502);
+    }
+  }
+
+  async #managedGift(request: Request, token: string): Promise<GiftRow | null> {
+    const ip = request.headers.get('cf-connecting-ip') || 'anon';
+    if (!this.#rateOk('manage:' + ip, 30, 60_000)) throw new BadRequest('Too many requests. Please slow down.', 429);
+    if (!MANAGE_TOKEN_RE.test(token)) return null;
+    return (this.#sql.exec("SELECT * FROM gifts WHERE manage_hash = ? AND manage_hash != ''", await sha256(token)).toArray()[0] as unknown as GiftRow) || null;
+  }
+
+  // What the private manage link shows. No name or email: just the gift.
+  #managedView(c: ChurchRow, r: GiftRow) {
+    const fund = this.#fund(r.cause_id);
+    return {
+      church: c.name,
+      fund: fund ? fund.name : 'General giving',
+      amount: Number(r.amount),
+      currency: c.currency,
+      cadence: r.cadence,
+      demo: r.status === 'demo',
+      startedAt: r.created_at,
+      canceled: !!r.canceled_at,
+      canceledAt: r.canceled_at,
+    };
+  }
+
+  async #manage(request: Request, token: string, cancel: boolean): Promise<Response> {
+    const c = this.#church();
+    if (!c) return json({ error: 'Church not found.' }, 404);
+    const r = await this.#managedGift(request, token);
+    if (!r) return json({ error: 'This link does not work. It may be old or copied wrong.' }, 404);
+    if (cancel && !r.canceled_at) {
+      const now = new Date().toISOString();
+      this.#sql.exec("UPDATE gifts SET canceled_at = ? WHERE id = ? AND canceled_at = ''", now, r.id);
+      r.canceled_at = now;
+    }
+    return json(this.#managedView(c, r));
   }
 
   async #apply(request: Request, tripId: string): Promise<Response> {
@@ -678,14 +798,23 @@ export class GivingDO extends DurableObject<GivingEnv> {
       if (meta.belong_church !== c.slug) return json({ received: true, ignored: true });
       const status = evt.type === 'checkout.session.expired' ? 'expired' : obj.payment_status === 'paid' || obj.payment_status === 'no_payment_required' ? 'completed' : 'pending';
       const fundId = this.#fund(String(meta.belong_fund || '')) ? String(meta.belong_fund) : 'general';
+      const customer = stripeId(obj.customer);
+      const subscription = stripeId(obj.subscription);
       this.ctx.storage.transactionSync(() => {
         const existing = this.#sql.exec('SELECT status FROM gifts WHERE session_id = ?', String(obj.id)).toArray()[0];
         if (existing) {
           if (existing.status !== 'completed') this.#sql.exec('UPDATE gifts SET status = ?, amount = COALESCE(?, amount) WHERE session_id = ?', status, Number(obj.amount_total) || null, String(obj.id));
-        } else if (status !== 'expired') {
           this.#sql.exec(
-            "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at) VALUES (?, ?, ?, 'Anonymous', '', 1, ?, ?, ?, ?)",
-            crypto.randomUUID(), fundId, Number(obj.amount_total || 0), String(obj.id), status, obj.mode === 'subscription' ? 'month' : 'once', now
+            "UPDATE gifts SET customer_id = COALESCE(NULLIF(?, ''), customer_id), subscription_id = COALESCE(NULLIF(?, ''), subscription_id) WHERE session_id = ?",
+            customer, subscription, String(obj.id)
+          );
+        } else if (status !== 'expired') {
+          // Not started from this site (or the row was lost): take the name and email Stripe collected.
+          const name = str(obj.customer_details?.name, 120);
+          const email = str(obj.customer_details?.email || obj.customer_email, 200);
+          this.#sql.exec(
+            'INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at, customer_id, subscription_id) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)',
+            crypto.randomUUID(), fundId, Number(obj.amount_total || 0), name || email || 'Unknown donor', email, String(obj.id), status, obj.mode === 'subscription' ? 'month' : 'once', now, customer, subscription
           );
         }
       });
@@ -704,6 +833,14 @@ export class GivingDO extends DurableObject<GivingEnv> {
         first ? Number(first.anonymous) : 1,
         String(obj.id),
         now
+      );
+    } else if (evt.type === 'customer.subscription.deleted') {
+      // The donor canceled in the Stripe portal, or staff canceled. Mark the monthly gift.
+      const meta = obj.metadata || {};
+      if (meta.belong_church !== c.slug) return json({ received: true, ignored: true });
+      this.#sql.exec(
+        "UPDATE gifts SET canceled_at = ? WHERE cadence = 'month' AND canceled_at = '' AND (id = ? OR (subscription_id != '' AND subscription_id = ?))",
+        now, String(meta.belong_gift || ''), String(obj.id || '')
       );
     }
     return json({ received: true });
@@ -740,6 +877,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
       account: c.stripe_account,
       webhook: !!c.webhook_id,
       webhookNote: c.webhook_note,
+      portal: !!c.portal_url,
+      portalNote: c.portal_note,
       provisionedAt: c.provisioned_at,
       provisionError: c.provision_error,
       encryptionReady: !!this.env.STRIPE_KEY_ENCRYPTION_KEY,
@@ -802,7 +941,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
       const status = e instanceof StripeError ? e.status : 502;
       const msg =
         status === 401 ? 'Stripe did not accept that key.'
-        : status === 403 ? 'That key cannot read products. Give it write access to Products, Prices, Checkout Sessions and Webhook Endpoints.'
+        : status === 403 ? 'That key cannot read products. Give it write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions.'
         : 'Could not check the key with Stripe. Try again in a moment.';
       return json({ error: msg }, 400);
     }
@@ -819,7 +958,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
       this.#sql.exec("UPDATE church SET stripe_key = ?, stripe_hint = ?, stripe_mode = ?, stripe_account = ?, provision_error = '' WHERE id = 1", sealed, info.hint, info.mode, account);
       // A different key may be a different Stripe account: forget objects from the old one.
       if (previous !== key) {
-        this.#sql.exec("UPDATE church SET webhook_id = '', webhook_secret = '', webhook_note = '', provisioned_at = '' WHERE id = 1");
+        this.#sql.exec("UPDATE church SET webhook_id = '', webhook_secret = '', webhook_note = '', portal_config_id = '', portal_url = '', portal_note = '', provisioned_at = '' WHERE id = 1");
         this.#sql.exec("UPDATE funds SET product_id = '', prices = '{}'");
       }
     });
@@ -849,7 +988,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
       }
     }
     this.#sql.exec(
-      "UPDATE church SET stripe_key = '', stripe_hint = '', stripe_mode = '', stripe_account = '', webhook_id = '', webhook_secret = '', webhook_note = '', provisioned_at = '', provision_error = '' WHERE id = 1"
+      "UPDATE church SET stripe_key = '', stripe_hint = '', stripe_mode = '', stripe_account = '', webhook_id = '', webhook_secret = '', webhook_note = '', portal_config_id = '', portal_url = '', portal_note = '', provisioned_at = '', provision_error = '' WHERE id = 1"
     );
     return json(this.#adminOverview(this.#church()!));
   }
@@ -938,18 +1077,72 @@ export class GivingDO extends DurableObject<GivingEnv> {
     const url = String(this.env.PUBLIC_ORIGIN).replace(/\/+$/, '') + '/api/churches/' + c.slug + '/webhooks/stripe';
     const list = await stripe(this.env, key, 'GET', '/v1/webhook_endpoints', [['limit', '100']]);
     const same = (list.data || []).filter((w: any) => w.url === url);
-    if (c.webhook_id && c.webhook_secret && same.some((w: any) => w.id === c.webhook_id)) return;
+    const mine = c.webhook_id && c.webhook_secret ? same.find((w: any) => w.id === c.webhook_id) : null;
+    if (mine) {
+      // Endpoints made by an older version miss newer events (like canceled subscriptions).
+      const events: string[] = Array.isArray(mine.enabled_events) ? mine.enabled_events : [];
+      if (!events.includes('*') && WEBHOOK_EVENTS.some((e) => !events.includes(e))) {
+        const params: Params = [];
+        for (const e of WEBHOOK_EVENTS) params.push(['enabled_events[]', e]);
+        await stripe(this.env, key, 'POST', '/v1/webhook_endpoints/' + mine.id, params);
+      }
+      return;
+    }
     // An endpoint for this URL whose signing secret we no longer hold is useless; replace it.
     for (const w of same) await stripe(this.env, key, 'DELETE', '/v1/webhook_endpoints/' + w.id).catch(() => null);
     const params: Params = [['url', url], ['description', 'belong. giving for ' + c.name], ['metadata[belong_church]', c.slug]];
-    for (const e of ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.expired', 'invoice.paid']) params.push(['enabled_events[]', e]);
+    for (const e of WEBHOOK_EVENTS) params.push(['enabled_events[]', e]);
     const hook = await stripe(this.env, key, 'POST', '/v1/webhook_endpoints', params);
     if (!hook.secret) throw new StripeError('Stripe did not return a signing secret.', 502);
     const sealed = await seal(this.env, String(hook.secret), 'webhook-secret:' + c.slug);
     this.#sql.exec("UPDATE church SET webhook_id = ?, webhook_secret = ?, webhook_note = '' WHERE id = 1", String(hook.id), sealed);
   }
 
-  async #provisionAll(key: string): Promise<{ ok: boolean; created: number; reused: number; error?: string; webhookNote?: string }> {
+  // One customer portal configuration per church, tagged with the church in
+  // metadata, so donors can cancel a monthly gift or update their card. Its
+  // hosted login page lets a donor sign in with just their email. Re-running
+  // setup finds the same configuration again instead of making another.
+  async #ensurePortal(key: string, c: ChurchRow): Promise<void> {
+    let config: any = null;
+    if (c.portal_config_id) config = await stripe(this.env, key, 'GET', '/v1/billing_portal/configurations/' + c.portal_config_id).catch(() => null);
+    if (!config || config.metadata?.belong_church !== c.slug) {
+      config = null;
+      let after = '';
+      for (let page = 0; page < 5 && !config; page++) {
+        const q: Params = [['limit', '100']];
+        if (after) q.push(['starting_after', after]);
+        const list = await stripe(this.env, key, 'GET', '/v1/billing_portal/configurations', q);
+        config = (list.data || []).find((x: any) => x.metadata?.belong_church === c.slug) || null;
+        if (!list.has_more || !list.data?.length) break;
+        after = list.data[list.data.length - 1].id;
+      }
+    }
+    const returnUrl = allowedOrigins(this.env)[0] + '/#/give';
+    const params: Params = [
+      ['features[subscription_cancel][enabled]', 'true'],
+      ['features[subscription_cancel][mode]', 'immediately'],
+      ['features[subscription_cancel][proration_behavior]', 'none'],
+      ['features[payment_method_update][enabled]', 'true'],
+      ['features[invoice_history][enabled]', 'true'],
+      ['business_profile[headline]', ('Your gifts to ' + c.name).slice(0, 60)],
+      ['default_return_url', returnUrl],
+      ['login_page[enabled]', 'true'],
+    ];
+    const ready = config && config.active && config.features?.subscription_cancel?.enabled && config.login_page?.enabled && config.login_page?.url && config.default_return_url === returnUrl;
+    if (!config) {
+      config = await stripe(
+        this.env, key, 'POST', '/v1/billing_portal/configurations',
+        [...params, ['name', ('belong. giving for ' + c.name).slice(0, 256)], ['metadata[belong_church]', c.slug]],
+        `belong-portal-${c.slug}`
+      );
+    } else if (!ready) {
+      config = await stripe(this.env, key, 'POST', '/v1/billing_portal/configurations/' + config.id, [...params, ['active', 'true']]);
+    }
+    const url = str(config?.login_page?.url, 500);
+    this.#sql.exec("UPDATE church SET portal_config_id = ?, portal_url = ?, portal_note = '' WHERE id = 1", String(config.id), url);
+  }
+
+  async #provisionAll(key: string): Promise<{ ok: boolean; created: number; reused: number; error?: string; webhookNote?: string; portalNote?: string }> {
     const c = this.#church()!;
     let created = 0;
     let reused = 0;
@@ -973,8 +1166,15 @@ export class GivingDO extends DurableObject<GivingEnv> {
       webhookNote = 'Stripe would not create the webhook (' + (e instanceof StripeError ? e.message : 'unknown error') + '). Gifts are still confirmed when donors return to the site.';
       this.#sql.exec('UPDATE church SET webhook_note = ? WHERE id = 1', webhookNote.slice(0, 300));
     }
+    let portalNote = '';
+    try {
+      await this.#ensurePortal(key, this.#church()!);
+    } catch (e: any) {
+      portalNote = 'Stripe would not set up the page where donors cancel monthly gifts (' + (e instanceof StripeError ? e.message : 'unknown error') + '). Staff can still cancel monthly gifts from the Gifts list.';
+      this.#sql.exec('UPDATE church SET portal_note = ? WHERE id = 1', portalNote.slice(0, 300));
+    }
     this.#sql.exec("UPDATE church SET provisioned_at = ?, provision_error = '' WHERE id = 1", new Date().toISOString());
-    return { ok: true, created, reused, webhookNote };
+    return { ok: true, created, reused, webhookNote, portalNote };
   }
 
   async #saveFund(request: Request, c: ChurchRow, id: string | null): Promise<Response> {
@@ -1029,21 +1229,54 @@ export class GivingDO extends DurableObject<GivingEnv> {
 
   #donations(c: ChurchRow): Response {
     const rows = this.#sql
-      .exec('SELECT g.id, g.cause_id, f.name AS fund, g.amount, g.name, g.email, g.anonymous, g.status, g.cadence, g.created_at FROM gifts g LEFT JOIN funds f ON f.id = g.cause_id ORDER BY g.created_at DESC LIMIT 500')
+      .exec('SELECT g.id, g.cause_id, f.name AS fund, g.amount, g.name, g.email, g.anonymous, g.status, g.cadence, g.created_at, g.session_id, g.canceled_at FROM gifts g LEFT JOIN funds f ON f.id = g.cause_id ORDER BY g.created_at DESC LIMIT 500')
       .toArray()
       .map((r: any) => ({
         id: r.id,
         fundId: r.cause_id,
         fund: r.fund || r.cause_id,
         amount: Number(r.amount),
+        // Gifts recorded as anonymous before names became required have no name to show.
         name: Number(r.anonymous) ? '' : r.name,
         email: Number(r.anonymous) ? '' : r.email,
         anonymous: !!Number(r.anonymous),
         status: r.status,
         cadence: r.cadence || 'once',
         createdAt: r.created_at,
+        canceled: !!r.canceled_at,
+        canceledAt: r.canceled_at,
+        // The first gift of a monthly gift, still active. Renewal rows are keyed by their invoice.
+        cancelable: r.cadence === 'month' && !r.canceled_at && !String(r.session_id).startsWith('in_') && (r.status === 'completed' || r.status === 'demo'),
       }));
     return json({ currency: c.currency, donations: rows });
+  }
+
+  // Staff stop a monthly gift. With Stripe, the subscription is canceled there too.
+  async #staffCancel(c: ChurchRow, id: string): Promise<Response> {
+    const r = this.#sql.exec('SELECT * FROM gifts WHERE id = ?', id).toArray()[0] as unknown as GiftRow | undefined;
+    if (!r) return json({ error: 'Gift not found.' }, 404);
+    if (r.cadence !== 'month') return json({ error: 'Only a monthly gift can be canceled.' }, 400);
+    if (!r.canceled_at && r.status !== 'demo') {
+      if (r.status !== 'completed') return json({ error: 'This monthly gift has not started yet.' }, 400);
+      if (!c.stripe_key) return json({ error: 'Connect Stripe to cancel this monthly gift.' }, 400);
+      try {
+        const key = await unseal(this.env, c.stripe_key, 'stripe-key:' + c.slug);
+        let sub = r.subscription_id;
+        if (!sub && r.session_id.startsWith('cs_')) sub = stripeId((await stripe(this.env, key, 'GET', '/v1/checkout/sessions/' + r.session_id)).subscription);
+        if (!sub) return json({ error: 'Stripe has no monthly gift for this record.' }, 400);
+        const out = await stripe(this.env, key, 'DELETE', '/v1/subscriptions/' + sub).catch((e) => {
+          // Already canceled in Stripe is fine: just record it here.
+          if (e instanceof StripeError && e.status === 404) return null;
+          throw e;
+        });
+        if (out && out.metadata?.belong_church && out.metadata.belong_church !== c.slug) return json({ error: 'That monthly gift belongs to another church.' }, 400);
+        this.#sql.exec('UPDATE gifts SET subscription_id = ? WHERE id = ?', sub, r.id);
+      } catch (e: any) {
+        return json({ error: e instanceof StripeError ? 'Stripe could not cancel it: ' + e.message : 'Stripe could not cancel it.' }, 502);
+      }
+    }
+    this.#sql.exec("UPDATE gifts SET canceled_at = ? WHERE id = ? AND canceled_at = ''", new Date().toISOString(), r.id);
+    return this.#donations(c);
   }
 
   #applications(): Response {
@@ -1129,6 +1362,9 @@ export class GivingDO extends DurableObject<GivingEnv> {
       let r = /^\/c\/trips\/([\w-]{1,60})\/apply$/.exec(p);
       if (r && m === 'POST') return this.#apply(request, r[1]);
       if (p === '/c/webhooks/stripe' && m === 'POST') return this.#webhook(request);
+      if (p === '/c/portal' && m === 'POST') return this.#portal(request);
+      r = /^\/c\/manage\/([^/]{1,120})(\/cancel)?$/.exec(p);
+      if (r && ((m === 'GET' && !r[2]) || (m === 'POST' && r[2]))) return this.#manage(request, r[1], !!r[2]);
       if (p === '/c/admin/login' && m === 'POST') return this.#login(request);
       if (p === '/c/admin/logout' && m === 'POST') return this.#logout(request);
 
@@ -1148,6 +1384,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
         r = /^\/c\/admin\/funds\/([\w-]{1,60})$/.exec(p);
         if (r && m === 'PUT') return this.#saveFund(request, c, r[1]);
         if (p === '/c/admin/donations' && m === 'GET') return this.#donations(c);
+        r = /^\/c\/admin\/donations\/([\w-]{1,60})\/cancel$/.exec(p);
+        if (r && m === 'POST') return this.#staffCancel(c, r[1]);
         if (p === '/c/admin/applications' && m === 'GET') return this.#applications();
         r = /^\/c\/admin\/applications\/([\w-]{1,60})$/.exec(p);
         if (r && m === 'PUT') return this.#reviewApplication(request, r[1]);

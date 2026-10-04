@@ -3,16 +3,19 @@ import { fmt, gapi } from './api.js';
 import Icon from './Icon.jsx';
 import { PageHeader, SubNav } from './Layout.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
+import GiveManage from './GiveManage.jsx';
 import GiveStaff from './GiveStaff.jsx';
 import { useChurch } from './ChurchContext.js';
-import { DEMO_CHURCH, churchApi, friendly, loadChurch, percent, startCheckout, tripDates } from './giving.js';
+import { DEMO_CHURCH, churchApi, friendly, loadChurch, manageLinkFor, percent, startCheckout, tripDates } from './giving.js';
 
 const TABS = [['give', 'Give', 'heart'], ['give/trips', 'Mission trips', 'compass'], ['give/staff', 'Church staff', 'lock']];
 const HEADERS = {
   'give': ['Give with confidence.', 'Choose where your gift goes. Gifts are private: this page shows totals, never names.'],
   'give/trips': ['Go, or help send someone.', 'Mission trips and teams that need people and funding. Apply to go, or give toward a trip.'],
   'give/staff': ['For church staff.', 'Connect Stripe, manage funds and trips, review applications and see who gave.'],
+  'give/manage': ['Your monthly gift.', 'See a monthly gift and cancel it any time, right here.'],
 };
+const MANAGE_PREFIX = 'give/manage/';
 
 // Gives to the church the whole site is showing (church.js); the church search here switches the site.
 export default function Give({ route, go, sessionId = '', status = '', returnChurch = '' }) {
@@ -21,7 +24,8 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
     [loadErr, setLoadErr] = useState(null),
     [fundId, setFundId] = useState(''),
     [version, setVersion] = useState(0);
-  const tab = HEADERS[route] ? route : 'give';
+  const manageToken = route.startsWith(MANAGE_PREFIX) ? route.slice(MANAGE_PREFIX.length) : '';
+  const tab = HEADERS[route] ? route : manageToken ? 'give/manage' : 'give';
 
   useEffect(() => {
     let live = true;
@@ -31,7 +35,7 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
   }, [slug, version]);
 
   function pickChurch(next) {
-    if (next !== slug) choose(next, tab === 'give/staff' ? 'give/staff' : 'give');
+    if (next !== slug) choose(next, tab === 'give/staff' || tab === 'give/manage' ? tab : 'give');
     else setVersion(v => v + 1);
   }
   function giveTo(id) { setFundId(id); go('give'); }
@@ -40,11 +44,12 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
   let body;
   if (sessionId) body = <Confirmation id={sessionId} status={status} slug={returnChurch} go={go} />;
   else if (tab === 'give/staff') body = <GiveStaff slug={slug} church={church} go={go} onPickChurch={pickChurch} onChanged={() => setVersion(v => v + 1)} />;
+  else if (tab === 'give/manage') body = <GiveManage token={manageToken} church={church} slug={slug} go={go} onPickChurch={pickChurch} onChanged={() => setVersion(v => v + 1)} />;
   else if (loadErr) body = <LoadError err={loadErr} slug={slug} onPick={pickChurch} />;
   else if (!church) body = <div className="card give-pad"><p role="status">Loading giving options…</p></div>;
   else body = <>
     <GiveChurchBar church={church} slug={slug} onPick={pickChurch} />
-    {tab === 'give/trips' ? <Trips church={church} onGive={giveTo} onApplied={() => setVersion(v => v + 1)} /> : <DonationFlow church={church} fundId={fundId} setFundId={setFundId} />}
+    {tab === 'give/trips' ? <Trips church={church} onGive={giveTo} onApplied={() => setVersion(v => v + 1)} /> : <DonationFlow church={church} fundId={fundId} setFundId={setFundId} go={go} />}
   </>;
 
   return <>
@@ -78,13 +83,12 @@ function FundProgress({ f, currency, big }) {
   </div>;
 }
 
-function DonationFlow({ church, fundId, setFundId }) {
+function DonationFlow({ church, fundId, setFundId, go }) {
   const options = [...church.funds, ...church.trips];
   const fund = options.find(f => f.id === fundId) || options[0];
   const [amount, setAmount] = useState(0),
     [custom, setCustom] = useState(''),
     [monthly, setMonthly] = useState(false),
-    [anonymous, setAnonymous] = useState(false),
     [name, setName] = useState(''),
     [email, setEmail] = useState(''),
     [busy, setBusy] = useState(false),
@@ -100,10 +104,11 @@ function DonationFlow({ church, fundId, setFundId }) {
     setFormErr('');
     if (!current) return setFormErr('Choose an amount or enter your own.');
     if (current < 100) return setFormErr('The smallest online gift is ' + fmt(100, church.currency) + '.');
-    if (!anonymous && (!name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()))) return setFormErr('Add your name and email, or choose anonymous.');
+    if (!name.trim()) return setFormErr('Add your name.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setFormErr('Add a valid email for your receipt.');
     setBusy(true);
     try {
-      const res = await startCheckout(church, { fund: fund.id, amount: current, cadence: recurring ? 'month' : 'once', anonymous, name: anonymous ? '' : name.trim(), email: anonymous ? '' : email.trim() });
+      const res = await startCheckout(church, { fund: fund.id, amount: current, cadence: recurring ? 'month' : 'once', name: name.trim(), email: email.trim() });
       window.location.href = res.url;
     } catch (err) {
       setFormErr(friendly(err));
@@ -128,7 +133,7 @@ function DonationFlow({ church, fundId, setFundId }) {
           {fund.description && <p>{fund.description}</p>}
           <FundProgress f={fund} currency={church.currency} big />
         </div>
-        <p className="give-private"><Icon name="lock" size={16} />Gifts are private. Only church staff can see who gave.</p>
+        <p className="give-private"><Icon name="lock" size={16} />This page shows totals, never names.</p>
       </div>
 
       <form className="card give-form" onSubmit={submit} noValidate>
@@ -143,23 +148,19 @@ function DonationFlow({ church, fundId, setFundId }) {
           </div>
           <input inputMode="decimal" aria-label="Other amount" placeholder="Or enter any amount" value={custom} onChange={e => { setCustom(e.target.value); setAmount(0); }} />
         </div>
-        <label className="give-anon field">
-          <input type="checkbox" checked={anonymous} onChange={e => setAnonymous(e.target.checked)} />
-          <span>Give anonymously <small>Even church staff will not see your name.</small></span>
+        <label className="field">Your name
+          <input value={name} maxLength={120} autoComplete="name" placeholder="e.g. Jamie Parker" required onChange={e => setName(e.target.value)} />
         </label>
-        {!anonymous && <>
-          <label className="field">Your name
-            <input value={name} maxLength={120} autoComplete="name" placeholder="e.g. Jamie Parker" onChange={e => setName(e.target.value)} />
-          </label>
-          <label className="field">Email <small>For your receipt. Never shown publicly.</small>
-            <input type="email" value={email} maxLength={200} autoComplete="email" placeholder="you@example.com" onChange={e => setEmail(e.target.value)} />
-          </label>
-        </>}
+        <label className="field">Email <small>For your receipt. Never shown publicly.</small>
+          <input type="email" value={email} maxLength={200} autoComplete="email" placeholder="you@example.com" required onChange={e => setEmail(e.target.value)} />
+        </label>
+        <p className="give-private"><Icon name="lock" size={16} />Your gift is private. Only your church's staff see your name, for giving records and receipts.</p>
         {formErr && <div className="banner error" role="alert">{formErr}</div>}
         <button className="primary wide continue" disabled={busy || !current}>
           {busy ? 'Starting…' : 'Continue to payment' + (current ? ' · ' + fmt(current, church.currency) + (recurring ? '/mo' : '') : '')}
         </button>
-        <p className="disclaimer">{church.mode === 'demo' ? 'This is a demo. ' : 'Secured by Stripe. '}No card details are stored on our servers.{recurring ? ' Cancel a monthly gift any time by contacting the church.' : ''}</p>
+        <p className="disclaimer">{church.mode === 'demo' ? 'This is a demo. ' : 'Secured by Stripe. '}No card details are stored on our servers.{recurring ? ' You can cancel a monthly gift any time on this site.' : ''}</p>
+        <p className="give-manage-link"><button type="button" className="link" onClick={() => go('give/manage')}>Manage or cancel a monthly gift<Icon name="arrow" size={16} /></button></p>
       </form>
     </div>
   </>;
@@ -239,7 +240,32 @@ function Confirmation({ id, status, slug, go }) {
         <div className={'give-status ' + (info.demo ? 'demo' : info.status)}>
           {info.demo ? 'Simulated gift: no card was charged.' : info.status === 'completed' ? 'Payment confirmed. Stripe emails your receipt.' : info.status === 'expired' ? 'No payment was taken.' : 'We will confirm your gift shortly.'}
         </div>
+        {info.cadence === 'month' && <ManageMonthly id={id} info={info} slug={slug} go={go} />}
       </> : err ? <p>{err}</p> : <p role="status">Looking up your gift…</p>}
-    <button className="primary give-again" onClick={() => go('give')}>Make another gift</button>
+    <button className={(info?.cadence === 'month' ? 'secondary' : 'primary') + ' give-again'} onClick={() => go('give')}>Make another gift</button>
+  </div>;
+}
+
+// After a monthly gift: a way to change your mind later, without calling the church.
+function ManageMonthly({ id, info, slug, go }) {
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const token = info.manage === 'link' ? manageLinkFor(id) : '';
+  async function openPortal() {
+    setBusy(true); setErr('');
+    try {
+      const res = await churchApi(slug, '/portal', { method: 'POST', body: JSON.stringify({ session: id }) });
+      window.location.href = res.url;
+    } catch (e) { setErr(friendly(e)); setBusy(false); }
+  }
+  if (info.canceled) return <p className="give-manage-note">This monthly gift has been canceled. You will not be charged again.</p>;
+  const canPortal = info.manage === 'portal' && slug;
+  if (!token && !canPortal) return <p className="give-manage-note">You can cancel this monthly gift any time. <button className="link" onClick={() => go('give/manage')}>Manage or cancel a monthly gift</button></p>;
+  return <div className="give-manage-box">
+    <p>You can change your mind any time. Cancel here and no more gifts are made.</p>
+    {token
+      ? <button className="primary" onClick={() => go('give/manage/' + token)}>Manage or cancel</button>
+      : <button className="primary" disabled={busy} onClick={openPortal}>{busy ? 'Opening…' : 'Manage or cancel'}</button>}
+    {canPortal && <small>Opens a secure Stripe page for this gift.</small>}
+    {err && <div className="banner error" role="alert">{err}</div>}
   </div>;
 }
