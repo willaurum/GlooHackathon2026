@@ -16,6 +16,8 @@ const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // A church's shareable giving link (#/give/c/<slug>) picks that church, then opens Give.
 const GIVE_LINK = /^give\/c\/([a-z0-9-]{1,40})$/;
+// Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
+const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
 
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 
@@ -35,7 +37,7 @@ function currentRoute() {
     window.history.replaceState(null, '', '/#/give');
     return 'give';
   }
-  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash)) && (hash || !window.location.pathname.startsWith('/give'))) return withDefault(hash);
+  if ((ROUTES.includes(hash) || SERMON_ROUTE.test(hash) || GIVE_MANAGE.test(hash)) &&(hash || !window.location.pathname.startsWith('/give'))) return withDefault(hash);
   return window.location.pathname.startsWith('/give') ? 'give' : '';
 }
 

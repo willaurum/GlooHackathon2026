@@ -1,6 +1,10 @@
 // Minimal fake of the Stripe REST API endpoints the giving Worker uses.
 // Keys: sk_test_* / sk_live_* starting with "sk_test_GOOD" or "sk_live_GOOD" are accepted,
 // rk_test_NOHOOK... accepts everything except webhook endpoints (403), anything else is 401.
+// Paying a subscription-mode session creates a customer and a subscription. The
+// customer portal is faked too: /portal/<bps_id>?cancel=1 acts like the donor
+// pressing "Cancel" there, which cancels their subscriptions and sends
+// customer.subscription.deleted.
 import http from 'node:http';
 import crypto from 'node:crypto';
 
@@ -13,16 +17,37 @@ const id = (p) => `${p}_${(++seq).toString().padStart(6, '0')}${crypto.randomByt
 
 function state(key) {
   const acct = key.replace(/^(sk|rk)_/, '').slice(0, 14);
-  if (!accounts.has(acct)) accounts.set(acct, { products: [], prices: [], hooks: [], sessions: [] });
+  if (!accounts.has(acct)) accounts.set(acct, { products: [], prices: [], hooks: [], sessions: [], customers: [], subscriptions: [], portalConfigs: [], portalSessions: [] });
   return accounts.get(acct);
 }
-function meta(params) {
+function meta(params, prefix = 'metadata') {
   const m = {};
   for (const [k, v] of Object.entries(params)) {
-    const r = /^metadata\[(.+)\]$/.exec(k);
+    if (!k.startsWith(prefix + '[')) continue;
+    const r = /^\[([^\]]+)\]$/.exec(k.slice(prefix.length));
     if (r) m[r[1]] = v;
   }
   return m;
+}
+const bool = (v) => v === 'true';
+// Applies form fields to a portal configuration the way Stripe does.
+function applyPortal(cfg, params) {
+  const f = cfg.features;
+  if (params['features[subscription_cancel][enabled]']) f.subscription_cancel.enabled = bool(params['features[subscription_cancel][enabled]']);
+  if (params['features[subscription_cancel][mode]']) f.subscription_cancel.mode = params['features[subscription_cancel][mode]'];
+  if (params['features[subscription_cancel][proration_behavior]']) f.subscription_cancel.proration_behavior = params['features[subscription_cancel][proration_behavior]'];
+  if (params['features[payment_method_update][enabled]']) f.payment_method_update.enabled = bool(params['features[payment_method_update][enabled]']);
+  if (params['features[invoice_history][enabled]']) f.invoice_history.enabled = bool(params['features[invoice_history][enabled]']);
+  if (params['business_profile[headline]'] !== undefined) cfg.business_profile.headline = params['business_profile[headline]'];
+  if (params.default_return_url !== undefined) cfg.default_return_url = params.default_return_url;
+  if (params.name !== undefined) cfg.name = params.name;
+  if (params.active) cfg.active = bool(params.active);
+  if (params['login_page[enabled]']) {
+    cfg.login_page.enabled = bool(params['login_page[enabled]']);
+    cfg.login_page.url = cfg.login_page.enabled ? cfg.login_page.url || `http://localhost:${PORT}/p/login/test_${crypto.randomBytes(8).toString('hex')}` : null;
+  }
+  Object.assign(cfg.metadata, meta(params));
+  return cfg;
 }
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -41,10 +66,17 @@ function list(data, q) {
   return { object: 'list', data: items.slice(0, limit), has_more: items.length > limit };
 }
 
-async function deliver(s, sess, type) {
+async function cancelSubscription(s, sub) {
+  if (sub.status === 'canceled') return;
+  sub.status = 'canceled';
+  sub.canceled_at = Math.floor(Date.now() / 1000);
+  await deliver(s, sub, 'customer.subscription.deleted');
+}
+
+async function deliver(s, obj, type) {
   for (const h of s.hooks) {
     if (!h.enabled_events.includes(type)) continue;
-    const payload = JSON.stringify({ id: id('evt'), type, data: { object: sess } });
+    const payload = JSON.stringify({ id: id('evt'), type, data: { object: obj } });
     const t = Math.floor(Date.now() / 1000);
     const sig = crypto.createHmac('sha256', h.secret).update(`${t}.${payload}`).digest('hex');
     try {
@@ -70,7 +102,12 @@ const server = http.createServer(async (req, res) => {
   }
   const p = url.pathname;
 
-  if (p === '/__log') return send(res, 200, { log, accounts: Object.fromEntries([...accounts].map(([k, v]) => [k, { products: v.products.length, prices: v.prices.length, hooks: v.hooks.length, sessions: v.sessions.length, productList: v.products, priceList: v.prices, hookList: v.hooks.map((h) => ({ id: h.id, url: h.url })) }])) });
+  if (p === '/__log') return send(res, 200, { log, accounts: Object.fromEntries([...accounts].map(([k, v]) => [k, { products: v.products.length, prices: v.prices.length, hooks: v.hooks.length, sessions: v.sessions.length, productList: v.products, priceList: v.prices, hookList: v.hooks.map((h) => ({ id: h.id, url: h.url, enabled_events: h.enabled_events })), sessionList: v.sessions, portalConfigs: v.portalConfigs, portalSessions: v.portalSessions, subscriptions: v.subscriptions }])) });
+  // Makes every webhook endpoint listen only to the events an older version asked for.
+  if (p === '/__old_hooks') {
+    for (const s of accounts.values()) for (const h of s.hooks) h.enabled_events = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.expired', 'invoice.paid'];
+    return send(res, 200, { ok: true });
+  }
   if (p === '/__reset') { accounts.clear(); log.length = 0; idem.clear(); return send(res, 200, { ok: true }); }
 
   // Hosted checkout page stand-in: pay, fire the webhook, then return to success_url.
@@ -82,11 +119,34 @@ const server = http.createServer(async (req, res) => {
       if (url.searchParams.get('cancel')) { res.writeHead(302, { location: sess.cancel_url }); return res.end(); }
       sess.status = 'complete';
       sess.payment_status = 'paid';
+      sess.customer_details = { email: sess.customer_email || null, name: 'Card Holder' };
+      if (sess.mode === 'subscription' && !sess.subscription) {
+        const cus = { id: id('cus'), object: 'customer', email: sess.customer_email || null, created: Math.floor(Date.now() / 1000) };
+        s.customers.push(cus);
+        const sub = { id: id('sub'), object: 'subscription', customer: cus.id, status: 'active', metadata: sess.subscription_metadata, created: cus.created };
+        s.subscriptions.push(sub);
+        sess.customer = cus.id;
+        sess.subscription = sub.id;
+      }
       if (url.searchParams.get('hook') !== '0') await deliver(s, sess, 'checkout.session.completed');
       res.writeHead(302, { location: sess.success_url.replace('{CHECKOUT_SESSION_ID}', sess.id) });
       return res.end();
     }
     return err(res, 404, 'No such session');
+  }
+
+  // Customer portal stand-in. ?cancel=1 cancels the customer's subscriptions.
+  m = /^\/portal\/(bps_\w+)$/.exec(p);
+  if (m) {
+    for (const s of accounts.values()) {
+      const ps = s.portalSessions.find((x) => x.id === m[1]);
+      if (!ps) continue;
+      if (url.searchParams.get('cancel')) {
+        for (const sub of s.subscriptions.filter((x) => x.customer === ps.customer)) await cancelSubscription(s, sub);
+      }
+      return send(res, 200, { portal: ps.id, customer: ps.customer, subscriptions: s.subscriptions.filter((x) => x.customer === ps.customer) });
+    }
+    return err(res, 404, 'No such portal session');
   }
 
   const auth = /^Bearer (.+)$/.exec(req.headers.authorization || '');
@@ -163,6 +223,50 @@ const server = http.createServer(async (req, res) => {
     s.hooks = s.hooks.filter((h) => h.id !== m[1]);
     return send(res, 200, { id: m[1], deleted: true });
   }
+  if (m && req.method === 'POST') {
+    const hook = s.hooks.find((h) => h.id === m[1]);
+    if (!hook) return err(res, 404, 'No such webhook endpoint');
+    if (multi['enabled_events[]']) hook.enabled_events = multi['enabled_events[]'];
+    const { secret, ...pub } = hook;
+    return send(res, 200, pub);
+  }
+  if (p === '/v1/billing_portal/configurations' && req.method === 'GET') return send(res, 200, list(s.portalConfigs, params));
+  if (p === '/v1/billing_portal/configurations' && req.method === 'POST') {
+    const known = ['features[subscription_cancel][enabled]', 'features[subscription_cancel][mode]', 'features[subscription_cancel][proration_behavior]', 'features[payment_method_update][enabled]', 'features[invoice_history][enabled]', 'business_profile[headline]', 'default_return_url', 'login_page[enabled]', 'name'];
+    const unknown = Object.keys(params).filter((k) => !known.includes(k) && !k.startsWith('metadata['));
+    if (unknown.length) return err(res, 400, 'Received unknown parameter: ' + unknown[0]);
+    if (!Object.keys(params).some((k) => k.startsWith('features['))) return err(res, 400, 'Missing required param: features.');
+    if ((params['business_profile[headline]'] || '').length > 60) return err(res, 400, 'Headline is too long.');
+    const cfg = applyPortal({ id: id('bpc'), object: 'billing_portal.configuration', active: true, is_default: false, business_profile: { headline: null }, default_return_url: null, features: { subscription_cancel: { enabled: false, mode: 'at_period_end', proration_behavior: 'none' }, payment_method_update: { enabled: false }, invoice_history: { enabled: false } }, login_page: { enabled: false, url: null }, metadata: {}, created: now }, params);
+    s.portalConfigs.push(cfg);
+    return done(cfg);
+  }
+  m = /^\/v1\/billing_portal\/configurations\/(bpc_\w+)$/.exec(p);
+  if (m) {
+    const cfg = s.portalConfigs.find((x) => x.id === m[1]);
+    if (!cfg) return err(res, 404, 'No such configuration');
+    if (req.method === 'POST') applyPortal(cfg, params);
+    return send(res, 200, cfg);
+  }
+  if (p === '/v1/billing_portal/sessions' && req.method === 'POST') {
+    const cus = s.customers.find((x) => x.id === params.customer);
+    if (!cus) return err(res, 400, 'No such customer: ' + params.customer);
+    if (params.configuration && !s.portalConfigs.find((x) => x.id === params.configuration && x.active)) return err(res, 400, 'No such configuration: ' + params.configuration);
+    const ps = { id: id('bps'), object: 'billing_portal.session', customer: cus.id, configuration: params.configuration || null, return_url: params.return_url || null, url: '', created: now };
+    ps.url = `http://localhost:${PORT}/portal/${ps.id}`;
+    s.portalSessions.push(ps);
+    return send(res, 200, ps);
+  }
+  m = /^\/v1\/subscriptions\/(sub_\w+)$/.exec(p);
+  if (m) {
+    const sub = s.subscriptions.find((x) => x.id === m[1]);
+    if (!sub) return err(res, 404, 'No such subscription: ' + m[1]);
+    if (req.method === 'DELETE') {
+      if (sub.status === 'canceled') return err(res, 400, 'This subscription is already canceled.');
+      await cancelSubscription(s, sub);
+    }
+    return send(res, 200, sub);
+  }
   if (p === '/v1/checkout/sessions' && req.method === 'POST') {
     if (!params.success_url || !params.mode) return err(res, 400, 'Missing success_url or mode');
     const priceId = params['line_items[0][price]'];
@@ -180,7 +284,7 @@ const server = http.createServer(async (req, res) => {
       if (params.mode === 'subscription' && !params['line_items[0][price_data][recurring][interval]']) return err(res, 400, 'Subscription mode needs recurring');
     }
     const sid = id('cs_test');
-    const sess = { id: sid, object: 'checkout.session', mode: params.mode, amount_total: amount, currency: params['line_items[0][price_data][currency]'] || 'usd', status: 'open', payment_status: 'unpaid', metadata: meta(params), success_url: params.success_url, cancel_url: params.cancel_url, url: `http://localhost:${PORT}/pay/${sid}`, line_price: priceId || null, submit_type: params.submit_type || null, created: now };
+    const sess = { id: sid, object: 'checkout.session', mode: params.mode, amount_total: amount, currency: params['line_items[0][price_data][currency]'] || 'usd', status: 'open', payment_status: 'unpaid', metadata: meta(params), subscription_metadata: meta(params, 'subscription_data[metadata]'), customer_email: params.customer_email || null, customer: null, subscription: null, success_url: params.success_url, cancel_url: params.cancel_url, url: `http://localhost:${PORT}/pay/${sid}`, line_price: priceId || null, submit_type: params.submit_type || null, created: now };
     s.sessions.push(sess);
     return done(sess);
   }

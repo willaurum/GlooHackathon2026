@@ -4,9 +4,10 @@
 //   npx wrangler dev --port 8799 &
 //   node test/api.test.mjs
 // Rate limits are per IP per window, so give it ten minutes between full runs.
+// Other ports: set API, STRIPE and ORIGIN (and PORT for the fake Stripe), matching .dev.vars.
 const API = process.env.API || 'http://localhost:8799';
-const STRIPE = 'http://localhost:12111';
-const ORIGIN = 'http://localhost:5199';
+const STRIPE = process.env.STRIPE || 'http://localhost:12111';
+const ORIGIN = process.env.ORIGIN || 'http://localhost:5199';
 const KEY = 'sk_test_GOOD' + 'a'.repeat(24) + 'Z9x1';
 let failures = 0;
 const publicDumps = [];
@@ -77,15 +78,33 @@ check(r.data.funds.every((f) => f.inStripe), 'every fund in Stripe');
 let s = (await stripeLog()).accounts;
 let acct = Object.values(s)[0];
 check(acct.products === 3 && acct.prices === 4 * 3 + 4 && acct.hooks === 1, 'created 3 products, 16 prices, 1 webhook', { p: acct.products, pr: acct.prices, h: acct.hooks });
-check(acct.hookList[0].url === 'http://localhost:8799/api/churches/' + slug + '/webhooks/stripe', 'webhook URL per church', acct.hookList);
+check(acct.hookList[0].url === API + '/api/churches/' + slug + '/webhooks/stripe', 'webhook URL per church', acct.hookList);
+check(acct.hookList[0].enabled_events.includes('customer.subscription.deleted'), 'webhook hears canceled subscriptions', acct.hookList[0].enabled_events);
+let portalCfg = acct.portalConfigs[0];
+check(acct.portalConfigs.length === 1 && portalCfg.metadata.belong_church === slug, 'one customer portal configuration, tagged with the church', acct.portalConfigs);
+check(portalCfg.features.subscription_cancel.enabled && portalCfg.features.subscription_cancel.mode === 'immediately' && portalCfg.login_page.enabled && portalCfg.login_page.url, 'portal lets donors cancel and has a login page', portalCfg);
+check(r.data.stripe.portal === true && !r.data.stripe.portalNote, 'staff status shows the portal is ready', r.data.stripe);
 
 r = await call('POST', C + '/admin/stripe', { key: KEY }, token);
 s = (await stripeLog()).accounts; acct = Object.values(s)[0];
 check(r.data.provision.ok && r.data.provision.reused === 3 && r.data.provision.created === 0, 'connect again reuses', r.data.provision);
 check(acct.products === 3 && acct.prices === 16 && acct.hooks === 1, 'no duplicates after second connect', { p: acct.products, pr: acct.prices, h: acct.hooks });
+check(acct.portalConfigs.length === 1 && acct.portalConfigs[0].id === portalCfg.id, 'portal configuration reused after second connect', acct.portalConfigs.map((x) => x.id));
 r = await call('POST', C + '/admin/stripe/sync', {}, token);
 s = (await stripeLog()).accounts; acct = Object.values(s)[0];
 check(r.data.provision.ok && acct.products === 3 && acct.prices === 16 && acct.hooks === 1, 'sync is idempotent too');
+check(acct.portalConfigs.length === 1, 'sync does not add a portal configuration');
+let before = (await stripeLog()).log.length;
+await call('POST', C + '/admin/stripe/sync', {}, token);
+let writes = (await stripeLog()).log.slice(before).filter((l) => l.method === 'POST' && l.path.startsWith('/v1/billing_portal/'));
+check(writes.length === 0, 'a ready portal configuration is left alone on sync', writes);
+// A webhook made by an older version lacks customer.subscription.deleted; sync adds it.
+await fetch(STRIPE + '/__old_hooks');
+r = await call('POST', C + '/admin/stripe/sync', {}, token);
+s = (await stripeLog()).accounts; acct = Object.values(s)[0];
+check(acct.hooks === 1 && acct.hookList[0].enabled_events.includes('customer.subscription.deleted'), 'sync upgrades an older webhook in place', acct.hookList);
+r = await call('GET', C);
+check(r.data.manage === 'portal' && r.data.portalUrl === portalCfg.login_page.url, 'public church shows the portal login page', { manage: r.data.manage, portalUrl: r.data.portalUrl });
 
 console.log('funds and trips');
 r = await call('POST', C + '/admin/funds', { kind: 'trip', name: 'Kenya water project', description: 'Wells for two villages.', goal: 1200000, startDate: '2027-02-01', endDate: '2027-02-10', location: 'Kisumu, Kenya', spots: 8, applicationsOpen: true }, token);
@@ -108,19 +127,25 @@ check(r.status === 200 && r.data.url.startsWith(STRIPE + '/pay/cs_'), 'one-time 
 const sess1 = r.data.url.split('/pay/')[1];
 let log = (await stripeLog()).log.filter((l) => l.path === '/v1/checkout/sessions').pop();
 check(log && log.idem.startsWith('belong-checkout-'), 'checkout uses an idempotency key');
+const donor = { name: 'Trip Giver', email: 'tripgiver@example.com' };
 r = await call('POST', C + '/checkout', { fund: tripId, amount: 1234, anonymous: true });
-check(r.status === 200 && r.data.url.includes('/pay/cs_'), 'custom amount to a trip');
+check(r.status === 400 && /name/.test(r.data.error), 'name required, even with the old anonymous flag', r.data);
+r = await call('POST', C + '/checkout', { fund: tripId, amount: 1234, name: 'No Email' });
+check(r.status === 400 && /email/.test(r.data.error), 'email required', r.data);
+r = await call('POST', C + '/checkout', { fund: tripId, amount: 1234, anonymous: true, ...donor });
+check(r.status === 200 && r.data.url.includes('/pay/cs_'), 'custom amount to a trip (old anonymous flag ignored)');
 const sess2 = r.data.url.split('/pay/')[1];
 r = await call('POST', C + '/checkout', { fund: 'tithes', amount: 10000, cadence: 'month', name: 'Monthly Tither', email: 'tither@example.com' });
-check(r.status === 200, 'monthly tithe (preset recurring price)', r.data);
+check(r.status === 200 && !r.data.manage, 'monthly tithe (preset recurring price), no demo manage link', r.data);
 const sess3 = r.data.url.split('/pay/')[1];
-r = await call('POST', C + '/checkout', { fund: 'tithes', amount: 4321, cadence: 'month', anonymous: true });
+r = await call('POST', C + '/checkout', { fund: 'tithes', amount: 4321, cadence: 'month', name: 'Second Tither', email: 'second@example.com' });
 check(r.status === 200, 'monthly tithe custom amount (inline recurring)', r.data);
-r = await call('POST', C + '/checkout', { fund: 'general', amount: 10000, cadence: 'month', anonymous: true });
+const sess4 = r.data.url.split('/pay/')[1];
+r = await call('POST', C + '/checkout', { fund: 'general', amount: 10000, cadence: 'month', ...donor });
 check(r.status === 200, 'monthly on non-recurring fund falls back to one-time', r.data);
-r = await call('POST', C + '/checkout', { fund: 'general', amount: 50 , anonymous: true});
+r = await call('POST', C + '/checkout', { fund: 'general', amount: 50, ...donor });
 check(r.status === 400, 'too small rejected');
-r = await call('POST', C + '/checkout', { fund: 'nope', amount: 5000, anonymous: true });
+r = await call('POST', C + '/checkout', { fund: 'nope', amount: 5000, ...donor });
 check(r.status === 400, 'unknown fund rejected');
 
 // Pay #1 with webhook, #2 without webhook (reconciled on return), #3 with webhook.
@@ -134,6 +159,38 @@ await fetch(STRIPE + '/pay/' + sess2 + '?hook=0', { redirect: 'manual' });
 r = await call('GET', C + '/confirm/' + sess2);
 check(r.data.status === 'completed' && r.data.amount === 1234, 'confirm reconciles with Stripe when webhook is missing', r.data);
 await fetch(STRIPE + '/pay/' + sess3, { redirect: 'manual' });
+await fetch(STRIPE + '/pay/' + sess4 + '?hook=0', { redirect: 'manual' });
+
+console.log('monthly gifts: customer portal');
+r = await call('GET', C + '/confirm/' + sess3);
+check(r.data.status === 'completed' && r.data.cadence === 'month' && r.data.manage === 'portal' && !r.data.canceled, 'confirm offers the portal for a monthly gift', r.data);
+r = await call('GET', C + '/confirm/' + sess1);
+check(r.data.manage === '', 'no manage option for a one-time gift', r.data);
+const stripeSess3 = (await stripeLog()).accounts[Object.keys((await stripeLog()).accounts)[0]].sessionList.find((x) => x.id === sess3);
+r = await call('POST', C + '/portal', { session: sess3 });
+check(r.status === 200 && r.data.url && r.data.url.startsWith(STRIPE + '/portal/bps_'), 'portal session opens for a monthly gift', r.data);
+const portalSessId = r.data.url && r.data.url.split('/portal/')[1];
+s = (await stripeLog()).accounts; acct = Object.values(s)[0];
+const ps = acct.portalSessions.find((x) => x.id === portalSessId);
+check(ps && ps.customer === stripeSess3.customer && ps.configuration === portalCfg.id, "portal session is for that checkout's own customer, with the church's configuration", { ps, customer: stripeSess3.customer });
+check(ps && ps.return_url === ORIGIN + '/#/give', 'portal returns to the Give page', ps);
+r = await call('POST', C + '/portal', { session: sess1 });
+check(r.status === 400, 'no portal for a one-time gift', r.data);
+r = await call('POST', C + '/portal', { session: 'cs_test_doesnotexist' });
+check(r.status === 404, 'no portal for an unknown session', r.data);
+r = await call('POST', C + '/portal', { session: 'not-a-session' });
+check(r.status === 404, 'no portal for a malformed session id', r.data);
+r = await call('POST', '/api/churches/' + slugB + '/portal', { session: sess3 });
+check(r.status === 404, "another church cannot open this church's portal session", r.data);
+before = (await stripeLog()).accounts[Object.keys((await stripeLog()).accounts)[0]].portalSessions.length;
+check(before === 1, 'only one portal session was created', before);
+
+// The donor cancels inside the Stripe portal; the webhook marks the gift canceled.
+await fetch(STRIPE + '/portal/' + portalSessId + '?cancel=1');
+log = (await stripeLog()).log.filter((l) => l.webhook && l.type === 'customer.subscription.deleted');
+check(log.length === 1 && log[0].status === 200, 'customer.subscription.deleted delivered and verified', log);
+r = await call('GET', C + '/confirm/' + sess3);
+check(r.data.canceled === true && r.data.manage === '', 'confirm shows the monthly gift as canceled', r.data);
 
 // Forged webhook
 let fake = await fetch(API + C + '/webhooks/stripe', { method: 'POST', headers: { 'stripe-signature': 't=' + Math.floor(Date.now() / 1000) + ',v1=deadbeef' }, body: JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_forged', metadata: { belong_church: slug }, payment_status: 'paid', amount_total: 99999999 } } }) });
@@ -171,7 +228,31 @@ check(r.status === 400, 'closed trip rejects applications');
 console.log('donations (staff only)');
 r = await call('GET', C + '/admin/donations', undefined, token);
 check(r.status === 200 && r.data.donations.some((d) => d.name === 'Private Person' && d.email === 'private@example.com'), 'staff see donor identity');
-check(r.data.donations.filter((d) => d.anonymous).every((d) => !d.name && !d.email), 'anonymous gifts stay anonymous for staff');
+check(r.data.donations.length >= 5 && r.data.donations.every((d) => d.name && d.email && !d.anonymous), 'staff see a name and email on every gift', r.data.donations.map((d) => [d.name, d.email, d.anonymous]));
+check(r.data.donations.some((d) => d.name === 'Trip Giver' && d.fundId === tripId), 'old anonymous flag did not hide the name from staff');
+const tither = r.data.donations.find((d) => d.name === 'Monthly Tither');
+check(tither && tither.canceled && tither.canceledAt && !tither.cancelable, 'staff see the portal-canceled monthly gift as canceled', tither);
+const oneTime = r.data.donations.find((d) => d.name === 'Private Person');
+r = await call('POST', C + '/admin/donations/' + oneTime.id + '/cancel', {}, token);
+check(r.status === 400, 'staff cannot cancel a one-time gift', r.data);
+r = await call('POST', C + '/admin/donations/' + tither.id + '/cancel', {});
+check(r.status === 401, 'staff cancel needs auth');
+
+console.log('staff cancel a live monthly gift');
+r = await call('GET', C + '/confirm/' + sess4);
+check(r.data.status === 'completed' && r.data.manage === 'portal', 'second monthly gift confirmed on return', r.data);
+r = await call('GET', C + '/admin/donations', undefined, token);
+const second = r.data.donations.find((d) => d.name === 'Second Tither');
+check(second && second.cancelable && !second.canceled, 'active monthly gift can be canceled by staff', second);
+r = await call('POST', C + '/admin/donations/' + second.id + '/cancel', {}, token);
+check(r.status === 200 && r.data.donations.find((d) => d.id === second.id).canceled, 'staff cancel marks it canceled', r.data);
+s = (await stripeLog()).accounts; acct = Object.values(s)[0];
+const stripeSess4 = acct.sessionList.find((x) => x.id === sess4);
+check(acct.subscriptions.find((x) => x.id === stripeSess4.subscription)?.status === 'canceled', 'staff cancel cancels the Stripe subscription', acct.subscriptions);
+r = await call('POST', C + '/admin/donations/' + second.id + '/cancel', {}, token);
+check(r.status === 200, 'canceling twice is harmless', r.data);
+r = await call('POST', C + '/portal', { session: sess4 });
+check(r.status === 200, 'portal still opens after canceling (to see history)', r.data);
 r = await call('GET', C + '/admin/donations');
 check(r.status === 401, 'donations need auth');
 r = await call('GET', '/api/churches/' + slugB + '/admin/donations', undefined, tokenB);
@@ -196,9 +277,46 @@ r = await call('GET', '/api/gifts');
 check(Array.isArray(r.data.list) && r.data.list.length === 0 && typeof r.data.count === 'number', 'legacy /api/gifts no longer lists donors', r.data);
 r = await call('GET', '/api/config');
 check(r.data.churchName && r.data.goal, 'legacy /api/config still works');
+r = await call('POST', '/api/checkout', { amount: 5000, anonymous: true });
+check(r.status === 400, 'legacy checkout also needs a name and email', r.data);
+
+console.log('demo church: monthly gift managed on the website');
+const DEMO = '/api/churches/grace-community';
+r = await call('GET', DEMO);
+check(r.data.mode === 'demo' && r.data.manage === 'link' && r.data.portalUrl === '', 'demo church manages gifts by private link', { mode: r.data.mode, manage: r.data.manage });
+r = await call('POST', DEMO + '/checkout', { fund: 'general', amount: 5000, name: 'Demo Once', email: 'demo-once@example.com' });
+check(r.status === 200 && r.data.demo && !r.data.manage, 'demo one-time gift has no manage link', r.data);
+r = await call('POST', DEMO + '/checkout', { fund: 'tithes', amount: 5000, cadence: 'month', name: 'Demo Monthly', email: 'demo-monthly@example.com' });
+check(r.status === 200 && r.data.demo && /^grace-community\.[\w-]{40,}$/.test(r.data.manage || ''), 'demo monthly gift returns a private manage link', r.data);
+const demoSession = new URL(r.data.url).searchParams.get('session_id');
+const demoRaw = r.data.manage.split('.')[1];
+r = await call('GET', DEMO + '/confirm/' + demoSession);
+check(r.data.status === 'demo' && r.data.cadence === 'month' && r.data.manage === 'link' && !r.data.canceled, 'demo confirm offers manage', r.data);
+r = await call('GET', DEMO + '/manage/' + demoRaw);
+check(r.status === 200 && r.data.amount === 5000 && r.data.cadence === 'month' && r.data.fund && !r.data.canceled && r.data.demo, 'manage link shows the gift', r.data);
+check(!r.text.includes('Demo Monthly') && !r.text.includes('demo-monthly@'), 'manage link never shows name or email');
+r = await call('GET', DEMO + '/manage/' + demoRaw.slice(0, -2) + 'xx');
+check(r.status === 404, 'wrong token rejected', r.data);
+r = await call('GET', C + '/manage/' + demoRaw);
+check(r.status === 404, "token does not work for another church", r.data);
+r = await call('POST', DEMO + '/manage/' + demoRaw + '/cancel', {});
+check(r.status === 200 && r.data.canceled && r.data.canceledAt, 'donor cancels the demo monthly gift', r.data);
+r = await call('POST', DEMO + '/manage/' + demoRaw + '/cancel', {});
+check(r.status === 200 && r.data.canceled, 'canceling again is harmless');
+r = await call('GET', DEMO + '/confirm/' + demoSession);
+check(r.data.canceled && r.data.manage === '', 'demo confirm shows canceled', r.data);
+r = await call('GET', DEMO + '/admin/donations', undefined, demoToken);
+const demoGift = r.data.donations.find((d) => d.name === 'Demo Monthly');
+check(demoGift && demoGift.email === 'demo-monthly@example.com' && demoGift.canceled && !demoGift.cancelable, 'demo staff see name, email and canceled status', demoGift);
+r = await call('POST', DEMO + '/checkout', { fund: 'tithes', amount: 2500, cadence: 'month', name: 'Demo Staff Cancel', email: 'demo-staff@example.com' });
+r = await call('GET', DEMO + '/admin/donations', undefined, demoToken);
+const demoGift2 = r.data.donations.find((d) => d.name === 'Demo Staff Cancel');
+check(demoGift2 && demoGift2.cancelable, 'new demo monthly gift is cancelable by staff', demoGift2);
+r = await call('POST', DEMO + '/admin/donations/' + demoGift2.id + '/cancel', {}, demoToken);
+check(r.status === 200 && r.data.donations.find((d) => d.id === demoGift2.id).canceled, 'demo staff cancel', r.data);
 
 console.log('leak scan of every public response');
-const leaks = publicDumps.filter((d) => /GOOD|NOHOOK|sk_test_|rk_test_|whsec_|Private Person|private@example|Monthly Tither|tither@|Applicant One|app1@|Alice|Bob Donor|pbkdf2|password_hash|stripe_key/.test(d.text));
+const leaks = publicDumps.filter((d) => /GOOD|NOHOOK|sk_test_|rk_test_|whsec_|Private Person|private@example|Monthly Tither|tither@|Applicant One|app1@|Alice|Bob Donor|Trip Giver|tripgiver@|Second Tither|second@example|Demo Monthly|demo-monthly@|Demo Once|demo-once@|Card Holder|cus_|sub_|bpc_|pbkdf2|password_hash|stripe_key/.test(d.text));
 check(leaks.length === 0, 'no key, secret, donor or applicant data in ' + publicDumps.length + ' public responses', leaks.map((l) => l.path + ' ' + l.text.slice(0, 200)));
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');

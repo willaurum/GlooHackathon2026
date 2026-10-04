@@ -217,16 +217,24 @@ latest.
 
 Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Durable Object, so churches' data is fully separate, and a small `GivingRegistry` object keeps church names and web addresses unique and powers church search. The frontend talks to it through `VITE_GIVING_API_BASE` (or `/giving-api` on previews).
 
-**Privacy.** Public pages show totals, goal progress and gift counts, never who gave. Only signed-in church staff see donors, and "Give anonymously" hides the name from staff too.
+**Privacy.** Public pages show totals, goal progress and gift counts, never who gave. Every gift needs a name and email, and only signed-in church staff see them (in the Gifts list and CSV), for giving records and receipts. There is no "give anonymously" option; an `anonymous` field sent by an older page is ignored. Gifts recorded as anonymous before this change have no name stored, so they still show as "Anonymous" to staff.
+
+**Monthly gifts: manage or cancel on the website.** The Give page links to "Manage or cancel a monthly gift" (`#/give/manage`), and the thank-you screen after a monthly gift has a "Manage or cancel" button.
+
+- With Stripe connected, setup also creates one Stripe customer portal configuration per church (cancel immediately, update card, see receipts) with its hosted login page turned on. The public church endpoint returns that login page as `portalUrl`; a donor enters their email there and Stripe sends a code. The thank-you button opens a portal session for the customer who paid that checkout session, and only that customer (for 7 days after the gift).
+- In demo mode (no Stripe key, including Grace Community) a monthly gift gets a private link, `#/give/manage/<church>.<token>`. Only a hash of the token is stored. The link shows the gift (never the name or email) and lets the donor cancel it. Links are also remembered in that browser, so the manage page lists them.
+- Staff can cancel any monthly gift from the Gifts list (with Stripe, this cancels the subscription there too). Canceled monthly gifts show "Monthly gift canceled" to staff. Gifts already made still count toward totals.
+- When a donor cancels in the Stripe portal, the `customer.subscription.deleted` webhook marks the gift canceled.
 
 **For a church:**
 
 1. **Sign up** (`#/give/start`, "Add your church"): name, city, currency and a staff password. The church gets a shareable giving link, `#/give/c/<slug>`, and starts with three funds: General giving, Tithes & offerings, and Missions. It stays in demo mode until Stripe is connected.
-2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions and Webhook Endpoints. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
+2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
    - one Product per fund and per mission trip, with preset Prices found again by `lookup_key` (plus monthly Prices for Tithes);
-   - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, and monthly tithes renew.
+   - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, monthly tithes renew, and canceled monthly gifts are marked;
+   - one customer portal configuration (found again by `metadata[belong_church]`), so donors can cancel a monthly gift themselves.
 
-   Running setup again ("Re-run Stripe setup") reuses everything, so nothing is duplicated. A new fund or trip gets its own Product and Prices right away.
+   Running setup again ("Re-run Stripe setup") reuses everything, so nothing is duplicated. It also adds any missing webhook events to an existing endpoint. A new fund or trip gets its own Product and Prices right away.
 3. **Mission trips**: staff create trips with dates, location, goal, team spots and an open/closed switch for applications. People apply (name, email, phone, message) or give toward a specific trip. Staff accept, waitlist or decline, and add private notes. The public page only shows "3 of 12 spots filled".
 4. **Staff area**: setup checklist, funds and trips, applications, a private gift list with CSV download, church details and password change.
 
@@ -243,10 +251,12 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 | `GET` | `/api/churches/{slug}` | none | Public church page: funds, trips, totals, presets, mode. |
 | `POST` | `/api/churches/{slug}/checkout` | none (rate-limited) | Start a gift to a fund or trip (one-time or monthly); returns a Checkout URL (real or simulated). |
 | `GET` | `/api/churches/{slug}/confirm/{session_id}` | own session | A gift's status after checkout. |
+| `POST` | `/api/churches/{slug}/portal` | own session (rate-limited) | `{ session }` from a monthly gift's checkout; returns a Stripe customer portal URL for that session's customer. |
+| `GET` / `POST` | `/api/churches/{slug}/manage/{token}`, `.../manage/{token}/cancel` | private link (rate-limited) | Demo mode: see or cancel one monthly gift. |
 | `POST` | `/api/churches/{slug}/trips/{trip_id}/apply` | none (rate-limited) | Apply for a mission trip. |
-| `POST` | `/api/churches/{slug}/webhooks/stripe` | Stripe signature | Records gifts and subscription renewals. |
+| `POST` | `/api/churches/{slug}/webhooks/stripe` | Stripe signature | Records gifts, subscription renewals and canceled subscriptions. |
 | `POST` | `/api/churches/{slug}/admin/login`, `/admin/logout` | password / session | Staff sign-in. |
-| various | `/api/churches/{slug}/admin/...` | staff session | Overview, settings, password, Stripe connect/sync/disconnect, funds and trips, donations, applications. |
+| various | `/api/churches/{slug}/admin/...` | staff session | Overview, settings, password, Stripe connect/sync/disconnect, funds and trips, donations (and `POST /admin/donations/{id}/cancel` for a monthly gift), applications. |
 | `GET` / `POST` | `/api/config`, `/api/gifts`, `/api/checkout`, `/api/confirm/{id}` | none | The original single-church API, now served by the demo church for older builds. `/api/gifts` returns only a count and total. |
 
 - **Demo mode**: with no Stripe key connected, checkout is simulated and gifts are recorded as `demo`, so previews work with zero keys.

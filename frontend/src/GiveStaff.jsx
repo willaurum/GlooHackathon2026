@@ -136,18 +136,21 @@ function StripeCard({ slug, stripe, update, fail, go }) {
       <div><dt>Key</dt><dd><code>{stripe.keyHint}</code></dd></div>
       {stripe.account && <div><dt>Account</dt><dd>{stripe.account}</dd></div>}
       <div><dt>Webhook</dt><dd>{stripe.webhook ? 'Ready' : 'Not set up'}</dd></div>
+      {'portal' in stripe && <div><dt>Donor self-service</dt><dd>{stripe.portal ? 'Ready: donors can cancel monthly gifts' : 'Not set up'}</dd></div>}
       <div><dt>Last set up</dt><dd>{stripe.provisionedAt ? new Date(stripe.provisionedAt).toLocaleString() : 'Not finished'}</dd></div>
     </dl>}
     {stripe.provisionError && <div className="banner error" role="alert">Stripe setup did not finish: {stripe.provisionError}</div>}
     {stripe.webhookNote && <div className="banner demo" role="status">{stripe.webhookNote}</div>}
+    {stripe.portalNote && <div className="banner demo" role="status">{stripe.portalNote}</div>}
+    {stripe.connected && 'portal' in stripe && !stripe.portal && !stripe.portalNote && <div className="banner demo" role="status">Run "Re-run Stripe setup" once so donors can cancel monthly gifts themselves.</div>}
     {result && result.ok && <div className="give-applied" role="status"><Icon name="check" size={20} /><div><b>Stripe is set up.</b><p>{result.created ? `Created ${result.created} new product${result.created === 1 ? '' : 's'} with prices` : 'Everything was already there'}{result.reused ? `, reused ${result.reused} existing` : ''}. Gifts now go through Stripe Checkout.</p></div></div>}
     {err && <div className="banner error" role="alert">{err}</div>}
     {showForm && <form onSubmit={connect} className="give-key-form">
       {!stripe.encryptionReady && <div className="banner error" role="alert">This server is missing its STRIPE_KEY_ENCRYPTION_KEY secret, so it cannot store Stripe keys yet.</div>}
       <ul className="give-tips">
         <li><Icon name="sparkle" size={16} />Start with a <b>test key</b> (sk_test_…) to try everything safely.</li>
-        <li><Icon name="lock" size={16} />For real gifts, use a <b>restricted key</b> (rk_live_…) with Write access to Products, Prices, Checkout Sessions and Webhook Endpoints.</li>
-        <li><Icon name="check" size={16} />We check the key with Stripe, then create a product and prices for every fund and trip, plus a webhook. Running it again never makes duplicates.</li>
+        <li><Icon name="lock" size={16} />For real gifts, use a <b>restricted key</b> (rk_live_…) with Write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions.</li>
+        <li><Icon name="check" size={16} />We check the key with Stripe, then create a product and prices for every fund and trip, a webhook, and a page where donors can cancel a monthly gift. Running it again never makes duplicates.</li>
         <li><Icon name="lock" size={16} />The key is encrypted on the giving server and never shown again, not even to staff.</li>
       </ul>
       <label className="field">Stripe secret key
@@ -340,15 +343,22 @@ function ApplicationCard({ a, onReview }) {
 }
 
 function Gifts({ slug, fail }) {
-  const [data, setData] = useState(null), [fund, setFund] = useState('all');
+  const [data, setData] = useState(null), [fund, setFund] = useState('all'), [busy, setBusy] = useState(''), [err, setErr] = useState('');
   useEffect(() => { staffApi(slug, '/donations').then(setData).catch(fail); }, [slug]);
   if (!data) return <div className="card give-pad"><p role="status">Loading gifts…</p></div>;
   const funds = [...new Map(data.donations.map(d => [d.fundId, d.fund])).entries()];
   const shown = fund === 'all' ? data.donations : data.donations.filter(d => d.fundId === fund);
   const total = shown.filter(d => d.status === 'completed' || d.status === 'demo').reduce((n, d) => n + d.amount, 0);
+  async function cancel(d) {
+    if (!window.confirm(`Cancel ${d.name || 'this donor'}'s ${fmt(d.amount, data.currency)} monthly gift? No more gifts will be made.`)) return;
+    setBusy(d.id); setErr('');
+    try { setData(await staffApi(slug, '/donations/' + encodeURIComponent(d.id) + '/cancel', { method: 'POST' })); }
+    catch (e) { if (e.status === 401) fail(e); else setErr(friendly(e)); }
+    finally { setBusy(''); }
+  }
   function csv() {
     const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-    const rows = [['Date', 'Fund', 'Amount', 'Currency', 'Frequency', 'Status', 'Name', 'Email'], ...shown.map(d => [d.createdAt, d.fund, (d.amount / 100).toFixed(2), data.currency, d.cadence, d.status, d.anonymous ? 'Anonymous' : d.name, d.email])];
+    const rows = [['Date', 'Fund', 'Amount', 'Currency', 'Frequency', 'Status', 'Monthly gift', 'Name', 'Email'], ...shown.map(d => [d.createdAt, d.fund, (d.amount / 100).toFixed(2), data.currency, d.cadence, d.status, d.cadence !== 'month' ? '' : d.canceled ? 'Canceled ' + (d.canceledAt || '').slice(0, 10) : 'Active', d.anonymous ? 'Anonymous' : d.name, d.email])];
     const url = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: 'gifts.csv' });
     a.click();
@@ -362,6 +372,7 @@ function Gifts({ slug, fail }) {
         <button className="secondary" disabled={!shown.length} onClick={csv}>Download CSV</button>
       </div>
     </div>
+    {err && <div className="banner error" role="alert">{err}</div>}
     <div className="card give-pad">
       <div className="give-raised"><strong>{fmt(total, data.currency)}</strong> from {shown.filter(d => d.status === 'completed' || d.status === 'demo').length} gifts</div>
       {!shown.length ? <p>No gifts yet.</p> : <table className="give-table">
@@ -371,7 +382,11 @@ function Gifts({ slug, fail }) {
           <td data-label="Donor"><span>{d.anonymous ? <i>Anonymous</i> : <>{d.name}<small>{d.email}</small></>}</span></td>
           <td data-label="Fund"><span>{d.fund}</span></td>
           <td data-label="Amount"><span><b>{fmt(d.amount, data.currency)}</b>{d.cadence === 'month' && <small>monthly</small>}</span></td>
-          <td data-label="Status"><span><span className={'tag ' + (d.status === 'completed' ? '' : d.status === 'demo' ? 'done' : 'crisis')}>{d.status === 'demo' ? 'Simulated' : d.status}</span></span></td>
+          <td data-label="Status"><span className="give-gift-status">
+            <span className={'tag ' + (d.status === 'completed' ? '' : d.status === 'demo' ? 'done' : 'crisis')}>{d.status === 'demo' ? 'Simulated' : d.status}</span>
+            {d.canceled && <span className="tag crisis give-canceled-tag" title={d.canceledAt ? 'Canceled ' + new Date(d.canceledAt).toLocaleString() : undefined}>Monthly gift canceled</span>}
+            {d.cancelable && <button className="ghost" disabled={busy === d.id} onClick={() => cancel(d)}>{busy === d.id ? 'Canceling…' : 'Cancel monthly gift'}</button>}
+          </span></td>
         </tr>)}</tbody>
       </table>}
     </div>

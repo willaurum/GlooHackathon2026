@@ -377,9 +377,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .preset-row button { min-height: 48px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); color: var(--green-800); font-size: 16px; font-weight: 600; }
 .preset-row button:hover { border-color: var(--green-600); }
 .preset-row button.chosen { background: var(--green-700); border-color: var(--green-700); color: #fff; }
-.give-anon { display: flex !important; align-items: center; gap: 10px; }
-.give-anon input { width: 20px; height: 20px; margin: 0; accent-color: var(--green-700); }
-.give-anon span { font-weight: 500; }
+.give-form .give-private { align-items: flex-start; margin: 4px 0 12px; }
+.give-form .give-private .i { flex: none; margin-top: 1px; }
+.give-manage-link { margin-top: 6px; text-align: center; }
 .continue { margin-top: 8px; min-height: 52px; font-size: 16px; }
 .give-form .banner { margin: 12px 0 0; }
 .give-error { padding: 24px; }
@@ -390,6 +390,27 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .give-status.demo { background: var(--sand-50); color: var(--sand-700); }
 .give-status.pending { background: var(--info-50); color: var(--info); }
 .give-again { margin-top: 22px; }
+.give-status.canceled { background: var(--sand-50); color: var(--sand-700); }
+.give-manage-box { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 20px; padding: 18px 16px; border: 1px solid var(--line); border-radius: var(--r); background: var(--green-50); }
+.give-manage-box p { font-size: 15px; }
+.give-manage-box .banner { margin: 0; align-self: stretch; }
+.give-manage-note { margin-top: 16px; font-size: 14px; }
+.give-manage-note .link { display: inline-flex; }
+.give-manage { display: flex; flex-direction: column; gap: 14px; max-width: 640px; }
+.give-manage h2 { font-size: 20px; }
+.give-manage-steps { display: grid; gap: 8px; padding-left: 22px; list-style: decimal; font-size: 15px; }
+.give-portal { align-self: flex-start; text-decoration: none; }
+.give-manage-list { display: grid; gap: 8px; }
+.give-manage-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.give-manage-list li > div { display: flex; flex-direction: column; min-width: 0; }
+.give-manage-list strong { color: var(--ink); }
+.give-manage-list small { font-size: 13px; }
+.give-manage-confirm { margin-top: 20px; padding: 16px; border: 1px solid #efcfc6; border-radius: var(--r); background: var(--danger-50); text-align: left; }
+.give-manage-confirm p { margin-bottom: 12px; font-size: 15px; }
+.give-manage-confirm .give-row { justify-content: flex-start; }
+.primary.danger { background: var(--danger); box-shadow: none; }
+.primary.danger:hover:not(:disabled) { background: #7f2f1f; }
+.give-manage-gift .form-note { margin-top: 10px; }
 .give-pad { padding: 24px; }
 .give-pad > h3 + .form-note, .give-pad > h3 + form { margin-top: 6px; }
 .give-church { padding: 14px 16px; }
@@ -423,7 +444,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .give-private .i { color: var(--green-600); }
 .give-cadence { display: flex; margin: 16px 0 0; }
 .give-cadence button { flex: 1; }
-.give-anon small { display: block; font-weight: 400; margin-top: 2px; }
 .give-trips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
 .give-trip { display: flex; flex-direction: column; gap: 10px; padding: 22px; }
 .give-trip .category { margin: 0; }
@@ -502,6 +522,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .give-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink); }
 .give-table td small { display: block; overflow-wrap: anywhere; }
 .give-table .tag { margin: 0; text-transform: capitalize; }
+.give-table .give-canceled-tag { text-transform: none; }
+.give-gift-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.give-gift-status .ghost { min-height: 32px; padding: 0 8px; font-size: 13px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (max-width: 860px) {
