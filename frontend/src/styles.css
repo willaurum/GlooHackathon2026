@@ -842,6 +842,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 /* --- Prayer map --- */
 .map-legend{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:11px;color:var(--muted);margin-bottom:14px}.legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}.legend-dot.news-dot{background:var(--danger);border:2px solid #fff;box-shadow:0 0 0 1px #9c3b2788}.legend-dot.region-dot{background:var(--green-600);filter:blur(1px)}
+/* Leaflet gives its panes and controls z-index 400 to 1000. Its own stacking context keeps them
+   inside the map, so the top bar, tab bar, chat and modals always draw above it. */
+.leaflet-container { isolation: isolate; z-index: 0; }
 .map-shell{height:480px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);position:relative}.map-shell .leaflet-tile-pane{filter:saturate(.55) sepia(.12) hue-rotate(-6deg) brightness(1.03)}
 .news-pin{background:var(--danger);border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px #00000040}
 @keyframes pulseGlow{0%,100%{opacity:.4}50%{opacity:.72}}
