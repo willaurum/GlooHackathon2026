@@ -159,6 +159,12 @@ def update_request(request_id: int, body: RequestStatus):
     return row
 
 
+@app.delete('/api/requests/{request_id}', status_code=204)
+def remove_request(request_id: int):
+    if not db.remove_request(request_id):
+        raise HTTPException(status_code=404, detail='Request not found')
+
+
 class NewItem(BaseModel):
     title: str
 

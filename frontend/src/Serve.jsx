@@ -52,6 +52,14 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
+  async function removeRequest(requestId) {
+    setBusy(true); setError('');
+    try {
+      await api('/requests/' + requestId, { method: 'DELETE' });
+      setRequests(previous => previous.filter(r => r.request_id !== requestId));
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
   async function review(requestId, status) {
     setBusy(true); setError('');
     try {
@@ -181,7 +189,7 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
         <p>Approved connection requests from the website chat show up here.</p>
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
       </div>}
-      <Requests requests={requests} busy={busy} review={review} />
+      <Requests requests={requests} busy={busy} review={review} removeRequest={removeRequest} />
     </section>}
   </div>;
 }
@@ -205,7 +213,7 @@ function Contact({ m }) {
 
 const requestLabels = { connection: 'Connection', pastoral_care: 'Pastoral care', prayer: 'Prayer', crisis: 'Crisis', other: 'Question' };
 
-function Requests({ requests, busy, review }) {
+function Requests({ requests, busy, review, removeRequest }) {
   if (!requests.length) return null;
   return <div className="requests">
     <div className="eyebrow">From the website chat</div>
@@ -222,6 +230,9 @@ function Requests({ requests, busy, review }) {
       {r.status === 'pending' && <div className="actions">
         <button className="secondary" disabled={busy} onClick={() => review(r.request_id, 'declined')}>{r.kind === 'connection' ? 'Decline' : 'Dismiss'}</button>
         <button className="primary" disabled={busy} onClick={() => review(r.request_id, 'approved')}>{r.kind === 'connection' ? 'Approve' : 'Mark handled'}</button>
+      </div>}
+      {r.status !== 'pending' && <div className="actions">
+        <button className="secondary" disabled={busy} onClick={() => removeRequest(r.request_id)}>Remove</button>
       </div>}
     </article>)}
   </div>;

@@ -314,6 +314,10 @@ def remove_connection(connection_id):
     return run(("DELETE FROM connections WHERE connection_id = ?", (connection_id,)))[0]['rowsWritten'] > 0
 
 
+def remove_request(request_id):
+    return run(("DELETE FROM requests WHERE request_id = ?", (request_id,)))[0]['rowsWritten'] > 0
+
+
 def _item(row):
     return {**row, 'done': bool(row['done'])} if row else None
 
