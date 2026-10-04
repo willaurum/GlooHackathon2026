@@ -3,8 +3,9 @@ import { MapContainer, TileLayer, Polygon, CircleMarker, Tooltip, useMap } from 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-const AREA = { color: '#ffffff', weight: 1.5, fillColor: '#c9dcc9', fillOpacity: 0.25 };
-const AREA_ACTIVE = { color: '#ffd166', weight: 3, fillColor: '#ffd166', fillOpacity: 0.45 };
+// Every spot shows in its own colour from the start; selecting one makes it bolder.
+const areaStyle = (color, on) => ({ color: on ? '#ffffff' : color, weight: on ? 4 : 2, fillColor: color, fillOpacity: on ? 0.6 : 0.35 });
+const pointStyle = (color, on) => ({ color: '#ffffff', weight: on ? 3 : 2, fillColor: color, fillOpacity: 1 });
 const BUILDING = { color: '#ffffff', weight: 2, fillColor: '#2b6248', fillOpacity: 0.55, interactive: false };
 
 const MASK = { stroke: false, fillColor: '#0b1f16', fillOpacity: 0.55, interactive: false };
@@ -44,10 +45,10 @@ export default function ChurchMap({ building, spots, activeId, onSelect, maskIds
         const events = { click: () => onSelect(on ? null : s.id) };
         // Keyed on `on` so the tooltip remounts when it switches between hover-only and permanent.
         return s.kind === 'area'
-          ? <Polygon key={s.id + on} positions={s.shape} pathOptions={on ? AREA_ACTIVE : AREA} eventHandlers={events}>
+          ? <Polygon key={s.id + on} positions={s.shape} pathOptions={areaStyle(s.color, on)} eventHandlers={events}>
             <Tooltip permanent={on} direction="center">{s.label}</Tooltip>
           </Polygon>
-          : <CircleMarker key={s.id + on} center={s.at} radius={on ? 11 : 7} pathOptions={{ color: '#ffffff', weight: 2, fillColor: on ? '#ffd166' : '#2b6248', fillOpacity: 1 }} eventHandlers={events}>
+          : <CircleMarker key={s.id + on} center={s.at} radius={on ? 11 : 8} pathOptions={pointStyle(s.color, on)} eventHandlers={events}>
             <Tooltip permanent={on} direction="top" offset={[0, -8]}>{s.label}</Tooltip>
           </CircleMarker>;
       })}

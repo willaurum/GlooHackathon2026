@@ -615,10 +615,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .spot.active{border-color:var(--green-600);background:var(--green-50)}
 .spot strong{display:block;font-size:13px;color:var(--ink)}
 .spot small{display:block;font-size:11px;line-height:1.5;margin-top:4px;color:var(--muted)}
-.spot-icon{flex:none;width:14px;height:14px;margin-top:2px;border:2px solid var(--green-700);background:var(--green-100)}
+.spot-icon{--spot:var(--green-700);flex:none;width:14px;height:14px;margin-top:2px;border:2px solid var(--spot);background:color-mix(in srgb,var(--spot) 35%,#fff)}
 .spot-icon.area{border-radius:3px}
-.spot-icon.point{border-radius:50%;background:var(--green-700)}
-.spot.active .spot-icon{border-color:#c99a1e;background:#ffd166}
+.spot-icon.point{border-radius:50%;background:var(--spot)}
+.spot.active .spot-icon{background:var(--spot);box-shadow:0 0 0 3px color-mix(in srgb,var(--spot) 30%,transparent)}
 .church-map{height:380px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
 .map-links{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
 .map-address{font-size:11px;margin-top:10px;color:var(--faint)}
