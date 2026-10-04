@@ -33,8 +33,12 @@ export default function VisitPage() {
     (async () => {
       try {
         const data = await api('/church');
-        setChurch(data);
-        setService(prev => prev || `${data.info.services[0].day} ${data.info.services[0].time}`);
+        // An API build from before the guest-visits merge answers /church with the
+        // sermon-notes config ({ name, timezone, default_language }), which has no info.
+        if (!Array.isArray(data?.info?.services)) throw new Error('The church API returned an unexpected response.');
+        setChurch({ ...data, events: Array.isArray(data.events) ? data.events : [] });
+        const first = data.info.services[0];
+        if (first) setService(prev => prev || `${first.day} ${first.time}`);
         const token = readToken();
         if (token) {
           try { setVisit(await api('/visits/' + token)); }
@@ -97,7 +101,7 @@ export default function VisitPage() {
   return <div className="visit-page">
     {error && <div className="api-message" role="alert">{error}</div>}
 
-    <section className="card visit-section" id="visit-service-times">
+    <section className="card visit-section">
       <div className="eyebrow">SERVICE TIMES</div>
       <h2>Join us this week</h2>
       <div className="service-cards">
@@ -108,13 +112,13 @@ export default function VisitPage() {
       </div>
     </section>
 
-    <section className="card visit-section" id="visit-what-to-expect">
+    <section className="card visit-section">
       <div className="eyebrow">WHAT TO EXPECT</div>
       <h2>Before you arrive</h2>
       <p>{info.first_visit}</p>
     </section>
 
-    <section className="card visit-section" id="visit-map">
+    <section className="card visit-section">
       <div className="eyebrow">FIND YOUR WAY</div>
       <h2>Parking, entrances &amp; kids check-in</h2>
       <p>Tap a spot to see it on the map.</p>
@@ -136,7 +140,7 @@ export default function VisitPage() {
       <p className="map-address">Example campus: {EXAMPLE_CAMPUS.name}, {EXAMPLE_CAMPUS.address}. Parking and door labels are illustrative.</p>
     </section>
 
-    {nextSteps.length > 0 && <section className="card visit-section" id="visit-next-steps">
+    {nextSteps.length > 0 && <section className="card visit-section">
       <div className="eyebrow">YOUR NEXT STEP</div>
       <h2>A good place to start</h2>
       <div className="service-cards">
@@ -148,7 +152,7 @@ export default function VisitPage() {
       </div>
     </section>}
 
-    <section className="card visit-section" id="visit-sign-up">
+    <section className="card visit-section">
       {!visit ? <>
         <div className="eyebrow">LET US KNOW YOU'RE COMING</div>
         <h2>Plan your visit</h2>
