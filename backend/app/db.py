@@ -7,28 +7,65 @@ The database is a SQLite Durable Object. It's reached over HTTP at CHURCH_DB_URL
 
 import os
 import json
+import logging
 import secrets
+import sqlite3
 from pathlib import Path
 
 import httpx
 
+log = logging.getLogger(__name__)
+
 CHURCH_DB_URL = os.environ.get("CHURCH_DB_URL", "http://church-db")
 
 _client = httpx.Client(base_url=CHURCH_DB_URL, timeout=30)
+_use_local_sqlite = False
+_sqlite_conn = None
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
 
 
+def _get_sqlite_conn():
+    global _sqlite_conn
+    if _sqlite_conn is None:
+        db_file = os.environ.get("SQLITE_DB_PATH", "/app/church.db" if Path("/app").exists() else "church.db")
+        _sqlite_conn = sqlite3.connect(db_file, check_same_thread=False)
+        _sqlite_conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
+    return _sqlite_conn
+
+
+def _run_local_sqlite(*statements):
+    conn = _get_sqlite_conn()
+    results = []
+    with conn:
+        for sql, params in statements:
+            p = [int(x) if isinstance(x, bool) else x for x in params]
+            cursor = conn.execute(sql, p)
+            rows = cursor.fetchall() if cursor.description else []
+            rows_written = cursor.rowcount if cursor.rowcount > 0 else 0
+            results.append({'rows': rows, 'rowsWritten': rows_written})
+    return results
+
+
 def run(*statements):
     """Run [(sql, params), ...] as one transaction. Returns one result per statement:
     {'rows': [...], 'rowsWritten': n}."""
+    global _use_local_sqlite
+    if _use_local_sqlite or not CHURCH_DB_URL or CHURCH_DB_URL.startswith("sqlite"):
+        return _run_local_sqlite(*statements)
+
     batch = [{'sql': sql, 'params': [int(p) if isinstance(p, bool) else p for p in params]}
              for sql, params in statements]
-    response = _client.post('/sql', json={'batch': batch})
-    response.raise_for_status()
-    return response.json()['results']
+    try:
+        response = _client.post('/sql', json={'batch': batch})
+        response.raise_for_status()
+        return response.json()['results']
+    except Exception as exc:
+        log.warning("Remote church-db unavailable (%s); falling back to local SQLite", exc)
+        _use_local_sqlite = True
+        return _run_local_sqlite(*statements)
 
 
 def query(sql, params=()):
@@ -41,7 +78,14 @@ def one(sql, params=()):
 
 
 def close():
+    global _sqlite_conn
     _client.close()
+    if _sqlite_conn:
+        try:
+            _sqlite_conn.close()
+        except Exception:
+            pass
+        _sqlite_conn = None
 
 
 def _data(row):

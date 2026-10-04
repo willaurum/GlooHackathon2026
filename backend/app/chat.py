@@ -12,13 +12,14 @@ import os
 import re
 
 from . import db, matching
+from .config import settings
 
 log = logging.getLogger(__name__)
 
 # Each provider speaks the OpenAI chat-completions format. AI_PROVIDER is tried
 # first; if it has no key or a call fails, AI_FALLBACK takes over.
 PROVIDERS = {
-    'ollama': {'base_url': 'http://localhost:11434/v1', 'key': 'OLLAMA_API_KEY',
+    'ollama': {'base_url': 'http://host.docker.internal:11434/v1', 'key': 'OLLAMA_API_KEY',
                'model': ('OLLAMA_MODEL', 'gpt-oss:20b'), 'extra_body': {}},
     'gloo': {'base_url': 'https://platform.ai.gloo.com/ai/v2/guarded', 'key': 'GLOO_API_KEY',
              'model': ('GLOO_MODEL', 'gloo-anthropic-claude-haiku-4.5'), 'extra_body': {'auto_routing': False}},
@@ -99,8 +100,10 @@ TOOLS = [
 def provider_chain():
     """Configured providers in the order to try them: [(name, model, extra_body, api_key), ...]."""
     chain = []
-    for name in (os.environ.get('AI_PROVIDER', 'gloo'), os.environ.get('AI_FALLBACK', '')):
+    for name in (settings.ai_provider, settings.ai_fallback):
         name = name.strip().lower()
+        if not name:
+            continue
         spec = PROVIDERS.get(name)
         key = os.environ.get(spec['key'], '').strip() if spec else ''
         if name == 'ollama':
@@ -118,7 +121,7 @@ def status():
 def make_clients():
     from openai import OpenAI
     return [(name, model, extra_body, OpenAI(api_key=key,
-            base_url=os.environ.get('OLLAMA_BASE_URL', PROVIDERS[name]['base_url']) if name == 'ollama' else PROVIDERS[name]['base_url'],
+            base_url=settings.ollama_base_url if name == 'ollama' else PROVIDERS[name]['base_url'],
             timeout=60, max_retries=1))
             for name, model, extra_body, key in provider_chain()]
 

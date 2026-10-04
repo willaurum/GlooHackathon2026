@@ -2,6 +2,8 @@ services:
   db:
     image: postgres:16-alpine
     container_name: gloo-db
+    env_file:
+      - .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gloo}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gloo}
@@ -21,25 +23,27 @@ services:
     build: ./backend
     container_name: gloo-backend
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:172.21.0.1"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-gloo}:${POSTGRES_PASSWORD:-gloo}@db:5432/${POSTGRES_DB:-gloo}
-      AI_PROVIDER: ${AI_PROVIDER:-gloo}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_FALLBACK: ${AI_FALLBACK:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss:20b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       GLOO_API_KEY: ${GLOO_API_KEY:-}
-      GLOO_MODEL: ${GLOO_MODEL:-gloo-anthropic-claude-haiku-4.5}
+      GLOO_MODEL: ${GLOO_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
-      AI_BASE_URL: ${AI_BASE_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}}
-      AI_MODEL: ${AI_MODEL:-${OLLAMA_MODEL:-qwen3.8:27b}}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      AI_BASE_URL: ${AI_BASE_URL}
+      AI_MODEL: ${AI_MODEL}
       AI_API_KEY: ${AI_API_KEY:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:27b}
+    volumes:
+      - ./backend/app:/app/app
     depends_on:
       db:
         condition: service_healthy

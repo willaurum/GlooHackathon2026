@@ -6,6 +6,8 @@ import time
 import logging
 import httpx
 
+from .config import settings
+
 logger = logging.getLogger(__name__)
 
 # Active model override in memory, if changed via API
@@ -15,29 +17,20 @@ _status_cache_time: float = 0.0
 
 
 def get_base_url() -> str:
-    """Return the configured AI base URL, checking AI_BASE_URL, OPENAI_BASE_URL, and OLLAMA_BASE_URL."""
-    return (
-        os.environ.get("AI_BASE_URL")
-        or os.environ.get("OPENAI_BASE_URL")
-        or os.environ.get("OLLAMA_BASE_URL")
-        or "http://127.0.0.1:11434"
-    ).rstrip("/")
+    """Return the configured AI base URL from settings."""
+    return settings.ai_base_url
 
 
 def get_api_key() -> str:
-    """Return the configured AI API key, if any."""
-    return os.environ.get("AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+    """Return the configured AI API key from settings."""
+    return settings.ai_api_key
 
 
 def get_default_model() -> str:
-    """Return the active model (runtime override or AI_MODEL/OLLAMA_MODEL env var, default: qwen3.8:27b)."""
+    """Return the active model (runtime override or settings default: qwen3.8:27b)."""
     if _active_model:
         return _active_model
-    return (
-        os.environ.get("AI_MODEL")
-        or os.environ.get("OLLAMA_MODEL")
-        or "qwen3.8:27b"
-    )
+    return settings.ai_model
 
 
 def set_default_model(model: str) -> None:
