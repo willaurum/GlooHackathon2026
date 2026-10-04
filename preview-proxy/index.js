@@ -18,6 +18,8 @@ export default {
     if (!target) return env.ASSETS.fetch(request);
     const headers = new Headers(request.headers);
     headers.set('Origin', env.LIVE_ORIGIN);
+    // Lets the giving API send a donor back to this preview after Stripe Checkout.
+    headers.set('X-Return-Origin', url.origin);
     headers.delete('Host');
     const upstream = await service.fetch(target, {
       method: request.method,
