@@ -126,7 +126,7 @@ export default function VisitPage() {
         <ul className="spot-list">
           {MAP_SPOTS.map(s => <li key={s.id}>
             <button type="button" className={'spot' + (s.id === spotId ? ' active' : '')} aria-pressed={s.id === spotId} onClick={() => setSpotId(s.id === spotId ? null : s.id)}>
-              <span className={'spot-icon ' + s.kind} aria-hidden="true" />
+              <span className={'spot-icon ' + s.kind} style={{ '--spot': s.color }} aria-hidden="true" />
               <span><strong>{s.label}</strong>{s.id === spotId && <small>{s.text}</small>}</span>
             </button>
           </li>)}

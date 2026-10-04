@@ -9,10 +9,11 @@ export const EXAMPLE_CAMPUS = {
   building: [[37.361202, -79.173065], [37.360477, -79.17369], [37.360107, -79.173012], [37.360124, -79.172997], [37.360742, -79.172465], [37.360833, -79.172386]],
 };
 
-// kind 'area' outlines a lot; kind 'point' pins a door.
+// kind 'area' outlines a lot; kind 'point' pins a door. `color` is shared by the map and the list beside it.
 export const MAP_SPOTS = [
   {
     id: 'guest-parking',
+    color: '#22c55e',
     kind: 'area',
     label: 'First-time guest parking',
     text: 'Reserved spaces right outside the main entrance. Look for the green "Guest" signs and a greeter in a lanyard.',
@@ -20,6 +21,7 @@ export const MAP_SPOTS = [
   },
   {
     id: 'main-parking',
+    color: '#3b82f6',
     kind: 'area',
     label: 'Main parking',
     text: 'The large lot on the west side. Accessible spaces are in the row closest to the building.',
@@ -27,6 +29,7 @@ export const MAP_SPOTS = [
   },
   {
     id: 'overflow-parking',
+    color: '#a855f7',
     kind: 'area',
     label: 'Overflow parking',
     text: 'When the main lot fills up on Sunday mornings, park here. It is a short walk to the main entrance.',
@@ -34,6 +37,7 @@ export const MAP_SPOTS = [
   },
   {
     id: 'main-entrance',
+    color: '#f97316',
     kind: 'point',
     label: 'Main entrance',
     text: 'Greeters meet you here, and the coffee bar is just inside the lobby. If you tapped "I\'m here", this is where your host will find you.',
@@ -41,6 +45,7 @@ export const MAP_SPOTS = [
   },
   {
     id: 'kids-check-in',
+    color: '#ec4899',
     kind: 'point',
     label: 'Kids check-in',
     text: 'The east doors lead straight to the Kids Welcome desk, where a volunteer prints matching name and pickup tags.',
@@ -48,6 +53,7 @@ export const MAP_SPOTS = [
   },
   {
     id: 'accessible-entrance',
+    color: '#06b6d4',
     kind: 'point',
     label: 'Accessible entrance',
     text: 'A step-free entrance facing the main lot, with elevator access and reserved seating near the front.',
