@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, api, getApiKey, setApiKey } from './api.js';
 import Icon from './Icon.jsx';
+import { fetchVerse, parseReference } from './verses.js';
 
 const pending = note => note.status === 'queued' || note.status === 'processing';
 const ERRORS = {
@@ -77,12 +78,41 @@ function NewNote({ onCreated }) {
   </form>;
 }
 
+const BIBLE_CATS = new Set(['bible_quote', 'bible_paraphrase']);
+
+// The passage a highlight points at, loaded from YouVersion when tapped.
+function VerseCard({ reference, onClose }) {
+  const [verse, setVerse] = useState(null), [error, setError] = useState('');
+  useEffect(() => {
+    let live = true;
+    setVerse(null); setError('');
+    fetchVerse(reference).then(v => live && setVerse(v), err => live && setError(err.message));
+    return () => { live = false; };
+  }, [reference.usfm]);
+  return <div className="verse-card" role="region" aria-label={reference.human}>
+    <div className="verse-head">
+      <b>{verse?.reference || reference.human}</b>
+      {verse?.version?.abbreviation && <span className="verse-version">{verse.version.abbreviation}</span>}
+      <button className="verse-close" onClick={onClose} aria-label="Close passage">×</button>
+    </div>
+    {error ? <p className="pn-error">{error}</p>
+      : verse ? <>
+          <p className="verse-text">{verse.text}</p>
+          <div className="verse-foot">
+            <small>{verse.version.title}{verse.version.copyright ? ', ' + verse.version.copyright : ''}</small>
+            <a href={verse.link} target="_blank" rel="noreferrer">Read on YouVersion</a>
+          </div>
+        </>
+      : <p className="verse-loading">Loading passage…</p>}
+  </div>;
+}
+
 function NoteView({ note, onChange }) {
   const [segments, setSegments] = useState([]), [question, setQuestion] = useState(''),
     [answer, setAnswer] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''),
-    [annotations, setAnnotations] = useState([]), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
+    [annotations, setAnnotations] = useState([]), [openVerse, setOpenVerse] = useState(null), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
   useEffect(() => {
-    setSegments([]); setAnnotations([]); setAnswer(null);
+    setSegments([]); setAnnotations([]); setAnswer(null); setOpenVerse(null);
     if (note.status !== 'ready') return;
     api(`/notes/${note.id}/segments`).then(setSegments).catch(err => setError(err.message));
     // Highlights are optional; a transcript without them still reads fine.
@@ -138,8 +168,17 @@ function NoteView({ note, onChange }) {
       // A passage's label goes on its first segment; the first shown category picks the color.
       const starts = shown.filter(a => a.seg_from === s.idx);
       return <li key={s.idx} className={shown.length ? 'hl hl-' + shown[0].category : undefined}>
-        {starts.length > 0 && <span className="hl-legend">{starts.map(a => CAT_LABEL[a.category] + (a.label ? ': ' + a.label : '')).join(' · ')}</span>}
+        {starts.length > 0 && <span className="hl-legend">{starts.map((a, i) => {
+          const ref = BIBLE_CATS.has(a.category) && parseReference(a.label);
+          const key = `${s.idx}:${i}`;
+          return <span key={key}>{i > 0 && ' · '}{CAT_LABEL[a.category]}{a.label && ': '}
+            {ref ? <button className="hl-verse-btn" aria-expanded={openVerse?.key === key}
+                onClick={() => setOpenVerse(openVerse?.key === key ? null : { key, ref })}>{a.label}</button>
+              : a.label}
+          </span>;
+        })}</span>}
         <b>{s.timestamp}</b> {s.text}
+        {openVerse?.key.startsWith(s.idx + ':') && <VerseCard reference={openVerse.ref} onClose={() => setOpenVerse(null)} />}
       </li>;
     })}</ol>
   </section>;

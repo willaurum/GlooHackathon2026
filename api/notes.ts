@@ -2,6 +2,7 @@
 type Secrets = {
 	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
 	GLOO_API_KEY?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string;
+	YOUVERSION_APP_KEY?: string; YOUVERSION_BIBLE_ID?: string;
 };
 export type AppEnv = Env & Secrets;
 

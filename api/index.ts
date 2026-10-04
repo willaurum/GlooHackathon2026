@@ -1,5 +1,6 @@
 import { Container, ContainerProxy, getContainer } from '@cloudflare/containers';
 import { DurableObject } from 'cloudflare:workers';
+import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
@@ -39,6 +40,7 @@ const AI_PROVIDER_HOSTS = ['platform.ai.gloo.com', 'api.openai.com', 'api.anthro
 const PUBLIC_ROUTES: [string, RegExp][] = [
 	['GET', /^\/api\/(health|church|info|ministries|connections|requests|events|chat\/status|ai\/status|ollama\/status|visits|regions|news)$/],
 	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
+	['GET', /^\/api\/verse$/],
 	['GET', /^\/api\/events\/\d+$/],
 	['GET', /^\/api\/regions\/\d+\/prayer-angles$/],
 	['POST', /^\/api\/(matches|connections|chat|events|visits)$/],
@@ -126,6 +128,9 @@ export default {
 		// Internal routes are only called by this Worker.
 		if (url.pathname.startsWith('/api/internal/')) {
 			return withCors(json({ detail: 'Not Found' }, 404), env, request);
+		}
+		if (url.pathname === '/api/verse' && request.method === 'GET') {
+			return withCors(await handleVerse(url, env), env, request);
 		}
 		if (!isPublic(request.method, url.pathname)) {
 			const denied = await authorize(request, env);
