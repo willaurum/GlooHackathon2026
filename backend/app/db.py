@@ -184,6 +184,17 @@ def initialize():
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
     run(*statements)
+    # Backfill shift schedules and requirements into existing ministries without overwriting.
+    seeds = {m['id']: m for m in ministries}
+    updates = []
+    for row in query("SELECT id, data FROM ministries"):
+        if row['id'] in seeds:
+            existing = _data(row)
+            merged = backfill_ministry(existing, seeds[row['id']])
+            if merged != existing:
+                updates.append(("UPDATE ministries SET data = ? WHERE id = ?", (json.dumps(merged), row['id'])))
+    if updates:
+        run(*updates)
     # Backfill new seed fields into the existing info row without overwriting.
     _row = one("SELECT data FROM church_content WHERE kind = 'info'")
     if _row:
@@ -192,13 +203,36 @@ def initialize():
         run(("UPDATE church_content SET data = ? WHERE kind = 'info'", (json.dumps(_merged),)))
 
 
+def backfill_ministry(existing, seed):
+    """Add missing shifts and eligibility metadata from the seed; saved schedules and counts win."""
+    merged = json.loads(json.dumps(existing))
+    merged.setdefault('shifts', seed.get('shifts', []))
+    merged.setdefault('requirements', seed.get('requirements', []))
+    seed_shifts = {shift['id']: shift for shift in seed.get('shifts', [])}
+    for shift in merged['shifts']:
+        seed_shift = seed_shifts.get(shift.get('id'))
+        if seed_shift:
+            for key in ('services', 'frequencies'):
+                shift.setdefault(key, seed_shift.get(key, []))
+    return merged
+
+
+def with_shift_coverage(ministry):
+    """Keep existing API coverage fields grounded in the scheduled positions."""
+    if 'shifts' not in ministry:
+        return ministry
+    return {**ministry,
+            'filled': sum(shift['filled'] for shift in ministry['shifts']),
+            'total': sum(shift['total'] for shift in ministry['shifts'])}
+
+
 def list_ministries():
-    return [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")]
+    return [with_shift_coverage(_data(row)) for row in query("SELECT data FROM ministries ORDER BY id")]
 
 
 def get_ministry(ministry_id):
     row = one("SELECT data FROM ministries WHERE id = ?", (ministry_id,))
-    return _data(row) if row else None
+    return with_shift_coverage(_data(row)) if row else None
 
 
 def get_church_info():
@@ -251,7 +285,7 @@ def get_chat_log(session_id):
 def list_connections():
     rows = query("""SELECT m.data, c.connection_id, c.member FROM connections c
         JOIN ministries m ON m.id = c.ministry_id ORDER BY c.connection_id""")
-    return [{**_data(row), 'connection_id': row['connection_id'], 'member': row['member']} for row in rows]
+    return [{**with_shift_coverage(_data(row)), 'connection_id': row['connection_id'], 'member': row['member']} for row in rows]
 
 
 def save_connection(ministry_id, member):

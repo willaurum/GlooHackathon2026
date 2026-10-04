@@ -201,6 +201,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .feature .progress { width: 100%; }
 .feature .link { margin-top: 4px; }
 .week { padding: 24px; }
+/* Chat links can scroll straight to these sections; leave room above them. */
+#home-service-times, .visit-section { scroll-margin-top: 24px; }
 .week-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .week-head small { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 .services { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -263,6 +265,25 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .contact a { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; text-decoration: none; word-break: break-all; }
 .contact a:hover { text-decoration: underline; }
 .requirement { display: block; margin-top: 14px; }
+.form-note { font-size: 14px; margin-top: 14px; }
+.field textarea {
+  display: block; width: 100%; margin-top: 8px; resize: vertical;
+  background: #fbfcfa; border: 1px solid var(--line-strong); border-radius: 10px;
+  padding: 10px 14px; font: inherit; font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--ink);
+}
+.field textarea:focus { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
+.field textarea:disabled { opacity: .7; }
+.match-error { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--danger-50); color: var(--danger); font-size: 14px; }
+.match-schedule { margin-top: 12px; font-size: 13px; }
+.match-considerations { margin-top: 12px; }
+.match-considerations b { font-size: 13px; color: var(--ink); }
+.match-considerations p { font-size: 14px; margin-top: 4px; }
+.shifts { margin: 16px 0 0; }
+.shifts h4 { font-size: 14px; color: var(--ink); }
+.shifts > small, .shift-capacity, .shift-empty { font-size: 13px; color: var(--muted); }
+.shift-empty { margin-top: 12px; }
+.shifts ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.shifts li { display: grid; gap: 2px; padding: 10px 12px; background: var(--green-50); border-radius: 10px; font-size: 14px; color: var(--ink); }
 .saved { display: flex; align-items: center; gap: 16px; padding: 20px; margin-bottom: 12px; }
 .saved > div { flex: 1; min-width: 0; }
 .saved h3 { margin-bottom: 8px; }
@@ -364,6 +385,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .bubble.error { background: var(--danger-50); color: var(--danger); }
 .bubble.typing { color: var(--faint); font-style: italic; }
 .chat-action { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; color: var(--green-700); }
+.chat-page { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-strong); white-space: normal; }
+.chat-page strong { font-size: 13px; }
+.chat-page .secondary { font-size: 14px; padding: 8px 12px; }
+.chat-text p, .chat-text ul, .chat-text ol { margin: 0; }
+.chat-text > * + * { margin-top: 8px; }
+.chat-text ul, .chat-text ol { padding-left: 20px; white-space: normal; }
+.chat-text li + li { margin-top: 4px; }
 .chat-starters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .chat-starters button { min-height: 38px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--card); color: var(--green-700); font-size: 14px; }
 .chat-starters button:hover { border-color: var(--green-600); background: var(--green-50); }
@@ -385,6 +413,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 @media (max-width: 860px) {
   .sidebar, .workspace-bar { display: none; }
   .content { margin-left: 0; }
+  #home-service-times, .visit-section { scroll-margin-top: calc(var(--topbar) + 16px); }
   .topbar {
     position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px;
     height: var(--topbar); padding: 0 8px 0 12px;
@@ -598,13 +627,3 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .situational-summary{margin-top:12px}
 @media(max-width:850px){.map-shell{height:380px}}
 @media(max-width:600px){.map-shell{height:300px}.map-legend{gap:6px 16px}}
-
-/* Find a place: the optional "about them" box (AI suggestions). */
-.field textarea.story-input {
-  display: block; width: 100%; margin-top: 8px; min-height: 110px; resize: vertical;
-  background: #fbfcfa; border: 1px solid var(--line-strong); border-radius: 10px;
-  padding: 10px 14px; font: inherit; font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--ink);
-}
-.field textarea.story-input:focus { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
-.story-help { font-size: 13px; margin: -8px 0 16px; }
-.reason.considerations { background: var(--bg); }
