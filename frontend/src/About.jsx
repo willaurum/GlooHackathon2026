@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import Icon from './Icon.jsx';
-import { MISSION, STORY, VALUES } from './data/site.js';
+import about from './data/about.json';
+const { mission: MISSION, story: STORY, values: VALUES } = about;
 
 export default function About({ go }) {
   const [info, setInfo] = useState(null);

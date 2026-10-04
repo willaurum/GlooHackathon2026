@@ -1,0 +1,77 @@
+{
+  "categories": [
+    "All",
+    "Church life",
+    "Serve",
+    "Families",
+    "Worship"
+  ],
+  "items": [
+    {
+      "id": 1,
+      "date": "2026-10-01",
+      "category": "Serve",
+      "title": "Serve Day is October 17",
+      "text": "Teams head out to local schools, the food pantry and elderly neighbors for the morning. All ages are welcome; meet in the main parking lot at 8:30am.",
+      "cta": [
+        "serve",
+        "See where help is needed"
+      ]
+    },
+    {
+      "id": 2,
+      "date": "2026-09-28",
+      "category": "Families",
+      "title": "Fall family picnic after church, October 25",
+      "text": "Food trucks, games and a bounce house on the church lawn after the 11:00am service. It is a great first event if you are new.",
+      "cta": [
+        "calendar",
+        "View the calendar"
+      ]
+    },
+    {
+      "id": 3,
+      "date": "2026-09-22",
+      "category": "Serve",
+      "title": "Welcome team training on October 11",
+      "text": "A 45-minute training for new greeters and guest services volunteers, right after the 11:00am service in the lobby.",
+      "cta": [
+        "guests/welcome",
+        "Meet the welcome team"
+      ]
+    },
+    {
+      "id": 4,
+      "date": "2026-09-15",
+      "category": "Worship",
+      "title": "Worship night returns November 6",
+      "text": "An evening of music and prayer led by the worship collective in the main auditorium. Bring a friend.",
+      "cta": [
+        "calendar",
+        "View the calendar"
+      ]
+    },
+    {
+      "id": 5,
+      "date": "2026-09-08",
+      "category": "Church life",
+      "title": "Discover Grace: your first step toward membership",
+      "text": "Offered the first Sunday of each month after the 11:00am service. Lunch and childcare are provided.",
+      "cta": [
+        "connect",
+        "Connect with us"
+      ]
+    },
+    {
+      "id": 6,
+      "date": "2026-08-30",
+      "category": "Families",
+      "title": "Kids ministry is looking for more helpers",
+      "text": "Sunday mornings run best with a full team. Training is provided and a background check is required.",
+      "cta": [
+        "serve/find",
+        "Find a place to serve"
+      ]
+    }
+  ]
+}

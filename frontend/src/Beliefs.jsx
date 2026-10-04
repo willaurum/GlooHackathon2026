@@ -1,4 +1,4 @@
-import { BELIEFS } from './data/site.js';
+import BELIEFS from './data/beliefs.json';
 
 export default function Beliefs() {
   return <div className="about">
