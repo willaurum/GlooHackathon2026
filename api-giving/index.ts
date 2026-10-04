@@ -17,8 +17,8 @@
 // built-in demo church (Grace Community) always stays in demo mode.
 //
 // Donor names and emails are private: public endpoints return totals, goal
-// progress and anonymous counts only. Every gift needs a name and email, and
-// signed-in staff see them for giving records and receipts.
+// progress and anonymous counts only. Stripe Checkout asks each donor for their
+// name and email; signed-in staff see them for giving records and receipts.
 //
 // Donors can cancel a monthly gift on their own. With Stripe connected, setup
 // also creates a Stripe customer portal configuration (with a hosted login
@@ -238,6 +238,15 @@ async function stripe(env: GivingEnv, key: string, method: string, path: string,
   const data: any = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new StripeError((data && data.error && data.error.message) || `Stripe returned ${resp.status}.`, resp.status);
   return data;
+}
+
+// Demo gifts have no Stripe Checkout to ask who is giving.
+const DEMO_DONOR = 'Demo donor';
+
+// The donor's name and email from a Checkout Session, as typed into Stripe Checkout.
+function payer(s: any): { name: string; email: string } {
+  const d = s?.customer_details || {};
+  return { name: str(d.individual_name || d.name || d.business_name, 120), email: str(d.email || s?.customer_email, 200) };
 }
 
 // A Stripe field that is either an ID or an expanded object.
@@ -546,14 +555,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
     if (!fund || !fund.active) return json({ error: 'That fund is not taking gifts right now.' }, 400);
     const amount = cents(body.amount);
     const cadence = body.cadence === 'month' && fund.recurring ? 'month' : 'once';
-    // Staff always see who gave, for giving records and receipts. An "anonymous"
-    // flag from an older page is ignored: name and email are required.
-    const name = str(body.name, 120);
-    const email = str(body.email, 200);
+    // Stripe Checkout collects the donor's name and email, and they are saved when the
+    // payment completes. Name, email or "anonymous" sent by an older page are ignored.
     if (amount < MIN_GIFT) return json({ error: 'Choose or enter an amount of at least 1.00.' }, 400);
     if (amount > MAX_GIFT) return json({ error: 'That amount is too large for an online gift.' }, 400);
-    if (!name) return json({ error: 'Please add your name.' }, 400);
-    if (!EMAIL_RE.test(email)) return json({ error: 'Please add a valid email for your receipt.' }, 400);
 
     const id = crypto.randomUUID();
     const created = new Date().toISOString();
@@ -565,8 +570,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
       // A demo monthly gift gets a private manage link. Only its hash is stored.
       const manage = cadence === 'month' ? randomToken() : '';
       this.#sql.exec(
-        "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at, manage_hash) VALUES (?, ?, ?, ?, ?, 0, ?, 'demo', ?, ?, ?)",
-        id, fund.id, amount, name, email, sessionId, cadence, created, manage ? await sha256(manage) : ''
+        "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at, manage_hash) VALUES (?, ?, ?, ?, '', 0, ?, 'demo', ?, ?, ?)",
+        id, fund.id, amount, DEMO_DONOR, sessionId, cadence, created, manage ? await sha256(manage) : ''
       );
       return json({ id, url: back + '&session_id=' + sessionId + '&status=demo', demo: true, mode, ...(manage ? { manage: c.slug + '.' + manage } : {}) });
     }
@@ -610,18 +615,24 @@ export class GivingDO extends DurableObject<GivingEnv> {
     } else {
       form.push(['submit_type', 'donate']);
     }
-    form.push(['customer_email', email]);
-
+    // Checkout always asks for an email. Ask for the donor's name too, so staff have it
+    // for giving records. An account on an API version without name_collection gets a
+    // billing address form instead, which includes the name.
     let session: any;
     try {
-      session = await stripe(this.env, key, 'POST', '/v1/checkout/sessions', form, 'belong-checkout-' + id);
+      try {
+        session = await stripe(this.env, key, 'POST', '/v1/checkout/sessions', [...form, ['name_collection[individual][enabled]', 'true']], 'belong-checkout-' + id);
+      } catch (e: any) {
+        if (!(e instanceof StripeError && e.status === 400 && /name_collection/.test(e.message))) throw e;
+        session = await stripe(this.env, key, 'POST', '/v1/checkout/sessions', [...form, ['billing_address_collection', 'required']], 'belong-checkout-address-' + id);
+      }
     } catch (e: any) {
       return json({ error: e instanceof StripeError ? 'Checkout could not be started: ' + e.message : 'Checkout could not be started.' }, 502);
     }
     if (!session.url || !session.id) return json({ error: 'Checkout could not be started.' }, 502);
     this.#sql.exec(
-      "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 'pending', ?, ?)",
-      id, f.id, amount, name, email, String(session.id), cadence, created
+      "INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at) VALUES (?, ?, ?, '', '', 0, ?, 'pending', ?, ?)",
+      id, f.id, amount, String(session.id), cadence, created
     );
     return json({ id, url: session.url, demo: false, mode });
   }
@@ -640,9 +651,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
         const status = s.status === 'complete' && (s.payment_status === 'paid' || s.payment_status === 'no_payment_required') ? 'completed' : s.status === 'expired' ? 'expired' : 'pending';
         if (status !== 'pending') {
           const amount = Number(s.amount_total) || Number(r.amount);
+          const who = payer(s);
           this.#sql.exec(
-            "UPDATE gifts SET status = ?, amount = ?, customer_id = COALESCE(NULLIF(?, ''), customer_id), subscription_id = COALESCE(NULLIF(?, ''), subscription_id) WHERE session_id = ?",
-            status, amount, stripeId(s.customer), stripeId(s.subscription), sessionId
+            "UPDATE gifts SET status = ?, amount = ?, customer_id = COALESCE(NULLIF(?, ''), customer_id), subscription_id = COALESCE(NULLIF(?, ''), subscription_id), name = COALESCE(NULLIF(?, ''), name), email = COALESCE(NULLIF(?, ''), email) WHERE session_id = ?",
+            status, amount, stripeId(s.customer), stripeId(s.subscription), who.name, who.email, sessionId
           );
           r = { ...r, status, amount };
         }
@@ -800,21 +812,21 @@ export class GivingDO extends DurableObject<GivingEnv> {
       const fundId = this.#fund(String(meta.belong_fund || '')) ? String(meta.belong_fund) : 'general';
       const customer = stripeId(obj.customer);
       const subscription = stripeId(obj.subscription);
+      const who = payer(obj);
       this.ctx.storage.transactionSync(() => {
         const existing = this.#sql.exec('SELECT status FROM gifts WHERE session_id = ?', String(obj.id)).toArray()[0];
         if (existing) {
           if (existing.status !== 'completed') this.#sql.exec('UPDATE gifts SET status = ?, amount = COALESCE(?, amount) WHERE session_id = ?', status, Number(obj.amount_total) || null, String(obj.id));
+          // The name and email the donor typed into Stripe Checkout.
           this.#sql.exec(
-            "UPDATE gifts SET customer_id = COALESCE(NULLIF(?, ''), customer_id), subscription_id = COALESCE(NULLIF(?, ''), subscription_id) WHERE session_id = ?",
-            customer, subscription, String(obj.id)
+            "UPDATE gifts SET customer_id = COALESCE(NULLIF(?, ''), customer_id), subscription_id = COALESCE(NULLIF(?, ''), subscription_id), name = COALESCE(NULLIF(?, ''), name), email = COALESCE(NULLIF(?, ''), email) WHERE session_id = ?",
+            customer, subscription, who.name, who.email, String(obj.id)
           );
         } else if (status !== 'expired') {
-          // Not started from this site (or the row was lost): take the name and email Stripe collected.
-          const name = str(obj.customer_details?.name, 120);
-          const email = str(obj.customer_details?.email || obj.customer_email, 200);
+          // Not started from this site (or the row was lost): still record who Stripe says gave.
           this.#sql.exec(
             'INSERT INTO gifts (id, cause_id, amount, name, email, anonymous, session_id, status, cadence, created_at, customer_id, subscription_id) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)',
-            crypto.randomUUID(), fundId, Number(obj.amount_total || 0), name || email || 'Unknown donor', email, String(obj.id), status, obj.mode === 'subscription' ? 'month' : 'once', now, customer, subscription
+            crypto.randomUUID(), fundId, Number(obj.amount_total || 0), who.name, who.email, String(obj.id), status, obj.mode === 'subscription' ? 'month' : 'once', now, customer, subscription
           );
         }
       });
@@ -828,9 +840,9 @@ export class GivingDO extends DurableObject<GivingEnv> {
         crypto.randomUUID(),
         first?.cause_id || (this.#fund(String(meta.belong_fund || '')) ? String(meta.belong_fund) : 'general'),
         Number(obj.amount_paid || 0),
-        first ? first.name : 'Anonymous',
-        first ? first.email : '',
-        first ? Number(first.anonymous) : 1,
+        first?.name || str(obj.customer_name, 120),
+        first?.email || str(obj.customer_email, 200),
+        first ? Number(first.anonymous) : 0,
         String(obj.id),
         now
       );

@@ -343,6 +343,13 @@ function ApplicationCard({ a, onReview }) {
   </article>;
 }
 
+// Stripe Checkout asks for the donor's name and email; they arrive when the payment completes.
+function donorName(d) {
+  if (d.anonymous) return 'Anonymous';
+  if (d.name) return d.name;
+  return d.status === 'pending' ? 'Waiting for Stripe' : d.status === 'expired' ? 'Checkout not finished' : 'Name not given';
+}
+
 function Gifts({ slug, fail }) {
   const [data, setData] = useState(null), [fund, setFund] = useState('all'), [busy, setBusy] = useState(''), [err, setErr] = useState('');
   useEffect(() => { staffApi(slug, '/donations').then(setData).catch(fail); }, [slug]);
@@ -359,7 +366,7 @@ function Gifts({ slug, fail }) {
   }
   function csv() {
     const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-    const rows = [['Date', 'Fund', 'Amount', 'Currency', 'Frequency', 'Status', 'Monthly gift', 'Name', 'Email'], ...shown.map(d => [d.createdAt, d.fund, (d.amount / 100).toFixed(2), data.currency, d.cadence, d.status, d.cadence !== 'month' ? '' : d.canceled ? 'Canceled ' + (d.canceledAt || '').slice(0, 10) : 'Active', d.anonymous ? 'Anonymous' : d.name, d.email])];
+    const rows = [['Date', 'Fund', 'Amount', 'Currency', 'Frequency', 'Status', 'Monthly gift', 'Name', 'Email'], ...shown.map(d => [d.createdAt, d.fund, (d.amount / 100).toFixed(2), data.currency, d.cadence, d.status, d.cadence !== 'month' ? '' : d.canceled ? 'Canceled ' + (d.canceledAt || '').slice(0, 10) : 'Active', donorName(d), d.email])];
     const url = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: 'gifts.csv' });
     a.click();
@@ -380,7 +387,7 @@ function Gifts({ slug, fail }) {
         <thead><tr><th>Date</th><th>Donor</th><th>Fund</th><th>Amount</th><th>Status</th></tr></thead>
         <tbody>{shown.map(d => <tr key={d.id}>
           <td data-label="Date"><span>{new Date(d.createdAt).toLocaleDateString()}</span></td>
-          <td data-label="Donor"><span>{d.anonymous ? <i>Anonymous</i> : <>{d.name}<small>{d.email}</small></>}</span></td>
+          <td data-label="Donor"><span>{d.name && !d.anonymous ? <>{d.name}<small>{d.email}</small></> : <><i>{donorName(d)}</i>{d.email && <small>{d.email}</small>}</>}</span></td>
           <td data-label="Fund"><span>{d.fund}</span></td>
           <td data-label="Amount"><span><b>{fmt(d.amount, data.currency)}</b>{d.cadence === 'month' && <small>monthly</small>}</span></td>
           <td data-label="Status"><span className="give-gift-status">

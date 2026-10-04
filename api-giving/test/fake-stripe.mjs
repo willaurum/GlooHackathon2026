@@ -5,6 +5,9 @@
 // customer portal is faked too: /portal/<bps_id>?cancel=1 acts like the donor
 // pressing "Cancel" there, which cancels their subscriptions and sends
 // customer.subscription.deleted.
+// /pay/<cs_id>?name=...&email=... stands in for what the donor types into Checkout;
+// both land in customer_details (name_collection fills individual_name too).
+// Keys starting sk_test_GOODOLDAPI act like an older API version without name_collection.
 import http from 'node:http';
 import crypto from 'node:crypto';
 
@@ -119,9 +122,11 @@ const server = http.createServer(async (req, res) => {
       if (url.searchParams.get('cancel')) { res.writeHead(302, { location: sess.cancel_url }); return res.end(); }
       sess.status = 'complete';
       sess.payment_status = 'paid';
-      sess.customer_details = { email: sess.customer_email || null, name: 'Card Holder' };
+      const typedName = url.searchParams.get('name') || 'Card Holder';
+      const typedEmail = url.searchParams.get('email') || sess.customer_email || 'cardholder@example.com';
+      sess.customer_details = { email: typedEmail, name: sess.name_collection || sess.billing_address_collection === 'required' ? typedName : null, individual_name: sess.name_collection ? typedName : null };
       if (sess.mode === 'subscription' && !sess.subscription) {
-        const cus = { id: id('cus'), object: 'customer', email: sess.customer_email || null, created: Math.floor(Date.now() / 1000) };
+        const cus = { id: id('cus'), object: 'customer', email: typedEmail, name: sess.customer_details.name, created: Math.floor(Date.now() / 1000) };
         s.customers.push(cus);
         const sub = { id: id('sub'), object: 'subscription', customer: cus.id, status: 'active', metadata: sess.subscription_metadata, created: cus.created };
         s.subscriptions.push(sub);
@@ -268,6 +273,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, sub);
   }
   if (p === '/v1/checkout/sessions' && req.method === 'POST') {
+    if (key.startsWith('sk_test_GOODOLDAPI') && Object.keys(params).some((k) => k.startsWith('name_collection'))) return err(res, 400, 'Received unknown parameter: name_collection');
     if (!params.success_url || !params.mode) return err(res, 400, 'Missing success_url or mode');
     const priceId = params['line_items[0][price]'];
     let amount;
@@ -284,7 +290,7 @@ const server = http.createServer(async (req, res) => {
       if (params.mode === 'subscription' && !params['line_items[0][price_data][recurring][interval]']) return err(res, 400, 'Subscription mode needs recurring');
     }
     const sid = id('cs_test');
-    const sess = { id: sid, object: 'checkout.session', mode: params.mode, amount_total: amount, currency: params['line_items[0][price_data][currency]'] || 'usd', status: 'open', payment_status: 'unpaid', metadata: meta(params), subscription_metadata: meta(params, 'subscription_data[metadata]'), customer_email: params.customer_email || null, customer: null, subscription: null, success_url: params.success_url, cancel_url: params.cancel_url, url: `http://localhost:${PORT}/pay/${sid}`, line_price: priceId || null, submit_type: params.submit_type || null, created: now };
+    const sess = { id: sid, object: 'checkout.session', mode: params.mode, amount_total: amount, currency: params['line_items[0][price_data][currency]'] || 'usd', status: 'open', payment_status: 'unpaid', metadata: meta(params), subscription_metadata: meta(params, 'subscription_data[metadata]'), customer_email: params.customer_email || null, name_collection: params['name_collection[individual][enabled]'] === 'true' ? { individual: { enabled: true, optional: false } } : null, billing_address_collection: params.billing_address_collection || null, customer_details: null, customer: null, subscription: null, success_url: params.success_url, cancel_url: params.cancel_url, url: `http://localhost:${PORT}/pay/${sid}`, line_price: priceId || null, submit_type: params.submit_type || null, created: now };
     s.sessions.push(sess);
     return done(sess);
   }
