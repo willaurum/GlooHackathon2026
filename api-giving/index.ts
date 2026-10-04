@@ -31,6 +31,8 @@ import { DurableObject } from 'cloudflare:workers';
 type Secrets = {
   STRIPE_KEY_ENCRYPTION_KEY?: string;
   STRIPE_API_BASE?: string;
+  // Optional: once churches have subdomains (grace.<BASE_DOMAIN>), any of them is an allowed origin.
+  BASE_DOMAIN?: string;
 };
 type GivingEnv = Env & Secrets & { GIVING_REGISTRY: DurableObjectNamespace<GivingRegistry> };
 
@@ -49,11 +51,20 @@ function allowedOrigins(env: GivingEnv): string[] {
   return String(env.ALLOWED_ORIGIN).split(',').map((o) => o.trim()).filter(Boolean);
 }
 
+/** True for https://<base> and https://<one-label>.<base> when BASE_DOMAIN (e.g. belong.example.org) is set. */
+function onBaseDomain(origin: string, base: string | undefined): boolean {
+  const domain = String(base || '').trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+  if (!domain || !origin.startsWith('https://')) return false;
+  const host = origin.slice('https://'.length).toLowerCase();
+  if (host === domain) return true;
+  return host.endsWith('.' + domain) && /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(host.slice(0, -domain.length - 1));
+}
+
 /** The request's Origin when it is allowed, otherwise the default origin. */
 function frontendOrigin(request: Request, env: GivingEnv): string {
   const list = allowedOrigins(env);
   const origin = request.headers.get('origin') || '';
-  return list.includes(origin) ? origin : list[0];
+  return list.includes(origin) || onBaseDomain(origin, env.BASE_DOMAIN) ? origin : list[0];
 }
 
 // Branch and PR previews proxy to this Worker and say where they are in X-Return-Origin, so a donor
@@ -1362,6 +1373,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
         if (!c) return json({ error: 'Church not found.' }, 404);
         if (!(await this.#isAdmin(request))) return json({ error: 'Please sign in as church staff.' }, 401);
         if (p === '/c/admin' && m === 'GET') return json(this.#adminOverview(c));
+        // The church API Worker asks this to check a staff session for its own staff-only routes.
+        if (p === '/c/admin/session' && m === 'GET') return json({ ok: true, slug: c.slug, demo: !!c.demo_locked });
         if (p === '/c/admin/settings' && m === 'PUT') return this.#saveSettings(request, c);
         if (p === '/c/admin/password' && m === 'POST') return this.#changePassword(request, c);
         if (p === '/c/admin/stripe' && m === 'POST') return this.#connectStripe(request, c);
@@ -1413,7 +1426,8 @@ export class GivingRegistry extends DurableObject<GivingEnv> {
   async reserve(name: string, city: string, ip: string): Promise<{ slug?: string; error?: string }> {
     if (!this.#rateOk('signup:' + ip, 5, 3_600_000) || !this.#rateOk('signup-all', 200, 3_600_000)) return { error: 'Too many new churches from here. Please try again later.' };
     const base = slugify(name);
-    const reserved = new Set(['admin', 'api', 'new', 'start', 'give', 'church', 'churches', 'demo']);
+    // Slugs become subdomains later (<slug>.<BASE_DOMAIN>), so keep names a site needs for itself.
+    const reserved = new Set(['admin', 'api', 'new', 'start', 'give', 'church', 'churches', 'demo', 'www', 'app', 'mail', 'setup', 'staff', 'static']);
     const sql = this.ctx.storage.sql;
     for (let i = 1; i < 50; i++) {
       const slug = i === 1 && !reserved.has(base) ? base : `${base}-${i}`;
@@ -1431,6 +1445,11 @@ export class GivingRegistry extends DurableObject<GivingEnv> {
 
   async rename(slug: string, name: string, city: string): Promise<void> {
     this.ctx.storage.sql.exec('UPDATE churches SET name = ?, city = ? WHERE slug = ?', name, city, slug);
+  }
+
+  async get(slug: string): Promise<{ slug: string; name: string; city: string } | null> {
+    const r: any = this.ctx.storage.sql.exec('SELECT slug, name, city FROM churches WHERE slug = ?', slug).toArray()[0];
+    return r ? { slug: String(r.slug), name: String(r.name), city: String(r.city) } : null;
   }
 
   async exists(slug: string): Promise<boolean> {
@@ -1506,6 +1525,13 @@ async function route(request: Request, env: GivingEnv): Promise<Response> {
     return json({ churches: await env.GIVING_REGISTRY.getByName('registry').search(q) });
   }
   if (p === '/api/churches' && m === 'POST') return signup(request, env);
+  // One church's public listing (name and city), straight from the registry. The church API uses it to
+  // check that a church exists before it opens that church's database.
+  const listing = /^\/api\/directory\/([^/]+)$/.exec(p);
+  if (listing && m === 'GET') {
+    const found = SLUG_RE.test(listing[1]) ? await env.GIVING_REGISTRY.getByName('registry').get(listing[1]) : null;
+    return found ? json(found) : json({ error: 'Church not found.' }, 404);
+  }
 
   const r = /^\/api\/churches\/([^/]+)(\/.*)?$/.exec(p);
   if (r) {

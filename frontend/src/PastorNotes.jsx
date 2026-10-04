@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE, api, getApiKey, setApiKey } from './api.js';
+import { api, apiHeaders, apiUrl, getApiKey, setApiKey } from './api.js';
+import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import { fetchVerse, parseReference } from './verses.js';
 
@@ -34,6 +35,7 @@ function CategoryToggles({ counts, active, onToggle }) {
 }
 
 function KeyForm({ onChange }) {
+  const { go } = useChurch();
   const [value, setValue] = useState('');
   return <form className="card pn-key" onSubmit={e => { e.preventDefault(); setApiKey(value.trim()); onChange(); }}>
     <span className="icon color3"><Icon name="lock" size={22} /></span>
@@ -41,6 +43,7 @@ function KeyForm({ onChange }) {
     <p>Sermon notes are shared with the church family. Enter the church’s access key to browse and ask questions. It stays in this browser tab only.</p>
     <label className="field">API key<input type="password" value={value} onChange={e => setValue(e.target.value)} autoComplete="off" /></label>
     <button className="primary wide" disabled={!value.trim()}>Connect</button>
+    <p className="form-note">Church staff can <button type="button" className="link" onClick={() => go('setup')}>sign in with the staff password</button> instead.</p>
   </form>;
 }
 
@@ -54,8 +57,8 @@ function NewNote({ onCreated }) {
         await api('/notes', { method: 'POST', body: JSON.stringify({ title, youtube_url: url }) });
       } else {
         // Raw body upload; the browser sets Content-Length from the File.
-        const response = await fetch(`${API_BASE}/api/notes/upload?title=${encodeURIComponent(title)}`, {
-          method: 'POST', headers: { 'X-API-Key': getApiKey(), 'Content-Type': file.type || 'video/mp4' }, body: file,
+        const response = await fetch(apiUrl(`/notes/upload?title=${encodeURIComponent(title)}`), {
+          method: 'POST', headers: await apiHeaders(undefined, { 'Content-Type': file.type || 'video/mp4' }), body: file,
         });
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `Upload failed (${response.status})`);
       }
@@ -186,15 +189,16 @@ function NoteView({ note, onChange }) {
 
 // The open sermon lives in the route (#/notes/<id>). On phones it takes over the page, with a back button to the list.
 export default function PastorNotes({ route, go }) {
-  const [hasKey, setHasKey] = useState(Boolean(getApiKey())), [church, setChurch] = useState(null),
+  const church = useChurch();
+  // The Sermon Notes key, or a signed-in staff session for this church, opens the notes.
+  const [hasKey, setHasKey] = useState(Boolean(getApiKey() || church.staff)),
     [notes, setNotes] = useState([]), [loaded, setLoaded] = useState(false), [error, setError] = useState('');
   const selected = route.startsWith('notes/') ? route.slice('notes/'.length) : null;
   // True when the open sermon was tapped from the list, so Back can return to that same history entry.
   const openedFromList = useRef(false);
   async function load() {
     try {
-      const [info, list] = await Promise.all([api('/church'), api('/notes')]);
-      setChurch(info); setNotes(list); setError('');
+      setNotes(await api('/notes')); setError('');
     } catch (err) { setError(err.message); }
     finally { setLoaded(true); }
   }
@@ -218,8 +222,8 @@ export default function PastorNotes({ route, go }) {
   const current = notes.find(n => n.id === selected);
   return <div className={'pn' + (selected ? ' pn-detail' : '')}>
     <div className="pn-bar">
-      <div className="eyebrow">{church ? church.name : ' '}</div>
-      <button className="ghost" onClick={() => { setApiKey(''); setHasKey(false); setNotes([]); }}>Forget key</button>
+      <div className="eyebrow">{church.name || ' '}</div>
+      {getApiKey() && <button className="ghost" onClick={() => { setApiKey(''); setHasKey(church.staff); setNotes([]); }}>Forget key</button>}
     </div>
     {error && <div className="banner error" role="alert">{error}</div>}
     <div className="pn-grid">

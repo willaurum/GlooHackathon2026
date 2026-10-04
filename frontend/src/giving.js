@@ -1,21 +1,10 @@
 import { gapi } from './api.js';
+import { DEMO_CHURCH, getStaffToken, setStaffToken } from './church.js';
 
 // The built-in demo church. Its page also works against an older giving API
 // that only has the single-church endpoints (/api/config, /api/checkout).
-export const DEMO_CHURCH = 'grace-community';
-const CHURCH_KEY = 'belong-give-church';
-const staffKey = slug => 'belong-staff:' + slug;
-
-export function getGiveChurch() {
-  try { return localStorage.getItem(CHURCH_KEY) || DEMO_CHURCH; } catch { return DEMO_CHURCH; }
-}
-export function setGiveChurch(slug) {
-  try { localStorage.setItem(CHURCH_KEY, slug); } catch { /* private mode */ }
-}
-
-// Staff sessions last for this browser tab only, like the Sermon Notes key.
-export const getStaffToken = slug => sessionStorage.getItem(staffKey(slug)) ?? '';
-export const setStaffToken = (slug, token) => (token ? sessionStorage.setItem(staffKey(slug), token) : sessionStorage.removeItem(staffKey(slug)));
+// Which church is showing is decided for the whole site in church.js.
+export { DEMO_CHURCH, getStaffToken, setStaffToken };
 
 export const churchApi = (slug, path = '', options = {}) => gapi('/api/churches/' + encodeURIComponent(slug) + path, options);
 

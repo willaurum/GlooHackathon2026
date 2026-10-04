@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fmt } from './api.js';
+import { shareLink } from './church.js';
 import Icon from './Icon.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
 import { churchApi, friendly, getStaffToken, givingCapabilities, percent, setStaffToken, staffApi, tripDates } from './giving.js';
@@ -35,7 +36,7 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
       <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
       {err && <div className="banner error" role="alert">{err}</div>}
       <button className="primary wide" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
-      <p className="form-note">New here? <button type="button" className="link" onClick={() => go('give/start')}>Sign up your church<Icon name="arrow" size={16} /></button></p>
+      <p className="form-note">New here? <button type="button" className="link" onClick={() => go('start')}>Sign up your church<Icon name="arrow" size={16} /></button></p>
     </form>
   </div>;
 }
@@ -71,7 +72,7 @@ function Dashboard({ slug, go, onChanged, onSignedOut }) {
 
 function Overview({ slug, data, update, go, fail, setView }) {
   const { church, stripe } = data;
-  const link = window.location.origin + '/#/give/c/' + church.slug;
+  const link = shareLink(church.slug, 'give');
   const [copied, setCopied] = useState(false);
   const trips = data.funds.filter(f => f.kind === 'trip');
   const steps = [
@@ -129,7 +130,7 @@ function StripeCard({ slug, stripe, update, fail, go }) {
     <div className="form-title"><span className="icon color3"><Icon name="lock" size={22} /></span><div><h2>Stripe</h2><p>{stripe.connected ? 'Gifts go straight to your Stripe account.' : 'Connect your Stripe account to take real gifts.'}</p></div></div>
     {stripe.locked && <>
       <p>The demo church always runs in demo mode, so no real money can move here.</p>
-      <button className="primary" onClick={() => go('give/start')}>Sign up your own church</button>
+      <button className="primary" onClick={() => go('start')}>Sign up your own church</button>
     </>}
     {stripe.connected && <dl className="give-facts">
       <div><dt>Mode</dt><dd><span className={'badge' + (stripe.mode === 'live' ? '' : ' urgent')}>{stripe.mode === 'live' ? 'Live' : 'Test mode'}</span></dd></div>

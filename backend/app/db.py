@@ -3,11 +3,19 @@
 The database is a SQLite Durable Object. It's reached over HTTP at CHURCH_DB_URL
 (the Worker routes the `church-db` host to it). Each call sends a batch of
 {sql, params} statements; the Durable Object runs a batch as one transaction.
+
+Every church has its own database. The church a request is for is set by
+church_scope.py (from the X-Church header the Worker adds) and every call here
+goes to that church, so endpoints never pass a church around. The first call for
+a church creates its tables; only the demo church is seeded with the JSON files.
 """
 
 import os
 import json
 import secrets
+import threading
+import contextvars
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -22,13 +30,50 @@ DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': '
 ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
                          'political_event', 'personal_story', 'inerrancy_claim')
 
+# --- Which church ---
+
+DEMO_CHURCH = 'grace-community'
+# (slug, name, city) of the church this request or job is for.
+_church = contextvars.ContextVar('church', default=(DEMO_CHURCH, '', ''))
+_ready = set()
+_initializing = set()
+_init_lock = threading.RLock()
+
+
+def current_church():
+    return _church.get()[0]
+
+
+@contextmanager
+def use_church(slug, name='', city=''):
+    """Send every database call in this block to one church."""
+    token = _church.set((slug, name, city))
+    try:
+        yield
+    finally:
+        _church.reset(token)
+
+
+def ready_churches():
+    """Churches whose database this process has opened."""
+    return sorted(_ready)
+
+
+def _ensure_ready(slug):
+    with _init_lock:
+        if slug not in _ready and slug not in _initializing:
+            initialize()
+
 
 def run(*statements):
-    """Run [(sql, params), ...] as one transaction. Returns one result per statement:
+    """Run [(sql, params), ...] as one transaction in the current church. Returns one result per statement:
     {'rows': [...], 'rowsWritten': n}."""
+    slug = current_church()
+    if slug not in _ready:
+        _ensure_ready(slug)
     batch = [{'sql': sql, 'params': [int(p) if isinstance(p, bool) else p for p in params]}
              for sql, params in statements]
-    response = _client.post('/sql', json={'batch': batch})
+    response = _client.post('/sql', json={'batch': batch}, headers={'X-Church': slug})
     response.raise_for_status()
     return response.json()['results']
 
@@ -52,7 +97,23 @@ def _data(row):
 
 
 def initialize():
-    """Create tables and seed content without resetting user data. One batch."""
+    """Open the current church: create its tables without resetting data. The demo church is
+    seeded from the JSON files; a new church starts empty, with just its name and city."""
+    slug, name, city = _church.get()
+    with _init_lock:
+        _initializing.add(slug)
+        try:
+            _create_tables(seed=slug == DEMO_CHURCH)
+            if slug != DEMO_CHURCH:
+                start_church(name or slug, city)
+            _ready.add(slug)
+        finally:
+            _initializing.discard(slug)
+
+
+def _create_tables(seed=True):
+    """Create tables and seed content without resetting user data. One batch.
+    With seed=False only the tables are made (every INSERT is left out)."""
     ministries = json.loads(Path(__file__).with_name('ministries.json').read_text(encoding='utf-8'))
     statements = [
         ("CREATE TABLE IF NOT EXISTS ministries (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
@@ -195,7 +256,9 @@ def initialize():
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
-    run(*statements)
+    run(*(s for s in statements if seed or not s[0].lstrip().upper().startswith('INSERT')))
+    if not seed:
+        return
     # Backfill shift schedules and requirements into existing ministries without overwriting.
     seeds = {m['id']: m for m in ministries}
     updates = []
@@ -253,6 +316,61 @@ def get_church_info():
 
 def list_content(kind):
     return [_data(row) for row in query("SELECT data FROM church_content WHERE kind = ? ORDER BY id", (kind,))]
+
+
+# --- A church: its first details, and its content as one document ---
+
+# The info fields every church has. A new church starts with these empty except its name and city.
+BLANK_INFO = {'name': '', 'city': '', 'address': '', 'phone': '', 'email': '', 'office_hours': '',
+              'services': [], 'about': '', 'first_visit': '', 'care_team': '', 'map_query': ''}
+CONTENT_KINDS = ('faqs', 'events', 'groups')
+EVENT_COLUMNS = ('title', 'category', 'date', 'time', 'location', 'ministry_name', 'description', 'ai_summary')
+
+
+def start_church(name, city=''):
+    """The first rows of a new church: its info and config. Never overwrites."""
+    info = {**BLANK_INFO, 'name': name, 'city': city, 'map_query': city}
+    run(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(info),)),
+        ("INSERT OR IGNORE INTO config VALUES ('church', ?)", (json.dumps({**DEFAULT_CONFIG, 'name': name}),)))
+
+
+def export_content():
+    """Everything a church shows, in the import shape (see replace_content and README.md)."""
+    return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS},
+            'ministries': [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")],
+            'calendar': list_events()}
+
+
+def replace_content(content):
+    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar)
+    in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
+    A ministry that saved connections or requests still point at is kept, so they stay readable."""
+    statements = []
+    if 'info' in content:
+        statements += [
+            ("INSERT INTO church_content VALUES ('info', 0, ?) ON CONFLICT (kind, id) DO UPDATE SET data = excluded.data",
+             (json.dumps(content['info']),)),
+            ("UPDATE config SET data = json_set(data, '$.name', ?) WHERE key = 'church'", (content['info']['name'],)),
+        ]
+    for kind in CONTENT_KINDS:
+        if kind in content:
+            statements.append(("DELETE FROM church_content WHERE kind = ?", (kind,)))
+            statements += [("INSERT INTO church_content VALUES (?, ?, ?)", (kind, item['id'], json.dumps(item)))
+                           for item in content[kind]]
+    if 'ministries' in content:
+        keep = [m['id'] for m in content['ministries']]
+        statements.append((f"""DELETE FROM ministries WHERE id NOT IN ({', '.join('?' * len(keep)) or 'SELECT NULL WHERE 0'})
+            AND id NOT IN (SELECT ministry_id FROM connections)
+            AND id NOT IN (SELECT ministry_id FROM requests WHERE ministry_id IS NOT NULL)""", tuple(keep)))
+        statements += [("INSERT INTO ministries VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+                        (m['id'], json.dumps(m))) for m in content['ministries']]
+    if 'calendar' in content:
+        statements.append(("DELETE FROM events", ()))
+        statements += [(f"INSERT INTO events (id, {', '.join(EVENT_COLUMNS)}) VALUES (?, {', '.join('?' * len(EVENT_COLUMNS))})",
+                        (e['id'], *(e.get(c) for c in EVENT_COLUMNS))) for e in content['calendar']]
+    if statements:
+        run(*statements)
+    return export_content()
 
 
 REQUEST_COLUMNS = "request_id, kind, ministry_id, name, contact, details, status, created_at"

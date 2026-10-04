@@ -369,11 +369,14 @@ def _worker():
     while True:
         _wake.wait(timeout=60)
         _wake.clear()
-        try:
-            for note_id in db.queued_note_ids():
-                process(note_id)
-        except Exception:
-            log.exception('notes worker loop failed')
+        # Each church has its own notes; check every church this process has opened.
+        for slug in sorted({db.DEMO_CHURCH, *db.ready_churches()}):
+            try:
+                with db.use_church(slug):
+                    for note_id in db.queued_note_ids():
+                        process(note_id)
+            except Exception:
+                log.exception('notes worker loop failed for %s', slug)
 
 
 def start_worker():
