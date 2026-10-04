@@ -394,6 +394,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .topbar .brand { font-size: 24px; padding: 0; }
   .topbar .brand > b { width: 30px; height: 32px; font-size: 22px; border-radius: 9px; }
   .topbar-church { flex: 1; font-size: 13px; color: var(--faint); padding-top: 3px; }
+  /* Narrow phones: drop the church label so the avatar still fits. */
+  @media (max-width: 430px) { .topbar-church { display: none; } .topbar .first-visit { margin-left: auto; } }
   .tabbar {
     position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-template-columns: repeat(6, 1fr);
     height: calc(var(--tabbar) + var(--safe-bottom)); padding-bottom: var(--safe-bottom);
