@@ -39,7 +39,33 @@ export function parseReference(label) {
   const range = to && Number(to) > Number(from) ? to : null;
   const usfm = `${code}.${chapter}` + (from ? `.${from}` + (range ? `-${range}` : '') : '');
   const human = `${name} ${chapter}` + (from ? `:${from}` + (range ? `-${range}` : '') : '');
-  return { usfm, human };
+  return { usfm, human, code, name, chapter, verse: from || null };
+}
+
+// "31", "31-33" or "12:3" after a full reference, reusing its book (and chapter).
+const MORE = /^\s*(?:(\d{1,3})\s*:\s*)?(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?\s*$/;
+
+function continuation(prev, text) {
+  const m = MORE.exec(text);
+  if (!m) return null;
+  const { code, name } = prev;
+  // "Psalm 23, 24" lists chapters; "Rom 8:28, 31" lists verses in the same chapter.
+  const [chapter, from] = m[1] ? [m[1], m[2]] : prev.verse ? [prev.chapter, m[2]] : [m[2], null];
+  const to = m[3] && Number(m[3]) > Number(m[2]) ? m[3] : null;
+  const usfm = `${code}.${chapter}` + (from ? `.${from}` : '') + (to ? `-${to}` : '');
+  const human = `${name} ${chapter}` + (from ? `:${from}` : '') + (to ? `-${to}` : '');
+  return { usfm, human, code, name, chapter, verse: from };
+}
+
+/** Splits a label like "Psalm 103:8, Matthew 5:45" into text parts, each with its passage or null. */
+export function referenceParts(label) {
+  let prev = null;
+  return String(label || '').split(/(\s*[;,]\s*|\s+and\s+)/i).map((text, i) => {
+    if (i % 2 || !text.trim()) return { text, ref: null };
+    const ref = parseReference(text) || (prev && continuation(prev, text));
+    if (ref) prev = ref;
+    return { text, ref: ref || null };
+  }).filter(p => p.text);
 }
 
 const WEB = { abbreviation: 'WEB', title: 'World English Bible', copyright: 'Public domain' };
