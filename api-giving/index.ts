@@ -33,6 +33,8 @@ type Secrets = {
   STRIPE_API_BASE?: string;
   // Optional: once churches have subdomains (grace.<BASE_DOMAIN>), any of them is an allowed origin.
   BASE_DOMAIN?: string;
+  // Optional: turns on GET /api/platform/churches for the platform team (Authorization: Bearer <key>).
+  PLATFORM_ADMIN_KEY?: string;
 };
 type GivingEnv = Env & Secrets & { GIVING_REGISTRY: DurableObjectNamespace<GivingRegistry> };
 
@@ -260,6 +262,18 @@ function keyInfo(key: string): { mode: 'test' | 'live'; hint: string } | null {
   if (!m) return null;
   return { mode: m[2] as 'test' | 'live', hint: `${m[1]}_${m[2]}_…${m[3].slice(-4)}` };
 }
+
+// What the platform team sees about one church's giving: counts and mode only.
+// Never a key, hint, password, webhook or portal detail, and nothing about a donor.
+type PlatformGiving = {
+  mode: 'demo' | 'test' | 'live';
+  currency: string;
+  funds: number;
+  trips: number;
+  gifts: number;
+  raised: number;
+  setup: { stripe: boolean; trip: boolean; done: boolean };
+};
 
 // ---------- Rows ----------
 
@@ -535,6 +549,27 @@ export class GivingDO extends DurableObject<GivingEnv> {
       this.#seedFunds(now);
     });
     return { token: await this.#newSession() };
+  }
+
+  // ---------- RPC from the Worker: the platform team's church list ----------
+
+  // The same numbers the staff overview shows, and the same "Getting set up" checklist.
+  async platformSummary(slug: string): Promise<PlatformGiving | null> {
+    this.#slug = slug;
+    const c = this.#church();
+    if (!c) return null;
+    const pub = this.#publicChurch(c);
+    const stripeReady = !!c.stripe_key && !c.provision_error;
+    const anyTrip = this.#funds(true).some((f) => f.kind === 'trip');
+    return {
+      mode: this.#mode(c),
+      currency: c.currency,
+      funds: pub.funds.length,
+      trips: pub.trips.length,
+      gifts: pub.totals.gifts,
+      raised: pub.totals.raised,
+      setup: { stripe: stripeReady, trip: anyTrip, done: stripeReady && anyTrip },
+    };
   }
 
   // ---------- Public ----------
@@ -1468,6 +1503,28 @@ export class GivingRegistry extends DurableObject<GivingEnv> {
     return this.ctx.storage.sql.exec('SELECT 1 FROM churches WHERE slug = ?', slug).toArray().length > 0;
   }
 
+  // Every church, newest first. Only for the platform team's list (GET /api/platform/churches).
+  async all(): Promise<{ slug: string; name: string; city: string; created_at: string }[]> {
+    return this.ctx.storage.sql
+      .exec('SELECT slug, name, city, created_at FROM churches ORDER BY created_at DESC, slug')
+      .toArray()
+      .map((r: any) => ({ slug: String(r.slug), name: String(r.name), city: String(r.city), created_at: String(r.created_at) }));
+  }
+
+  // Wrong platform keys, per IP, with the same limits as staff sign-in. Only failures count.
+  async platformLocked(ip: string): Promise<boolean> {
+    const now = Date.now();
+    const sql = this.ctx.storage.sql;
+    return [['platform:' + ip, 5, 60_000], ['platform-hour:' + ip, 30, 3_600_000]].some(([k, max, windowMs]) => {
+      const row = sql.exec('SELECT window_start, count FROM rate WHERE k = ?', k).toArray()[0];
+      return !!row && now - Number(row.window_start) < Number(windowMs) && Number(row.count) >= Number(max);
+    });
+  }
+
+  async platformFailed(ip: string): Promise<void> {
+    this.#rateOk('platform:' + ip, 5, 60_000);
+    this.#rateOk('platform-hour:' + ip, 30, 3_600_000);
+  }
 }
 
 function withCors(response: Response, env: GivingEnv, request: Request): Response {
@@ -1512,6 +1569,34 @@ async function signup(request: Request, env: GivingEnv): Promise<Response> {
   return json({ slug: reserved.slug, name, token: out.token }, 201);
 }
 
+// Every church, for the platform team only (the #/platform page). Churches never see this list.
+// Off (404) until the PLATFORM_ADMIN_KEY secret is set; then it needs Authorization: Bearer <key>.
+async function platformChurches(request: Request, env: GivingEnv): Promise<Response> {
+  const secret = String(env.PLATFORM_ADMIN_KEY || '');
+  if (!secret) return json({ error: 'Not found.' }, 404);
+  const m = /^Bearer\s+(\S{1,300})$/.exec(request.headers.get('authorization') || '');
+  if (!m) return json({ error: 'Enter the platform key.' }, 401);
+  const registry = env.GIVING_REGISTRY.getByName('registry');
+  const ip = request.headers.get('cf-connecting-ip') || 'anon';
+  if (await registry.platformLocked(ip)) return json({ error: 'Too many wrong keys. Wait a minute and try again.' }, 429);
+  // Compare digests, so neither the length nor the content of the key leaks via timing.
+  if (!ctEqual(await sha256(m[1]), await sha256(secret))) {
+    await registry.platformFailed(ip);
+    return json({ error: 'That platform key is not right.' }, 401);
+  }
+  const rows = await registry.all();
+  const out: { slug: string; name: string; city: string; createdAt: string; demo: boolean; giving: PlatformGiving | null }[] = [];
+  // A few churches at a time, so a long list does not open every Durable Object at once.
+  for (let i = 0; i < rows.length; i += 20) {
+    const batch = rows.slice(i, i + 20);
+    const giving = await Promise.all(
+      batch.map((r) => env.GIVING.getByName(r.slug === DEMO_SLUG ? 'main' : 'church:' + r.slug).platformSummary(r.slug).catch(() => null))
+    );
+    batch.forEach((r, j) => out.push({ slug: r.slug, name: r.name, city: r.city, createdAt: r.created_at, demo: r.slug === DEMO_SLUG, giving: giving[j] }));
+  }
+  return json({ churches: out });
+}
+
 async function route(request: Request, env: GivingEnv): Promise<Response> {
   const url = new URL(request.url);
   const p = url.pathname;
@@ -1532,6 +1617,7 @@ async function route(request: Request, env: GivingEnv): Promise<Response> {
     return json({ churches: demo ? [demo] : [] });
   }
   if (p === '/api/churches' && m === 'POST') return signup(request, env);
+  if (p === '/api/platform/churches' && m === 'GET') return platformChurches(request, env);
   // One church's public listing (name and city), straight from the registry. The church API uses it to
   // check that a church exists before it opens that church's database.
   const listing = /^\/api\/directory\/([^/]+)$/.exec(p);

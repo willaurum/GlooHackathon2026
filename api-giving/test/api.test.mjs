@@ -5,6 +5,9 @@
 //   node test/api.test.mjs
 // Rate limits are per IP per window, so give it ten minutes between full runs.
 // Other ports: set API, STRIPE and ORIGIN (and PORT for the fake Stripe), matching .dev.vars.
+// Platform list: set PLATFORM_KEY to the PLATFORM_ADMIN_KEY in .dev.vars. Without it, the Worker is
+// expected to have no PLATFORM_ADMIN_KEY (the route is off). API_NO_PLATFORM can name a second
+// `wrangler dev` without the secret, so one run checks both.
 const API = process.env.API || 'http://localhost:8799';
 const STRIPE = process.env.STRIPE || 'http://localhost:12111';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:5199';
@@ -310,6 +313,69 @@ r = await call('GET', C + '/admin/session');
 check(r.status === 401, 'no session, no staff');
 r = await call('GET', '/api/churches/grace-community/admin/session', undefined, token);
 check(r.status === 401, 'a new church session is not valid for the demo church');
+
+console.log('platform list (the platform team only)');
+const PLATFORM_KEY = process.env.PLATFORM_KEY || '';
+async function platform(base, key, ip = '10.1.0.' + Math.floor(Math.random() * 250)) {
+  const headers = { origin: ORIGIN, 'cf-connecting-ip': ip };
+  if (key) headers.authorization = 'Bearer ' + key;
+  const res = await fetch(base + '/api/platform/churches', { headers });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  return { status: res.status, data, text };
+}
+for (const base of [process.env.API_NO_PLATFORM, PLATFORM_KEY ? '' : API].filter(Boolean)) {
+  r = await platform(base, 'any-key-at-all-1234567890');
+  check(r.status === 404, 'without PLATFORM_ADMIN_KEY the platform list is off (404) at ' + base, r.data);
+  r = await platform(base);
+  check(r.status === 404, 'without PLATFORM_ADMIN_KEY, no key is a 404 too', r.data);
+}
+if (PLATFORM_KEY) {
+  r = await platform(API);
+  check(r.status === 401 && !r.data.churches, 'no key, no list', r.data);
+  r = await platform(API, PLATFORM_KEY + 'x');
+  check(r.status === 401 && !r.data.churches, 'wrong key 401', r.data);
+  r = await platform(API, PLATFORM_KEY.slice(0, -1));
+  check(r.status === 401 && !r.data.churches, 'a shorter key 401', r.data);
+  r = await platform(API, tokenB);
+  check(r.status === 401 && !r.data.churches, 'a church staff session is not the platform key', r.data);
+  r = await platform(API, 'gloo-donate-demo');
+  check(r.status === 401, 'the demo ADMIN_KEY is not the platform key', r.data);
+  r = await platform(API, PLATFORM_KEY);
+  const all = r.data.churches || [];
+  const bySlug = Object.fromEntries(all.map((c) => [c.slug, c]));
+  check(r.status === 200 && bySlug[slug] && bySlug[slugB] && bySlug['grace-community'], 'right key lists every church, including new ones', all.map((c) => c.slug));
+  const a = bySlug[slug] || {};
+  const pubA = (await call('GET', C)).data;
+  check(a.name === pubA.name && a.city === 'Austin' && !a.demo && /^\d{4}-\d{2}-\d{2}T/.test(a.createdAt), 'church A: name, city, created date, not the demo', a);
+  check(a.giving && a.giving.mode === 'test' && a.giving.currency === 'usd' && a.giving.funds === 3 && a.giving.trips === 1, 'church A: test mode, 3 funds, 1 trip', a.giving);
+  check(a.giving && a.giving.gifts === pubA.totals.gifts && a.giving.raised === pubA.totals.raised && a.giving.gifts > 0, 'church A: gift count and total match its public totals', { platform: a.giving, public: pubA.totals });
+  check(a.giving && a.giving.setup.stripe && a.giving.setup.trip && a.giving.setup.done, 'church A: staff setup done', a.giving && a.giving.setup);
+  const b = bySlug[slugB] || {};
+  check(b.city === 'Dallas' && b.giving && b.giving.mode === 'test' && b.giving.trips === 0 && !b.giving.setup.trip && !b.giving.setup.done, 'church B: no trip yet, so setup is not done', b);
+  const demoRow = bySlug['grace-community'] || {};
+  check(demoRow.demo === true && demoRow.name === 'Grace Community' && demoRow.giving && demoRow.giving.mode === 'demo', 'the demo church is flagged as the demo, in demo mode', demoRow);
+  check(all.every((c) => Object.keys(c).sort().join() === 'city,createdAt,demo,giving,name,slug'), 'each church has only slug, name, city, createdAt, demo and giving', all.map((c) => Object.keys(c)));
+  check(all.every((c) => !c.giving || Object.keys(c.giving).sort().join() === 'currency,funds,gifts,mode,raised,setup,trips'), 'giving is counts and mode only', all.map((c) => c.giving));
+  const secretish = /GOOD|NOHOOK|sk_test_|rk_test_|sk_live_|whsec_|we_|Private Person|private@example|Monthly Tither|tither@|Applicant One|app1@|Trip Giver|tripgiver@|Second Tither|second@example|Address Giver|address@example|Demo donor|Demo Monthly|cus_|sub_|bpc_|bps_|pbkdf2|password|hash|hint|stripe_key|email|portal|webhook|acct_/i;
+  check(!secretish.test(r.text), 'no password, hash, Stripe key or hint, webhook, portal or donor data in the list', r.text.slice(0, 600));
+  // Wrong keys are rate limited per IP like staff sign-in; only wrong keys count.
+  const ip = '10.2.' + Math.floor(Math.random() * 250) + '.' + Math.floor(Math.random() * 250);
+  r = await platform(API, PLATFORM_KEY, ip);
+  check(r.status === 200, 'a right key does not use up the limit', r.data);
+  for (let i = 0; i < 5; i++) await platform(API, 'wrong-key-' + i, ip);
+  r = await platform(API, 'wrong-key-6', ip);
+  check(r.status === 429, 'the sixth wrong key in a minute is refused', r.data);
+  r = await platform(API, PLATFORM_KEY, ip);
+  check(r.status === 429 && !r.data.churches, 'that IP waits even with the right key', r.data);
+  r = await platform(API, PLATFORM_KEY);
+  check(r.status === 200 && r.data.churches.length === all.length, 'another IP still gets the list', r.data);
+}
+for (const q of ['', '?q=Hope', '?q=' + suffix]) {
+  r = await call('GET', '/api/churches' + q);
+  const slugs = (r.data.churches || []).map(c => c.slug);
+  check(r.status === 200 && slugs.length <= 1 && slugs.every(x => x === 'grace-community'), 'public list ' + (q || 'with no query') + ' still shows only the demo church', r.data);
+}
 
 console.log('logout');
 r = await call('POST', C + '/admin/logout', {}, token);

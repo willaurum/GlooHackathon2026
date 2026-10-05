@@ -5,3 +5,6 @@ STRIPE_KEY_ENCRYPTION_KEY=
 STRIPE_API_BASE=http://localhost:12111
 PUBLIC_ORIGIN=http://localhost:8799
 ALLOWED_ORIGIN=http://localhost:5199
+# Optional: turns on GET /api/platform/churches (the #/platform page). Any long random string.
+# openssl rand -base64 32
+PLATFORM_ADMIN_KEY=
