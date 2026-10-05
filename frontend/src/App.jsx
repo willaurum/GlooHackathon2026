@@ -6,11 +6,12 @@ import { PageHeader, Sidebar, TabBar, TopBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
+import Blog from './Blog.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'blog', 'notes', 'give', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map'];
 
 // Routes live in the hash (#/serve/find). Stripe returns to /give?session_id=…, so that path opens Give too.
 function currentRoute() {
@@ -54,6 +55,10 @@ export default function App() {
         {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
         {/* Kept mounted so the saved/pending count stays live in the nav. */}
         <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>
+        {section === 'blog' && <div className="page">
+          <PageHeader eyebrow="Church Blog" title="Reflections & stories." text="Pastoral teaching, ministry updates, and community reflections — with NLP categorization and AI bullet summaries." />
+          <Blog />
+        </div>}
         {section === 'notes' && <div className="page">
           <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
           <PastorNotes />

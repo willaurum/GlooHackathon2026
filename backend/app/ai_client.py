@@ -146,7 +146,7 @@ async def get_status(base_url: str = None, force_refresh: bool = False) -> dict:
         }
 
 
-def clean_summary(text: str) -> str:
+def clean_summary(text: str, join_delimiter: str = " ") -> str:
     """Strip reasoning/thought blocks and metadata labels from LLM output so only narrative sentences remain."""
     if not text:
         return ""
@@ -186,31 +186,27 @@ def clean_summary(text: str) -> str:
                 line = line[len(prefix) :].strip()
         if line:
             cleaned_lines.append(line)
-    result = " ".join(cleaned_lines).strip()
+    result = join_delimiter.join(cleaned_lines).strip()
     # Strip enclosing quotation marks if returned by the LLM
     if result.startswith('"') and result.endswith('"') and len(result) > 2:
         result = result[1:-1].strip()
     return result if result else text.strip()
 
 
-async def summarize_event(
-    title: str,
-    category: str,
-    description: str,
-    date: str,
-    time: str,
-    location: str,
-    model: str = None,
-    client: httpx.AsyncClient = None,
+async def generate_text(
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    temperature: float = 0.6,
+    max_tokens: int = 800,
+    client: httpx.AsyncClient | None = None,
+    preserve_newlines: bool = False,
 ) -> str:
-    """Send an event prompt to the configured AI endpoint to generate an AI summary.
-    
-    Compatible with any OpenAPI / OpenAI chat completions endpoint
-    as well as native Ollama generate/chat endpoints.
-    """
+    """Send a prompt to the configured AI endpoint to generate completion text."""
     requested_model = model or get_default_model()
     url_base = get_base_url()
     headers = _get_headers()
+    delim = "\n" if preserve_newlines else " "
 
     # Verify AI endpoint status
     status = await get_status()
@@ -224,22 +220,10 @@ async def summarize_event(
     available = status.get("available_models", [])
     resolved_model = find_matching_model(requested_model, available) or requested_model
 
-    system_prompt = (
-        "You are an editor for a church newsletter. Write a warm, inviting 2-sentence bulletin summary "
-        "of this church event for members and visitors. Output ONLY the summary."
-    )
-    user_prompt = (
-        f"Church Event: {title}\n"
-        f"Category: {category}\n"
-        f"When & Where: {date} at {time} in {location}\n"
-        f"Event Details: {description}\n\n"
-        "Bulletin Summary:"
-    )
-
-    summary = ""
+    result_text = ""
 
     async def _execute_with_client(http_client: httpx.AsyncClient):
-        nonlocal summary
+        nonlocal result_text
         # 1. Primary method: OpenAPI / OpenAI-compatible /chat/completions
         chat_url = f"{url_base}/chat/completions" if url_base.endswith("/v1") else f"{url_base}/v1/chat/completions"
         try:
@@ -251,8 +235,8 @@ async def summarize_event(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "temperature": 0.6,
-                    "max_tokens": 600,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
                 },
             )
             if chat_resp.status_code == 200:
@@ -261,14 +245,14 @@ async def summarize_event(
                 if choices:
                     msg = choices[0].get("message", {})
                     content = msg.get("content", "")
-                    summary = clean_summary(content)
+                    result_text = clean_summary(content, join_delimiter=delim)
             elif chat_resp.status_code == 404:
                 logger.info(f"OpenAPI chat endpoint {chat_url} returned 404, attempting fallback endpoints...")
         except Exception as exc:
             logger.debug(f"OpenAPI chat completion call failed on {chat_url}: {exc}")
 
         # 2. Fallback: Ollama native /api/generate
-        if not summary:
+        if not result_text:
             try:
                 gen_prompt = f"{system_prompt}\n\n{user_prompt}"
                 gen_resp = await http_client.post(
@@ -278,19 +262,19 @@ async def summarize_event(
                         "prompt": gen_prompt,
                         "stream": False,
                         "options": {
-                            "temperature": 0.6,
-                            "num_predict": 600,
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
                         },
                     },
                 )
                 if gen_resp.status_code == 200:
                     data = gen_resp.json()
-                    summary = clean_summary(data.get("response", ""))
+                    result_text = clean_summary(data.get("response", ""), join_delimiter=delim)
             except Exception as gen_err:
                 logger.debug(f"/api/generate attempt failed: {gen_err}")
 
         # 3. Fallback: Ollama native /api/chat
-        if not summary:
+        if not result_text:
             try:
                 native_chat_resp = await http_client.post(
                     f"{url_base}/api/chat",
@@ -302,15 +286,15 @@ async def summarize_event(
                         ],
                         "stream": False,
                         "options": {
-                            "temperature": 0.6,
-                            "num_predict": 600,
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
                         },
                     },
                 )
                 if native_chat_resp.status_code == 200:
                     chat_data = native_chat_resp.json()
                     msg = chat_data.get("message", {})
-                    summary = clean_summary(msg.get("content", ""))
+                    result_text = clean_summary(msg.get("content", ""), join_delimiter=delim)
             except Exception as native_err:
                 logger.debug(f"/api/chat attempt failed: {native_err}")
 
@@ -320,10 +304,36 @@ async def summarize_event(
         async with httpx.AsyncClient(timeout=120.0, headers=headers) as local_client:
             await _execute_with_client(local_client)
 
-    if not summary:
+    if not result_text:
         raise RuntimeError(
             f"AI endpoint ({resolved_model}) returned an empty response. "
             f"Please check your AI service and model configuration."
         )
 
-    return summary
+    return result_text
+
+
+async def summarize_event(
+    title: str,
+    category: str,
+    description: str,
+    date: str,
+    time: str,
+    location: str,
+    model: str = None,
+    client: httpx.AsyncClient = None,
+) -> str:
+    """Send an event prompt to the configured AI endpoint to generate an AI summary."""
+    system_prompt = (
+        "You are an editor for a church newsletter. Write a warm, inviting 2-sentence bulletin summary "
+        "of this church event for members and visitors. Output ONLY the summary."
+    )
+    user_prompt = (
+        f"Church Event: {title}\n"
+        f"Category: {category}\n"
+        f"When & Where: {date} at {time} in {location}\n"
+        f"Event Details: {description}\n\n"
+        "Bulletin Summary:"
+    )
+    return await generate_text(system_prompt, user_prompt, model=model, client=client)
+

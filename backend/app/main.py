@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Literal
 
-from . import ai, ai_client, chat, db, matching, pastor_notes, recommendations
+from . import ai, ai_client, blog_ai, chat, db, matching, pastor_notes, recommendations
 
 log = logging.getLogger(__name__)
 
@@ -438,3 +438,103 @@ async def get_ai_status():
 def set_ai_model(body: ModelUpdateRequest):
     ai_client.set_default_model(body.model)
     return {"default_model": ai_client.get_default_model()}
+
+
+# --- Blog Endpoints ---
+
+
+class BlogPostCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1)
+    author: str = Field(default="Church Staff", max_length=100)
+    categories: list[str] = Field(default_factory=list)
+    auto_categorize: bool = False
+    auto_summarize: bool = False
+
+
+class CategorizeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(default="", max_length=300)
+    content: str = Field(min_length=1)
+
+
+class SummarizePostRequest(BaseModel):
+    model: str | None = None
+
+
+@app.get("/api/blog")
+def get_blog_posts(category: str | None = None):
+    return db.list_blog_posts(category=category)
+
+
+@app.get("/api/blog/categories")
+def get_blog_categories():
+    return db.list_blog_categories()
+
+
+@app.get("/api/blog/{post_id}")
+def get_single_blog_post(post_id: int):
+    post = db.get_blog_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Blog post not found")
+    return post
+
+
+@app.post("/api/blog/categorize")
+async def categorize_post_nlp(body: CategorizeRequest):
+    """Suggest categories for a post using NLP / LLM."""
+    categories = await blog_ai.categorize_blog_post(title=body.title, content=body.content)
+    return {"categories": categories}
+
+
+@app.post("/api/blog", status_code=201)
+async def create_new_blog_post(body: BlogPostCreate):
+    categories = body.categories
+    # Auto-generate categories using NLP if none provided or auto_categorize is True
+    if not categories or body.auto_categorize:
+        nlp_cats = await blog_ai.categorize_blog_post(title=body.title, content=body.content)
+        categories = list(dict.fromkeys(categories + nlp_cats))
+
+    bullet_summary = None
+    if body.auto_summarize:
+        try:
+            bullet_summary = await blog_ai.summarize_blog_bullets(title=body.title, content=body.content)
+        except Exception as exc:
+            log.warning("Auto-summarization failed on post creation: %s", exc)
+
+    post = db.create_blog_post(
+        title=body.title,
+        content=body.content,
+        author=body.author or "Church Staff",
+        categories=categories,
+        bullet_summary=bullet_summary,
+    )
+    return post
+
+
+@app.post("/api/blog/{post_id}/summarize")
+async def summarize_blog_post_endpoint(post_id: int, body: SummarizePostRequest | None = None):
+    post = db.get_blog_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Blog post not found")
+
+    target_model = body.model if body else None
+    try:
+        bullets = await blog_ai.summarize_blog_bullets(
+            title=post["title"],
+            content=post["content"],
+            model=target_model,
+        )
+        updated = db.update_blog_post_summary(post_id, bullets)
+        return updated
+    except Exception as exc:
+        log.exception("Blog summarization failed for post %s", post_id)
+        raise HTTPException(status_code=502, detail=f"LLM summarization failed: {exc}")
+
+
+@app.delete("/api/blog/{post_id}", status_code=204)
+def delete_blog_post_endpoint(post_id: int):
+    if not db.delete_blog_post(post_id):
+        raise HTTPException(status_code=404, detail="Blog post not found")
+
