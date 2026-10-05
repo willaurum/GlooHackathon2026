@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -364,6 +365,10 @@ class ModelUpdateRequest(BaseModel):
     model: str = Field(min_length=1, max_length=100)
 
 
+# The calendar shows its own "Offline" pill from /api/ai/status; this is for direct calls.
+AI_OFFLINE = "AI is offline right now (not configured, or the team AI bridge is off). Try again later."
+
+
 class SummarizeAllRequest(BaseModel):
     model: str | None = None
     only_missing: bool = False
@@ -419,7 +424,7 @@ async def summarize_event(event_id: int, model: str | None = None):
         raise HTTPException(status_code=404, detail="Event not found")
     status = await ai_client.get_status()
     if not status.get("connected"):
-        raise HTTPException(status_code=503, detail="AI summaries are not configured on this server yet.")
+        raise HTTPException(status_code=503, detail=AI_OFFLINE)
     try:
         summary = await ai_client.summarize_event(
             title=event["title"], category=event["category"], description=event["description"],
@@ -433,7 +438,7 @@ async def summarize_event(event_id: int, model: str | None = None):
 async def summarize_all_events(body: SummarizeAllRequest | None = None, only_missing: bool = False, model: str | None = None):
     status = await ai_client.get_status()
     if not status.get("connected"):
-        raise HTTPException(status_code=503, detail="AI summaries are not configured on this server yet.")
+        raise HTTPException(status_code=503, detail=AI_OFFLINE)
     target_model = body.model if (body and body.model) else model
     filter_missing = body.only_missing if body else only_missing
     events = db.list_events()
@@ -454,7 +459,10 @@ async def summarize_all_events(body: SummarizeAllRequest | None = None, only_mis
 @app.get("/api/ai/status")
 @app.get("/api/ollama/status")
 async def get_ai_status():
-    return await ai_client.get_status()
+    """Which provider the AI features use and whether it answers. The calendar reads connected,
+    default_model and available_models; the rest is for the team checking on the bridge."""
+    status = await ai_client.get_status()
+    return {**status, "team_bridge": bool(os.environ.get("TEAM_AI_BRIDGE")), "chat": chat.status()}
 
 
 @app.post("/api/ai/model")

@@ -93,7 +93,7 @@ def recommend(description, ministries, clients=None, preferences=None):
                         'name': 'ministry_recommendations', 'schema': RecommendationPlan.model_json_schema()}}
                     if model.startswith('gpt-oss:'):
                         options['reasoning_effort'] = 'low'
-                response = client.with_options(timeout=75 if provider == 'ollama' else 25, max_retries=0).chat.completions.create(
+                response = client.with_options(timeout=chat.provider_timeout('ollama') if provider == 'ollama' else 25, max_retries=0).chat.completions.create(
                     model=model, messages=messages, extra_body=extra_body, **options)
                 content = (response.choices[0].message.content or '').strip()
                 if content.startswith('```') and content.endswith('```'):

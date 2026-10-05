@@ -14,30 +14,62 @@ _status_cache: dict | None = None
 _status_cache_time: float = 0.0
 
 
+# Hosted providers are taken as reachable when their key is set; there is nothing local to probe.
+HOSTED_PROVIDERS = ("gloo", "openai", "anthropic")
+
+
+def endpoint() -> dict:
+    """Where summaries go: {provider, base_url, api_key, model, extra_body}.
+
+    AI_BASE_URL (or OPENAI_BASE_URL) wins, for local setups. Otherwise the chat's first configured
+    provider: the team AI bridge today, Gloo as soon as GLOO_API_KEY is set. Otherwise a local Ollama.
+    """
+    explicit = os.environ.get("AI_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+    if not explicit:
+        from . import chat
+
+        chain = chat.provider_chain()
+        if chain:
+            name, model, extra_body, key = chain[0]
+            base = chat.ollama_base_url() if name == "ollama" else chat.PROVIDERS[name]["base_url"]
+            return {"provider": name, "base_url": base.rstrip("/"), "api_key": "" if key == "ollama" else key,
+                    "model": model, "extra_body": extra_body}
+    return {
+        "provider": "custom" if explicit else "local",
+        "base_url": (explicit or os.environ.get("OLLAMA_BASE_URL") or "http://127.0.0.1:11434").rstrip("/"),
+        "api_key": os.environ.get("AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or "",
+        "model": os.environ.get("AI_MODEL") or os.environ.get("OLLAMA_MODEL") or "qwen3.8:27b",
+        "extra_body": {},
+    }
+
+
+def native_root(url_base: str) -> str:
+    """Ollama native endpoints (/api/...) live beside /v1, not under it."""
+    return url_base[:-3] if url_base.endswith("/v1") else url_base
+
+
 def get_base_url() -> str:
-    """Return the configured AI base URL, checking AI_BASE_URL, OPENAI_BASE_URL, and OLLAMA_BASE_URL."""
-    return (
-        os.environ.get("AI_BASE_URL")
-        or os.environ.get("OPENAI_BASE_URL")
-        or os.environ.get("OLLAMA_BASE_URL")
-        or "http://127.0.0.1:11434"
-    ).rstrip("/")
+    """Return the AI base URL summaries use (see endpoint())."""
+    return endpoint()["base_url"]
 
 
 def get_api_key() -> str:
-    """Return the configured AI API key, if any."""
-    return os.environ.get("AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+    """Return the AI API key summaries use, if any."""
+    return endpoint()["api_key"]
+
+
+def get_timeout() -> float:
+    """Seconds to wait for one summary; the team bridge's 27B model is slow (see chat.provider_timeout)."""
+    from . import chat
+
+    return float(chat.provider_timeout("ollama"))
 
 
 def get_default_model() -> str:
-    """Return the active model (runtime override or AI_MODEL/OLLAMA_MODEL env var, default: qwen3.8:27b)."""
+    """Return the active model (runtime override, else the provider's model; default qwen3.8:27b)."""
     if _active_model:
         return _active_model
-    return (
-        os.environ.get("AI_MODEL")
-        or os.environ.get("OLLAMA_MODEL")
-        or "qwen3.8:27b"
-    )
+    return endpoint()["model"]
 
 
 def set_default_model(model: str) -> None:
@@ -92,7 +124,21 @@ async def get_status(base_url: str = None, force_refresh: bool = False) -> dict:
     if not force_refresh and not base_url and _status_cache and (now - _status_cache_time < 15.0):
         return {**_status_cache, "default_model": current_model}
 
-    url_base = (base_url or get_base_url()).rstrip("/")
+    target = endpoint()
+    if not base_url and target["provider"] in HOSTED_PROVIDERS:
+        return {"connected": True, "provider": target["provider"], "base_url": target["base_url"],
+                "default_model": current_model, "available_models": [target["model"]]}
+    result = await _probe(base_url, current_model, target)
+    result["provider"] = target["provider"] if not base_url else "custom"
+    if not base_url:
+        # Failures are cached too, so a page polling the status does not hammer a bridge that is down.
+        _status_cache = result
+        _status_cache_time = now
+    return result
+
+
+async def _probe(base_url: str | None, current_model: str, target: dict) -> dict:
+    url_base = (base_url or target["base_url"]).rstrip("/")
     headers = _get_headers()
 
     # 1. First attempt: Standard OpenAPI / OpenAI models endpoint
@@ -111,15 +157,12 @@ async def get_status(base_url: str = None, force_refresh: bool = False) -> dict:
                         "default_model": current_model,
                         "available_models": model_names,
                     }
-                    if not base_url:
-                        _status_cache = res
-                        _status_cache_time = now
                     return res
     except Exception as exc:
         logger.debug(f"OpenAPI /v1/models check failed on {models_url}: {exc}")
 
     # 2. Second attempt: Ollama native /api/tags
-    ollama_tags_url = f"{url_base}/api/tags"
+    ollama_tags_url = f"{native_root(url_base)}/api/tags"
     try:
         async with httpx.AsyncClient(timeout=3.0, headers=headers) as client:
             resp = await client.get(ollama_tags_url)
@@ -132,9 +175,6 @@ async def get_status(base_url: str = None, force_refresh: bool = False) -> dict:
                     "default_model": current_model,
                     "available_models": models,
                 }
-                if not base_url:
-                    _status_cache = res
-                    _status_cache_time = now
                 return res
             return {
                 "connected": False,
@@ -216,8 +256,11 @@ async def summarize_event(
     as well as native Ollama generate/chat endpoints.
     """
     requested_model = model or get_default_model()
-    url_base = get_base_url()
+    target = endpoint()
+    url_base = target["base_url"]
     headers = _get_headers()
+    # Chat-provider base URLs already include the API version (Gloo's has no /v1 at all).
+    from_chat = target["provider"] not in ("custom", "local")
 
     # Verify AI endpoint status
     status = await get_status()
@@ -248,11 +291,14 @@ async def summarize_event(
     async def _execute_with_client(http_client: httpx.AsyncClient):
         nonlocal summary
         # 1. Primary method: OpenAPI / OpenAI-compatible /chat/completions
-        chat_url = f"{url_base}/chat/completions" if url_base.endswith("/v1") else f"{url_base}/v1/chat/completions"
+        chat_url = (f"{url_base}/chat/completions" if from_chat or url_base.endswith("/v1")
+                    else f"{url_base}/v1/chat/completions")
+        native_fallback = not from_chat or target["provider"] == "ollama"
         try:
             chat_resp = await http_client.post(
                 chat_url,
                 json={
+                    **target["extra_body"],
                     "model": resolved_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
@@ -271,15 +317,20 @@ async def summarize_event(
                     summary = clean_summary(content)
             elif chat_resp.status_code == 404:
                 logger.info(f"OpenAPI chat endpoint {chat_url} returned 404, attempting fallback endpoints...")
+            else:
+                native_fallback = False
+                logger.info(f"AI chat endpoint returned HTTP {chat_resp.status_code}")
         except Exception as exc:
-            logger.debug(f"OpenAPI chat completion call failed on {chat_url}: {exc}")
+            # Not after a timeout: the native endpoints would triple the wait on a slow model.
+            native_fallback = False
+            logger.info(f"AI chat completion call failed ({type(exc).__name__})")
 
         # 2. Fallback: Ollama native /api/generate
-        if not summary:
+        if not summary and native_fallback:
             try:
                 gen_prompt = f"{system_prompt}\n\n{user_prompt}"
                 gen_resp = await http_client.post(
-                    f"{url_base}/api/generate",
+                    f"{native_root(url_base)}/api/generate",
                     json={
                         "model": resolved_model,
                         "prompt": gen_prompt,
@@ -297,10 +348,10 @@ async def summarize_event(
                 logger.debug(f"/api/generate attempt failed: {gen_err}")
 
         # 3. Fallback: Ollama native /api/chat
-        if not summary:
+        if not summary and native_fallback:
             try:
                 native_chat_resp = await http_client.post(
-                    f"{url_base}/api/chat",
+                    f"{native_root(url_base)}/api/chat",
                     json={
                         "model": resolved_model,
                         "messages": [
@@ -324,7 +375,7 @@ async def summarize_event(
     if client:
         await _execute_with_client(client)
     else:
-        async with httpx.AsyncClient(timeout=120.0, headers=headers) as local_client:
+        async with httpx.AsyncClient(timeout=get_timeout(), headers=headers) as local_client:
             await _execute_with_client(local_client)
 
     if not summary:

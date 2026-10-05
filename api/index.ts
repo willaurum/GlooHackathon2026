@@ -3,6 +3,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
 import { DEMO_SLUG, access, churchHeaders, churchPath, findChurch, isStaff, onBaseDomain, validSlug } from './churches';
+import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
 export { ContainerProxy };
@@ -56,7 +57,7 @@ export class ChurchAPI extends Container<AppEnv> {
 	// Outbound HTTPS goes through the Worker; start.sh makes the container trust its CA.
 	interceptHttps = true;
 	// allowedHosts gates everything, including outboundByHost, so the bridge hosts must be listed.
-	allowedHosts = ['church-db', 'notes-media', 'workers-ai', ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS];
+	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS];
 
 	// The container and the Worker's /ask share each church's database.
 	// Assigned (not declared as a class field) so the library's static setter registers it.
@@ -69,6 +70,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			},
 			'notes-media': (request: Request, env: AppEnv) => mediaBridge(request, env),
 			'workers-ai': (request: Request, env: AppEnv) => aiBridge(request, env),
+			// The team's HPC model through scripts/team-ai-bridge (a stopgap until the Gloo key); see teamai.ts.
+			[TEAM_AI_HOST]: (request: Request, env: AppEnv) => teamAiBridge(request, env),
 		};
 	}
 
@@ -80,10 +83,11 @@ export class ChurchAPI extends Container<AppEnv> {
 			WORKERS_AI_URL: 'http://workers-ai',
 			MAX_DURATION_SEC: env.MAX_DURATION_SEC,
 			YTDLP_COOKIES: env.YTDLP_COOKIES ?? '',
-			// Chat runs in demo mode until one of these secrets is set.
+			// Chat runs in demo mode until one of these secrets is set, or the team AI bridge is (TEAM_AI_URL + TEAM_AI_KEY).
 			GLOO_API_KEY: env.GLOO_API_KEY ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
+			...teamAiEnvVars(env),
 		};
 	}
 
