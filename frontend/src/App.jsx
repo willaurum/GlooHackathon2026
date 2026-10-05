@@ -11,13 +11,14 @@ import { churchApi, givingCapabilities } from './giving.js';
 import Home from './Home.jsx';
 import { PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
+import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -25,7 +26,8 @@ const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
 
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 // Pages that work before the church API knows about new churches: giving has its own API.
-const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'start']);
+// #/platform (every church, for the platform team) is not tied to the church showing.
+const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'start', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
@@ -162,7 +164,7 @@ export default function App() {
   // A new church on an older church API: everything but giving waits for the deploy.
   const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
   let page;
-  if (listing?.missing && section !== 'start') page = <ChurchMissing />;
+  if (listing?.missing && section !== 'start' && section !== 'platform') page = <ChurchMissing />;
   else if (blocked) page = <ChurchNotReady section={section} />;
   else page = <>
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
@@ -191,6 +193,7 @@ export default function App() {
     </div>}
     {section === 'start' && <div className="page"><ChurchStart /></div>}
     {section === 'setup' && <div className="page"><ChurchSetup /></div>}
+    {section === 'platform' && <div className="page"><Platform /></div>}
   </>;
 
   return <ChurchContext.Provider value={church}>

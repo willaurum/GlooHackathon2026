@@ -902,6 +902,20 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .setup-number { max-width: 200px; }
 .staff-signin { max-width: 560px; }
 
+/* #/platform: every church, for the platform team only. */
+.platform-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; }
+.platform-bar .search { flex: 1 1 260px; max-width: 420px; }
+.platform-bar .search input { width: 100%; }
+.platform-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.platform-church { display: flex; flex-direction: column; gap: 10px; padding: 20px; min-width: 0; }
+.platform-head h2 { font-size: 19px; overflow-wrap: anywhere; }
+.platform-head p { font-size: 14px; margin: 2px 0 4px; }
+.platform-head code { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.platform-tags .tag { margin-bottom: 0; text-transform: none; }
+.platform-counts { font-size: 14px; color: var(--ink); }
+.platform-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.platform-actions a { min-height: 40px; padding: 0 14px; font-size: 14px; text-decoration: none; }
+
 @media (max-width: 860px) {
   .church-name.compact { display: block; flex: 1; min-width: 0; }
   .church-name.compact .church { padding: 4px 8px; border: 0; gap: 8px; background: transparent; }
@@ -912,4 +926,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .setup-row .setup-wide { grid-column: 1 / -1; }
   .setup-row .setup-remove { grid-column: 2; justify-self: end; }
   .church-state { padding: 22px; }
+  .platform-list { grid-template-columns: 1fr; }
+  .platform-bar .search { max-width: none; }
 }

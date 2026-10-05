@@ -41,13 +41,14 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/start` (Add your church) and `#/setup` (Church setup). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` and `#/give/start` still work. A section with sub-pages opens its first sub-page. |
+| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/start` (Add your church), `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` and `#/give/start` still work. A section with sub-pages opens its first sub-page. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
 | `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchStart.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Add your church, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
 | `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
 | `frontend/src/PastorNotes.jsx`, `verses.js` | Sermon Notes, and the Bible reference parser and passage loader. |
+| `frontend/src/Platform.jsx`, `platformChurches.js` | `#/platform`, the platform team's list of every church (see [The platform list](#the-platform-list-for-the-team-building-belong)). |
 | `frontend/src/Give.jsx`, `GiveChurchBar.jsx`, `GiveStaff.jsx`, `giving.js` | Giving, the giving church bar, the giving staff area, and the giving API client. |
 | `frontend/src/ChatWidget.jsx`, `chatFormat.js`, `chatHistory.js`, `chatNavigation.js` | Ask Belong. |
 | `frontend/src/styles.css` | Design tokens (`:root`) and all styles. |
@@ -95,7 +96,15 @@ Any church can sign up and get the whole site. Grace Community is just the demo 
 
 Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church name sits at the top of the sidebar (the phone top bar on phones), with **Staff sign in / Church setup** (`#/setup`) under it.
 
-**Churches do not see each other.** There is no church list, search or switcher anywhere on the site: a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup and the end of sign-up show the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church** and **Add your church**, and is not kept as the saved church. Grace Community stays a public demo.
+**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-belong) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup and the end of sign-up show the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church** and **Add your church**, and is not kept as the saved church. Grace Community stays a public demo.
+
+### The platform list (for the team building belong.)
+
+Churches never see each other, but the people building the site need to. `#/platform` is a hidden page (not in the navigation, not linked anywhere) that lists every church in the registry: name, city, the date it joined, its giving mode (demo, Stripe test or Stripe live), its number of funds and mission trips, its gift count and total, and whether giving setup is done (Stripe connected and a trip posted, the same checklist as the staff area). Each church has **Open site** (`#/c/<slug>/`), **Give page** and **Staff sign in** buttons, and a search box filters by name, city or link. Opening a church this way makes it this browser's church, like any church link.
+
+The page asks once for the platform key and keeps it in `sessionStorage` (this browser tab only). It reads `GET /api/platform/churches` on the giving Worker, which is off (404) until the `PLATFORM_ADMIN_KEY` secret is set, and then needs `Authorization: Bearer <PLATFORM_ADMIN_KEY>`. Wrong keys are rate limited per IP like staff sign-in. The list never includes passwords or hashes, Stripe keys or hints, webhook or portal details, or any donor name or email. Before the giving Worker is deployed with this route and the secret is set, the page says "Not available yet. Deploy the giving Worker and set PLATFORM_ADMIN_KEY."
+
+To turn it on: deploy `api-giving/` (merge to `main`, or Actions > Deploy backend), then `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving` with a long random value (`openssl rand -base64 32`), and share it with the team only. To turn it off again, `npx wrangler secret delete PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`.
 
 ### One registry, one staff login
 
@@ -195,6 +204,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
 | `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
+| `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
 
 The Serve, Guests, Calendar, Prayer map, verse and chat routes are public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key or that church staff session; screens with people and their contact details are staff only on every church except the demo church (see [Who may call what](#who-may-call-what)). Churches add no new secrets: the church API reaches the giving Worker through the `GIVING` service binding.
@@ -320,7 +330,7 @@ latest.
 
 ## Give
 
-Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Durable Object, so churches' data is fully separate, and a small `GivingRegistry` object keeps church names and web addresses unique and powers church search. The frontend talks to it through `VITE_GIVING_API_BASE` (or `/giving-api` on previews).
+Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Durable Object, so churches' data is fully separate, and a small `GivingRegistry` object keeps church names and web addresses unique and lists them for the platform team (`#/platform`). The frontend talks to it through `VITE_GIVING_API_BASE` (or `/giving-api` on previews).
 
 **Privacy.** Public pages show totals, goal progress and gift counts, never who gave. The Give form only asks for the fund, amount and one-time or monthly. Stripe Checkout asks the donor for their name (`name_collection[individual][enabled]=true`; on an older Stripe API version without it, the billing address form, which includes the name) and email. When the payment completes, the `checkout.session.completed` webhook (or the confirm lookup when the donor returns first) saves `customer_details.individual_name`/`name` and `customer_details.email` on the gift, and monthly renewals reuse them. Only signed-in church staff see them (in the Gifts list and CSV), for giving records and receipts; a gift still in Checkout shows "Waiting for Stripe". Name, email or `anonymous` sent by an older page are ignored. Demo gifts have no Stripe page, so they are recorded as "Demo donor" with no email. Gifts recorded as anonymous before have no name stored, so they still show as "Anonymous" to staff.
 
@@ -354,6 +364,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 | `GET` | `/api/health` | none | Liveness; `churches: true` means church support is deployed. |
 | `GET` | `/api/churches` | none | Only the public demo church, whatever the query. Churches are not listed or searchable; kept so older builds still render. |
 | `POST` | `/api/churches` | none (rate-limited) | Sign up a church. |
+| `GET` | `/api/platform/churches` | `PLATFORM_ADMIN_KEY` (wrong keys rate-limited) | Every church for the platform team: slug, name, city, `createdAt`, `demo`, and `giving` (mode, currency, fund, trip and gift counts, total raised, setup checklist). 404 when the secret is not set. |
 | `GET` | `/api/directory/{slug}` | none | One church listing (slug, name, city) from the registry. The church API uses it to check a church exists. |
 | `GET` | `/api/churches/{slug}/admin/session` | staff session | 200 when the session is valid for that church. The church API uses it for its staff-only routes. |
 | `GET` | `/api/churches/{slug}` | none | Public church page: funds, trips, totals, presets, mode. |
@@ -368,7 +379,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 | `GET` / `POST` | `/api/config`, `/api/gifts`, `/api/checkout`, `/api/confirm/{id}` | none | The original single-church API, now served by the demo church for older builds. `/api/gifts` returns only a count and total. |
 
 - **Demo mode**: with no Stripe key connected, checkout is simulated and gifts are recorded as `demo`, so previews work with zero keys.
-- **Testing without Stripe**: `api-giving/test/fake-stripe.mjs` is a small fake Stripe server and `api-giving/test/api.test.mjs` runs the API checks against `wrangler dev`. Point the Worker at the fake with the `STRIPE_API_BASE` var (default `https://api.stripe.com`); never set it in production.
+- **Testing without Stripe**: `api-giving/test/fake-stripe.mjs` is a small fake Stripe server and `api-giving/test/api.test.mjs` runs the API checks against `wrangler dev`. For the platform list, put a `PLATFORM_ADMIN_KEY` in `.dev.vars` and run the test with the same value in `PLATFORM_KEY` (and optionally `API_NO_PLATFORM` pointing at a second `wrangler dev` without it, to check the 404). Point the Worker at the fake with the `STRIPE_API_BASE` var (default `https://api.stripe.com`); never set it in production.
 - Checkout success and cancel links go back to the frontend origin that started the gift (it must be listed in `ALLOWED_ORIGIN`). A checkout started from a branch preview returns to the live site.
 
 ## Calendar
