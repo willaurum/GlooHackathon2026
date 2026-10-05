@@ -318,7 +318,21 @@ def categorize(segments):
             log.warning('categorize failed: %s', err)
             continue
         annotations += _parse_annotations(str(text), first, first + len(window) - 1)
-    return annotations
+    return merge_annotations(annotations)
+
+
+def merge_annotations(annotations):
+    """One annotation per passage: the model sometimes tags the same claim twice, over the same or touching segments."""
+    merged = []
+    for a in sorted(annotations, key=lambda a: (a['category'], a['label'].strip().lower(), a['seg_from'])):
+        last = merged[-1] if merged else None
+        if (last and last['category'] == a['category'] and last['label'].strip().lower() == a['label'].strip().lower()
+                and a['seg_from'] <= last['seg_to'] + 1):
+            last['seg_to'] = max(last['seg_to'], a['seg_to'])
+            last['confidence'] = max(last['confidence'], a['confidence'])
+        else:
+            merged.append(dict(a))
+    return sorted(merged, key=lambda a: (a['seg_from'], a['seg_to']))
 
 
 # --- The job ---

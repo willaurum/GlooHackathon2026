@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, apiHeaders, apiUrl, getApiKey, setApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
-import { fetchVerse, parseReference } from './verses.js';
+import { fetchVerse, referenceParts } from './verses.js';
 
 const pending = note => note.status === 'queued' || note.status === 'processing';
 const ERRORS = {
@@ -110,6 +110,18 @@ function VerseCard({ reference, onClose }) {
   </div>;
 }
 
+// Notes saved before the backend merged duplicates can tag the same claim twice over touching segments.
+function mergeAnnotations(list) {
+  const out = [];
+  for (const a of list) {
+    const same = out.find(b => b.category === a.category && b.label.trim().toLowerCase() === (a.label || '').trim().toLowerCase()
+      && a.seg_from <= b.seg_to + 1 && b.seg_from <= a.seg_to + 1);
+    if (same) { same.seg_from = Math.min(same.seg_from, a.seg_from); same.seg_to = Math.max(same.seg_to, a.seg_to); }
+    else out.push({ ...a, label: a.label || '' });
+  }
+  return out;
+}
+
 function NoteView({ note, onChange }) {
   const [segments, setSegments] = useState([]), [question, setQuestion] = useState(''),
     [answer, setAnswer] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''),
@@ -119,7 +131,7 @@ function NoteView({ note, onChange }) {
     if (note.status !== 'ready') return;
     api(`/notes/${note.id}/segments`).then(setSegments).catch(err => setError(err.message));
     // Highlights are optional; a transcript without them still reads fine.
-    api(`/notes/${note.id}/annotations`).then(setAnnotations).catch(() => {});
+    api(`/notes/${note.id}/annotations`).then(list => setAnnotations(mergeAnnotations(list))).catch(() => {});
   }, [note.id, note.status]);
   // Segment idx -> its annotations, and passage counts per category.
   const [bySegment, counts] = useMemo(() => {
@@ -172,12 +184,14 @@ function NoteView({ note, onChange }) {
       const starts = shown.filter(a => a.seg_from === s.idx);
       return <li key={s.idx} className={shown.length ? 'hl hl-' + shown[0].category : undefined}>
         {starts.length > 0 && <span className="hl-legend">{starts.map((a, i) => {
-          const ref = BIBLE_CATS.has(a.category) && parseReference(a.label);
-          const key = `${s.idx}:${i}`;
-          return <span key={key}>{i > 0 && ' · '}{CAT_LABEL[a.category]}{a.label && ': '}
-            {ref ? <button className="hl-verse-btn" aria-expanded={openVerse?.key === key}
-                onClick={() => setOpenVerse(openVerse?.key === key ? null : { key, ref })}>{a.label}</button>
-              : a.label}
+          const parts = BIBLE_CATS.has(a.category) ? referenceParts(a.label) : [{ text: a.label, ref: null }];
+          return <span key={i}>{i > 0 && ' · '}{CAT_LABEL[a.category]}{a.label && ': '}
+            {parts.map((p, j) => {
+              const key = `${s.idx}:${i}:${j}`;
+              return p.ref ? <button key={j} className="hl-verse-btn" aria-expanded={openVerse?.key === key}
+                  onClick={() => setOpenVerse(openVerse?.key === key ? null : { key, ref: p.ref })}>{p.text}</button>
+                : p.text;
+            })}
           </span>;
         })}</span>}
         <b>{s.timestamp}</b> {s.text}
