@@ -32,7 +32,7 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_FALLBACK: ${AI_FALLBACK:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss:20b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:27b}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       GLOO_API_KEY: ${GLOO_API_KEY:-}
       GLOO_MODEL: ${GLOO_MODEL:-gloo-anthropic-claude-haiku-4.5}
