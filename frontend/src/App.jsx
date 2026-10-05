@@ -14,11 +14,12 @@ import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
+import Blog from './Blog.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -170,6 +171,10 @@ export default function App() {
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
     {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
+    {section === 'blog' && <div className="page">
+      <PageHeader eyebrow="Church Blog" title="Reflections & stories." text="Pastoral teaching, ministry updates, and community reflections — with NLP categorization and AI bullet summaries." />
+      <Blog />
+    </div>}
     {section === 'notes' && <div className="page">
       <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
       <PastorNotes route={route} go={go} />

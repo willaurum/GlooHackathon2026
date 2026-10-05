@@ -176,9 +176,18 @@ TOOLS = [
 
 def provider_chain():
     """Configured providers in the order to try them: [(name, model, extra_body, api_key), ...]."""
+    try:
+        from .config import settings
+        primary = settings.ai_provider
+        fallback = settings.ai_fallback
+    except Exception:
+        primary = os.environ.get('AI_PROVIDER', 'ollama')
+        fallback = os.environ.get('AI_FALLBACK', '')
     chain = []
-    for name in (os.environ.get('AI_PROVIDER', 'gloo'), os.environ.get('AI_FALLBACK', '')):
+    for name in (primary, fallback):
         name = name.strip().lower()
+        if not name:
+            continue
         spec = PROVIDERS.get(name)
         key = os.environ.get(spec['key'], '').strip() if spec else ''
         if name == 'ollama':
@@ -195,8 +204,12 @@ def status():
 
 def ollama_base_url():
     # The calendar's AI client takes OLLAMA_BASE_URL with or without /v1; the OpenAI SDK needs it.
-    url = (os.environ.get('OLLAMA_BASE_URL') or PROVIDERS['ollama']['base_url']).rstrip('/')
-    return url if url.endswith('/v1') else url + '/v1'
+    try:
+        from .config import settings
+        return settings.ollama_base_url
+    except Exception:
+        url = (os.environ.get('OLLAMA_BASE_URL') or PROVIDERS['ollama']['base_url']).rstrip('/')
+        return url if url.endswith('/v1') else url + '/v1'
 
 
 def make_clients():
@@ -205,6 +218,7 @@ def make_clients():
             base_url=ollama_base_url() if name == 'ollama' else PROVIDERS[name]['base_url'],
             timeout=60, max_retries=1))
             for name, model, extra_body, key in provider_chain()]
+
 
 
 def looks_like_contact(value):

@@ -84,17 +84,18 @@ def start_listener_on(ip):
 
 
 def get_bridge_ips():
+    ips = {"0.0.0.0", "172.17.0.1", "172.18.0.1", "172.19.0.1", "172.20.0.1", "172.21.0.1"}
     try:
         out = subprocess.check_output(["ip", "-4", "addr", "show"]).decode()
-        ips = []
         for line in out.splitlines():
-            m = re.search(r"inet (172\.\d+\.\d+\.\d+)", line)
+            m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", line)
             if m:
-                ips.append(m.group(1))
-        return set(ips)
+                ip = m.group(1)
+                if not ip.startswith("127."):
+                    ips.add(ip)
     except Exception as e:
         logger.error(f"Error getting bridge IPs: {e}")
-        return {"172.17.0.1"}
+    return ips
 
 
 def main():
