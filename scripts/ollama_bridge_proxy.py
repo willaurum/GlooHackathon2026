@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Transparent bridge proxy for Ollama.
-Listens on Docker bridge gateway IPs (172.17.0.1, 172.21.0.1, etc.) on port 11434
+Listens on the Docker bridge gateway IPs only (docker0 and br-* interfaces) on port 11434
 and forwards all traffic to localhost (127.0.0.1:11434), allowing Docker containers
 using host.docker.internal to reach an SSH-forwarded Ollama instance bound to 127.0.0.1.
 """
@@ -84,15 +84,18 @@ def start_listener_on(ip):
 
 
 def get_bridge_ips():
-    ips = {"0.0.0.0", "172.17.0.1", "172.18.0.1", "172.19.0.1", "172.20.0.1", "172.21.0.1"}
+    """IPv4 addresses of Docker bridge interfaces only (docker0, br-<id>).
+
+    Never 0.0.0.0 or a LAN/Tailscale address: Ollama has no auth, so it must only be
+    reachable from containers on this machine.
+    """
+    ips = set()
     try:
-        out = subprocess.check_output(["ip", "-4", "addr", "show"]).decode()
+        out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"]).decode()
         for line in out.splitlines():
-            m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", line)
-            if m:
-                ip = m.group(1)
-                if not ip.startswith("127."):
-                    ips.add(ip)
+            m = re.match(r"\d+:\s+(\S+)\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+            if m and (m.group(1) == "docker0" or m.group(1).startswith("br-")):
+                ips.add(m.group(2))
     except Exception as e:
         logger.error(f"Error getting bridge IPs: {e}")
     return ips

@@ -119,7 +119,8 @@ class Settings:
     def ollama_base_url(self) -> str:
         """Return Ollama base URL (OpenAI-compatible /v1 endpoint)."""
         if os.environ.get("OLLAMA_BASE_URL"):
-            return os.environ["OLLAMA_BASE_URL"].rstrip("/")
+            url = os.environ["OLLAMA_BASE_URL"].rstrip("/")
+            return url if url.endswith("/v1") else url + "/v1"
         base = self.ai_base_url
         return f"{base}/v1"
 
