@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api, fmt, gapi } from './api.js';
+import { api, fmt } from './api.js';
+import { useChurch } from './ChurchContext.js';
+import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
 
 const STEPS = [
@@ -9,18 +11,21 @@ const STEPS = [
 ];
 
 export default function Home({ go, onAsk }) {
+  const church = useChurch();
   const [info, setInfo] = useState(null), [giving, setGiving] = useState(null);
   useEffect(() => {
     api('/info').then(setInfo).catch(() => {});
-    gapi('/api/config').then(setGiving).catch(() => {});
+    loadChurch(church.slug).then(setGiving).catch(() => {});
   }, []);
-  const pct = giving?.goal?.amount ? Math.min(100, Math.round(giving.raised / giving.goal.amount * 100)) : 0;
+  // The first fund with a goal gets the progress bar on the Give card.
+  const goal = giving && [...giving.funds, ...giving.trips].find(f => f.goal > 0);
+  const newChurch = !church.demo && info && !info.services?.length;
 
   return <div className="page home">
     <section className="home-hero">
-      <div className="eyebrow">Grace Community Church</div>
+      <div className="eyebrow">{info?.name || church.name}</div>
       <h1>A place to belong,<br />grow and give.</h1>
-      <p>Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.</p>
+      <p>{info?.about || 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.'}</p>
       <div className="hero-actions">
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={() => go('guests/plan')}>Planning your first visit?<Icon name="arrow" size={18} /></button>
@@ -28,6 +33,13 @@ export default function Home({ go, onAsk }) {
       </div>
       <div className="hero-art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /></div>
     </section>
+
+    {newChurch && <section className="card church-state home-setup">
+      <span className="icon color3"><Icon name="sparkle" size={24} /></span>
+      <h2>{church.name} is just getting started here.</h2>
+      <p>{church.staff ? 'Add your service times, address, common questions and serving teams, and this site fills in.' : 'Service times and more are on the way. You can already give online.'}</p>
+      <button className="primary" onClick={() => go(church.staff ? 'setup' : 'give')}>{church.staff ? 'Open church setup' : 'Give online'}<Icon name="arrow" size={18} /></button>
+    </section>}
 
     <div className="features">
       <a className="card feature" href="#/serve" onClick={e => { e.preventDefault(); go('serve'); }}>
@@ -45,15 +57,15 @@ export default function Home({ go, onAsk }) {
       <a className="card feature" href="#/give" onClick={e => { e.preventDefault(); go('give'); }}>
         <span className="icon color0"><Icon name="heart" size={22} /></span>
         <h2>Give</h2>
-        {giving ? <>
-          <p>{giving.goal.title}: <b>{fmt(giving.raised, giving.currency)}</b> of {fmt(giving.goal.amount, giving.currency)}</p>
-          <div className="progress" aria-hidden="true"><span style={{ width: pct + '%' }} /></div>
-        </> : <p>Support the mission with a one-time gift, in a couple of taps.</p>}
+        {goal ? <>
+          <p>{goal.name}: <b>{fmt(goal.raised, giving.currency)}</b> of {fmt(goal.goal, giving.currency)}</p>
+          <div className="progress" aria-hidden="true"><span style={{ width: percent(goal.raised, goal.goal) + '%' }} /></div>
+        </> : <p>Support the mission with a gift, in a couple of taps.</p>}
         <span className="link">Give online<Icon name="arrow" size={16} /></span>
       </a>
     </div>
 
-    {info?.services?.length > 0 && <section className="card week">
+    {info?.services?.length > 0 && <section className="card week" id="home-service-times">
       <div className="week-head">
         <div><div className="eyebrow">Join us</div><h2>Service times</h2></div>
         {info.address && <small><Icon name="pin" size={16} />{info.address}</small>}

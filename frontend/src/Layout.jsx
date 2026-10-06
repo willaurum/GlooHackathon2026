@@ -1,18 +1,27 @@
+import { useChurch } from './ChurchContext.js';
+import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 
 // One navigation for every screen size: a sidebar on desktop, a tab bar on phones.
 export const SECTIONS = [
   { route: '', label: 'Home', icon: 'home' },
+  { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
   { route: 'serve', label: 'Serve', icon: 'users', children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
   { route: 'blog', label: 'Blog', short: 'Blog', icon: 'document' },
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book' },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
-  { route: 'give', label: 'Give', icon: 'heart' },
-  { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
+  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
 ];
 
 const sectionOf = route => route.split('/')[0];
+
+// Demo identity shown in the corners of the workspace.
+export const USER = { initials: 'AL', name: 'Alex Lewis', role: 'Church leadership · Demo' };
+
+export function Avatar() {
+  return <span className="avatar" role="img" aria-label={USER.name}>{USER.initials}</span>;
+}
 
 export function Brand({ onClick }) {
   return <a className="brand" href="#/" onClick={e => { e.preventDefault(); onClick(); }}><b>b</b>belong<span>.</span></a>;
@@ -21,7 +30,8 @@ export function Brand({ onClick }) {
 export function Sidebar({ route, go, onAsk, savedCount }) {
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
-    <div className="church"><span>G</span><div><strong>Grace Community</strong><small>Springfield</small></div></div>
+    <ChurchName />
+    <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
       {SECTIONS.map(s => <div key={s.route}>
         <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
@@ -40,15 +50,30 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
       <p>Service times, groups, or a place to serve. Staff review every request.</p>
       <button className="secondary wide" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
     </div>
+    <div className="profile">
+      <Avatar />
+      <div><strong>{USER.name}</strong><small>{USER.role}</small></div>
+    </div>
   </aside>;
 }
 
 export function TopBar({ go, onAsk }) {
   return <header className="topbar">
     <Brand onClick={() => go('')} />
-    <span className="topbar-church">Grace Community</span>
+    <ChurchName compact />
+    <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
+    <Avatar />
   </header>;
+}
+
+// Desktop-only strip in the top-right corner; phones get the avatar in the TopBar instead.
+export function WorkspaceBar() {
+  const church = useChurch();
+  return <div className="workspace-bar">
+    {church.demo ? <span className="demo-pill">● Demo workspace</span> : church.staff && <span className="demo-pill">● Signed in as staff</span>}
+    <Avatar />
+  </div>;
 }
 
 export function TabBar({ route, go, onAsk, chatOpen, savedCount }) {

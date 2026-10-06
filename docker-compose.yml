@@ -23,24 +23,25 @@ services:
     build: ./backend
     container_name: gloo-backend
     extra_hosts:
-      - "host.docker.internal:172.21.0.1"
+      - "host.docker.internal:${DOCKER_HOST_IP:-10.13.39.77}"
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-gloo}:${POSTGRES_PASSWORD:-gloo}@db:5432/${POSTGRES_DB:-gloo}
       AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_FALLBACK: ${AI_FALLBACK:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
-      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:27b}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       GLOO_API_KEY: ${GLOO_API_KEY:-}
-      GLOO_MODEL: ${GLOO_MODEL:-}
+      GLOO_MODEL: ${GLOO_MODEL:-gloo-anthropic-claude-haiku-4.5}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
-      AI_BASE_URL: ${AI_BASE_URL}
-      AI_MODEL: ${AI_MODEL}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
+      AI_BASE_URL: ${AI_BASE_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}}
+      AI_MODEL: ${AI_MODEL:-${OLLAMA_MODEL:-qwen3.8:27b}}
       AI_API_KEY: ${AI_API_KEY:-}
     volumes:
       - ./backend/app:/app/app

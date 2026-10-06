@@ -6,8 +6,6 @@ import time
 import logging
 import httpx
 
-from .config import settings
-
 logger = logging.getLogger(__name__)
 
 # Active model override in memory, if changed via API
@@ -17,20 +15,44 @@ _status_cache_time: float = 0.0
 
 
 def get_base_url() -> str:
-    """Return the configured AI base URL from settings."""
-    return settings.ai_base_url
+    """Return the configured AI base URL, checking AI_BASE_URL, OPENAI_BASE_URL, and OLLAMA_BASE_URL."""
+    try:
+        from .config import settings
+        return settings.ai_base_url
+    except Exception:
+        url = (
+            os.environ.get("AI_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("OLLAMA_BASE_URL")
+            or "http://127.0.0.1:11434"
+        ).rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
+        return url
 
 
 def get_api_key() -> str:
-    """Return the configured AI API key from settings."""
-    return settings.ai_api_key
+    """Return the configured AI API key, if any."""
+    try:
+        from .config import settings
+        return settings.ai_api_key
+    except Exception:
+        return os.environ.get("AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
 
 
 def get_default_model() -> str:
     """Return the active model (runtime override or settings default: qwen3.8:27b)."""
     if _active_model:
         return _active_model
-    return settings.ai_model
+    try:
+        from .config import settings
+        return settings.ai_model
+    except Exception:
+        return (
+            os.environ.get("AI_MODEL")
+            or os.environ.get("OLLAMA_MODEL")
+            or "qwen3.8:27b"
+        )
 
 
 def set_default_model(model: str) -> None:
@@ -323,7 +345,11 @@ async def summarize_event(
     model: str = None,
     client: httpx.AsyncClient = None,
 ) -> str:
-    """Send an event prompt to the configured AI endpoint to generate an AI summary."""
+    """Send an event prompt to the configured AI endpoint to generate an AI summary.
+    
+    Compatible with any OpenAPI / OpenAI chat completions endpoint
+    as well as native Ollama generate/chat endpoints.
+    """
     system_prompt = (
         "You are an editor for a church newsletter. Write a warm, inviting 2-sentence bulletin summary "
         "of this church event for members and visitors. Output ONLY the summary."

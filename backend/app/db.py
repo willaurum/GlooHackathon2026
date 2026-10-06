@@ -3,6 +3,11 @@
 The database is a SQLite Durable Object. It's reached over HTTP at CHURCH_DB_URL
 (the Worker routes the `church-db` host to it). Each call sends a batch of
 {sql, params} statements; the Durable Object runs a batch as one transaction.
+
+Every church has its own database. The church a request is for is set by
+church_scope.py (from the X-Church header the Worker adds) and every call here
+goes to that church, so endpoints never pass a church around. The first call for
+a church creates its tables; only the demo church is seeded with the JSON files.
 """
 
 import os
@@ -10,6 +15,9 @@ import json
 import logging
 import secrets
 import sqlite3
+import threading
+import contextvars
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -20,24 +28,37 @@ CHURCH_DB_URL = os.environ.get("CHURCH_DB_URL", "http://church-db")
 
 _client = httpx.Client(base_url=CHURCH_DB_URL, timeout=30)
 _use_local_sqlite = False
-_sqlite_conn = None
+_sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
+ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
+                         'political_event', 'personal_story', 'inerrancy_claim')
+
+# --- Which church ---
+
+DEMO_CHURCH = 'grace-community'
+# (slug, name, city) of the church this request or job is for.
+_church = contextvars.ContextVar('church', default=(DEMO_CHURCH, '', ''))
+_ready = set()
+_initializing = set()
+_init_lock = threading.RLock()
 
 
-def _get_sqlite_conn():
-    global _sqlite_conn
-    if _sqlite_conn is None:
-        db_file = os.environ.get("SQLITE_DB_PATH", "/app/church.db" if Path("/app").exists() else "church.db")
-        _sqlite_conn = sqlite3.connect(db_file, check_same_thread=False)
-        _sqlite_conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
-    return _sqlite_conn
+def _get_sqlite_conn(slug: str = DEMO_CHURCH):
+    global _sqlite_conns
+    if slug not in _sqlite_conns:
+        db_dir = Path(os.environ.get("SQLITE_DB_DIR", "/app" if Path("/app").exists() else "."))
+        db_file = db_dir / f"church_{slug}.db" if slug != DEMO_CHURCH else db_dir / "church.db"
+        conn = sqlite3.connect(db_file, check_same_thread=False)
+        conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
+        _sqlite_conns[slug] = conn
+    return _sqlite_conns[slug]
 
 
-def _run_local_sqlite(*statements):
-    conn = _get_sqlite_conn()
+def _run_local_sqlite(slug, *statements):
+    conn = _get_sqlite_conn(slug)
     results = []
     with conn:
         for sql, params in statements:
@@ -49,23 +70,52 @@ def _run_local_sqlite(*statements):
     return results
 
 
+def current_church():
+    return _church.get()[0]
+
+
+@contextmanager
+def use_church(slug, name='', city=''):
+    """Send every database call in this block to one church."""
+    token = _church.set((slug, name, city))
+    try:
+        yield
+    finally:
+        _church.reset(token)
+
+
+def ready_churches():
+    """Churches whose database this process has opened."""
+    return sorted(_ready)
+
+
+def _ensure_ready(slug):
+    with _init_lock:
+        if slug not in _ready and slug not in _initializing:
+            initialize()
+
+
 def run(*statements):
-    """Run [(sql, params), ...] as one transaction. Returns one result per statement:
+    """Run [(sql, params), ...] as one transaction in the current church. Returns one result per statement:
     {'rows': [...], 'rowsWritten': n}."""
     global _use_local_sqlite
+    slug = current_church()
+    if slug not in _ready:
+        _ensure_ready(slug)
+
     if _use_local_sqlite or not CHURCH_DB_URL or CHURCH_DB_URL.startswith("sqlite"):
-        return _run_local_sqlite(*statements)
+        return _run_local_sqlite(slug, *statements)
 
     batch = [{'sql': sql, 'params': [int(p) if isinstance(p, bool) else p for p in params]}
              for sql, params in statements]
     try:
-        response = _client.post('/sql', json={'batch': batch})
+        response = _client.post('/sql', json={'batch': batch}, headers={'X-Church': slug})
         response.raise_for_status()
         return response.json()['results']
     except Exception as exc:
         log.warning("Remote church-db unavailable (%s); falling back to local SQLite", exc)
         _use_local_sqlite = True
-        return _run_local_sqlite(*statements)
+        return _run_local_sqlite(slug, *statements)
 
 
 def query(sql, params=()):
@@ -78,14 +128,15 @@ def one(sql, params=()):
 
 
 def close():
-    global _sqlite_conn
+    global _sqlite_conns
     _client.close()
-    if _sqlite_conn:
+    for conn in _sqlite_conns.values():
         try:
-            _sqlite_conn.close()
+            conn.close()
         except Exception:
             pass
-        _sqlite_conn = None
+    _sqlite_conns.clear()
+
 
 
 def _data(row):
@@ -94,7 +145,23 @@ def _data(row):
 
 
 def initialize():
-    """Create tables and seed content without resetting user data. One batch."""
+    """Open the current church: create its tables without resetting data. The demo church is
+    seeded from the JSON files; a new church starts empty, with just its name and city."""
+    slug, name, city = _church.get()
+    with _init_lock:
+        _initializing.add(slug)
+        try:
+            _create_tables(seed=slug == DEMO_CHURCH)
+            if slug != DEMO_CHURCH:
+                start_church(name or slug, city)
+            _ready.add(slug)
+        finally:
+            _initializing.discard(slug)
+
+
+def _create_tables(seed=True):
+    """Create tables and seed content without resetting user data. One batch.
+    With seed=False only the tables are made (every INSERT is left out)."""
     ministries = json.loads(Path(__file__).with_name('ministries.json').read_text(encoding='utf-8'))
     statements = [
         ("CREATE TABLE IF NOT EXISTS ministries (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
@@ -145,6 +212,16 @@ def initialize():
             text TEXT NOT NULL,
             embedding TEXT NOT NULL,
             PRIMARY KEY (note_id, idx)
+        )""", ()),
+        # Transcript passages tagged by category (Bible quote, personal story, ...), as segment ranges.
+        (f"""CREATE TABLE IF NOT EXISTS annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            seg_from INTEGER NOT NULL,
+            seg_to INTEGER NOT NULL,
+            category TEXT NOT NULL CHECK (category IN ({', '.join(repr(c) for c in ANNOTATION_CATEGORIES)})),
+            label TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 1.0
         )""", ()),
         # First-time guest sign-ups and their day-of arrival status.
         (f"""CREATE TABLE IF NOT EXISTS visits (
@@ -199,14 +276,13 @@ def initialize():
             data TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
-        # Blog posts: reflections, stories, and pastoral teaching.
         (f"""CREATE TABLE IF NOT EXISTS blog_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             author TEXT NOT NULL DEFAULT 'Church Staff',
             categories TEXT NOT NULL DEFAULT '[]',
-            bullet_summary TEXT,
+            bullet_summary TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT {NOW},
             updated_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
@@ -278,7 +354,20 @@ def initialize():
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
-    run(*statements)
+    run(*(s for s in statements if seed or not s[0].lstrip().upper().startswith('INSERT')))
+    if not seed:
+        return
+    # Backfill shift schedules and requirements into existing ministries without overwriting.
+    seeds = {m['id']: m for m in ministries}
+    updates = []
+    for row in query("SELECT id, data FROM ministries"):
+        if row['id'] in seeds:
+            existing = _data(row)
+            merged = backfill_ministry(existing, seeds[row['id']])
+            if merged != existing:
+                updates.append(("UPDATE ministries SET data = ? WHERE id = ?", (json.dumps(merged), row['id'])))
+    if updates:
+        run(*updates)
     # Backfill new seed fields into the existing info row without overwriting.
     _row = one("SELECT data FROM church_content WHERE kind = 'info'")
     if _row:
@@ -287,13 +376,36 @@ def initialize():
         run(("UPDATE church_content SET data = ? WHERE kind = 'info'", (json.dumps(_merged),)))
 
 
+def backfill_ministry(existing, seed):
+    """Add missing shifts and eligibility metadata from the seed; saved schedules and counts win."""
+    merged = json.loads(json.dumps(existing))
+    merged.setdefault('shifts', seed.get('shifts', []))
+    merged.setdefault('requirements', seed.get('requirements', []))
+    seed_shifts = {shift['id']: shift for shift in seed.get('shifts', [])}
+    for shift in merged['shifts']:
+        seed_shift = seed_shifts.get(shift.get('id'))
+        if seed_shift:
+            for key in ('services', 'frequencies'):
+                shift.setdefault(key, seed_shift.get(key, []))
+    return merged
+
+
+def with_shift_coverage(ministry):
+    """Keep existing API coverage fields grounded in the scheduled positions."""
+    if 'shifts' not in ministry:
+        return ministry
+    return {**ministry,
+            'filled': sum(shift['filled'] for shift in ministry['shifts']),
+            'total': sum(shift['total'] for shift in ministry['shifts'])}
+
+
 def list_ministries():
-    return [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")]
+    return [with_shift_coverage(_data(row)) for row in query("SELECT data FROM ministries ORDER BY id")]
 
 
 def get_ministry(ministry_id):
     row = one("SELECT data FROM ministries WHERE id = ?", (ministry_id,))
-    return _data(row) if row else None
+    return with_shift_coverage(_data(row)) if row else None
 
 
 def get_church_info():
@@ -302,6 +414,61 @@ def get_church_info():
 
 def list_content(kind):
     return [_data(row) for row in query("SELECT data FROM church_content WHERE kind = ? ORDER BY id", (kind,))]
+
+
+# --- A church: its first details, and its content as one document ---
+
+# The info fields every church has. A new church starts with these empty except its name and city.
+BLANK_INFO = {'name': '', 'city': '', 'address': '', 'phone': '', 'email': '', 'office_hours': '',
+              'services': [], 'about': '', 'first_visit': '', 'care_team': '', 'map_query': ''}
+CONTENT_KINDS = ('faqs', 'events', 'groups')
+EVENT_COLUMNS = ('title', 'category', 'date', 'time', 'location', 'ministry_name', 'description', 'ai_summary')
+
+
+def start_church(name, city=''):
+    """The first rows of a new church: its info and config. Never overwrites."""
+    info = {**BLANK_INFO, 'name': name, 'city': city, 'map_query': city}
+    run(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(info),)),
+        ("INSERT OR IGNORE INTO config VALUES ('church', ?)", (json.dumps({**DEFAULT_CONFIG, 'name': name}),)))
+
+
+def export_content():
+    """Everything a church shows, in the import shape (see replace_content and README.md)."""
+    return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS},
+            'ministries': [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")],
+            'calendar': list_events()}
+
+
+def replace_content(content):
+    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar)
+    in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
+    A ministry that saved connections or requests still point at is kept, so they stay readable."""
+    statements = []
+    if 'info' in content:
+        statements += [
+            ("INSERT INTO church_content VALUES ('info', 0, ?) ON CONFLICT (kind, id) DO UPDATE SET data = excluded.data",
+             (json.dumps(content['info']),)),
+            ("UPDATE config SET data = json_set(data, '$.name', ?) WHERE key = 'church'", (content['info']['name'],)),
+        ]
+    for kind in CONTENT_KINDS:
+        if kind in content:
+            statements.append(("DELETE FROM church_content WHERE kind = ?", (kind,)))
+            statements += [("INSERT INTO church_content VALUES (?, ?, ?)", (kind, item['id'], json.dumps(item)))
+                           for item in content[kind]]
+    if 'ministries' in content:
+        keep = [m['id'] for m in content['ministries']]
+        statements.append((f"""DELETE FROM ministries WHERE id NOT IN ({', '.join('?' * len(keep)) or 'SELECT NULL WHERE 0'})
+            AND id NOT IN (SELECT ministry_id FROM connections)
+            AND id NOT IN (SELECT ministry_id FROM requests WHERE ministry_id IS NOT NULL)""", tuple(keep)))
+        statements += [("INSERT INTO ministries VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+                        (m['id'], json.dumps(m))) for m in content['ministries']]
+    if 'calendar' in content:
+        statements.append(("DELETE FROM events", ()))
+        statements += [(f"INSERT INTO events (id, {', '.join(EVENT_COLUMNS)}) VALUES (?, {', '.join('?' * len(EVENT_COLUMNS))})",
+                        (e['id'], *(e.get(c) for c in EVENT_COLUMNS))) for e in content['calendar']]
+    if statements:
+        run(*statements)
+    return export_content()
 
 
 REQUEST_COLUMNS = "request_id, kind, ministry_id, name, contact, details, status, created_at"
@@ -346,7 +513,7 @@ def get_chat_log(session_id):
 def list_connections():
     rows = query("""SELECT m.data, c.connection_id, c.member FROM connections c
         JOIN ministries m ON m.id = c.ministry_id ORDER BY c.connection_id""")
-    return [{**_data(row), 'connection_id': row['connection_id'], 'member': row['member']} for row in rows]
+    return [{**with_shift_coverage(_data(row)), 'connection_id': row['connection_id'], 'member': row['member']} for row in rows]
 
 
 def save_connection(ministry_id, member):
@@ -361,6 +528,10 @@ def save_connection(ministry_id, member):
 
 def remove_connection(connection_id):
     return run(("DELETE FROM connections WHERE connection_id = ?", (connection_id,)))[0]['rowsWritten'] > 0
+
+
+def remove_request(request_id):
+    return run(("DELETE FROM requests WHERE request_id = ?", (request_id,)))[0]['rowsWritten'] > 0
 
 
 def _item(row):
@@ -421,6 +592,11 @@ def list_segments(note_id):
     return query('SELECT idx, start, "end", text FROM segments WHERE note_id = ? ORDER BY idx', (note_id,))
 
 
+def list_annotations(note_id):
+    return query("""SELECT seg_from, seg_to, category, label, confidence FROM annotations
+        WHERE note_id = ? ORDER BY seg_from, id""", (note_id,))
+
+
 def claim_note(note_id, stale_minutes=30):
     """Atomically mark a note as processing. Returns False if another job holds it."""
     row = one(f"""UPDATE notes SET status = 'processing', error = NULL, started_at = {NOW}
@@ -440,17 +616,22 @@ def fail_note(note_id, error):
     query("UPDATE notes SET status = 'failed', error = ? WHERE id = ?", (error[:300], note_id))
 
 
-def save_transcript(note_id, segments, chunks, duration):
-    """Replace a note's segments and chunks and mark it ready, in one transaction."""
+def save_transcript(note_id, segments, chunks, duration, annotations=()):
+    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction."""
     text = ' '.join(s['text'] for s in segments).strip()
     statements = [("DELETE FROM segments WHERE note_id = ?", (note_id,)),
-                  ("DELETE FROM chunks WHERE note_id = ?", (note_id,))]
+                  ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
+                  ("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
     statements += [('INSERT INTO segments (note_id, idx, start, "end", text) VALUES (?, ?, ?, ?, ?)',
                     (note_id, i, s['start'], s['end'], s['text'])) for i, s in enumerate(segments)]
     statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding) '
                     'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'], json.dumps(c['embedding'])))
                    for i, c in enumerate(chunks)]
+    statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
+                   for a in annotations]
     statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?
         WHERE id = ?""", (text, duration, len(text.split()), note_id)))
     run(*statements)
@@ -465,6 +646,7 @@ def delete_note(note_id):
         return row, True
     run(("DELETE FROM segments WHERE note_id = ?", (note_id,)),
         ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
+        ("DELETE FROM annotations WHERE note_id = ?", (note_id,)),
         ("DELETE FROM notes WHERE id = ?", (note_id,)))
     return row, False
 

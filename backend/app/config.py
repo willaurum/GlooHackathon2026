@@ -125,7 +125,10 @@ class Settings:
 
     @property
     def ollama_model(self) -> str:
-        return os.environ.get("OLLAMA_MODEL") or "gpt-oss:20b"
+        model = os.environ.get("OLLAMA_MODEL") or "qwen3.8:27b"
+        if model in ("qwen", "qwen:"):
+            return "qwen3.8:27b"
+        return model
 
     @property
     def ollama_api_key(self) -> str:
