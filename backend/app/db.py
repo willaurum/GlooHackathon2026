@@ -10,6 +10,7 @@ goes to that church, so endpoints never pass a church around. The first call for
 a church creates its tables; only the demo church is seeded with the JSON files.
 """
 
+import datetime
 import os
 import hashlib
 import json
@@ -247,14 +248,16 @@ def _create_tables(seed=True):
         # Prayer map: missionary presence regions and curated regional news.
         ("CREATE TABLE IF NOT EXISTS regions (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
         ("CREATE TABLE IF NOT EXISTS news_events (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
-        ("""CREATE TABLE IF NOT EXISTS prayer_angles (
-            angle_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        # Dated "From the field" updates, newest first on the Prayer map. Prayer points were removed.
+        ("DROP TABLE IF EXISTS prayer_angles", ()),
+        (f"""CREATE TABLE IF NOT EXISTS field_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             region_id INTEGER NOT NULL REFERENCES regions(id),
-            angle TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            prayer_points TEXT NOT NULL,
-            source_news_ids TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            date TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL,
+            author TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
         # Requests filed by the chat agent. Nothing happens until staff approve them.
         (f"""CREATE TABLE IF NOT EXISTS requests (
@@ -301,10 +304,16 @@ def _create_tables(seed=True):
     statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
     statements += [("INSERT OR IGNORE INTO church_content VALUES (?, ?, ?)", (kind, item['id'], json.dumps(item)))
                    for kind in ('faqs', 'events', 'groups') for item in church[kind]]
-    # Prayer map seed data
+    # Prayer map seed data. A region's first update is added only together with the region itself,
+    # so an update a church deletes does not come back on the next start.
     regions_file = Path(__file__).with_name('regions.json')
     if regions_file.exists():
         for region in json.loads(regions_file.read_text(encoding='utf-8')):
+            updates = region.pop('updates', [])
+            statements += [("""INSERT INTO field_updates (region_id, date, title, body, author)
+                SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM regions WHERE id = ?)""",
+                            (region['id'], u['date'], u.get('title', ''), u['body'], u.get('author', ''), region['id']))
+                           for u in updates]
             statements.append(("INSERT OR IGNORE INTO regions VALUES (?, ?)", (region['id'], json.dumps(region))))
     # Real headlines (news_live.json, from scripts/fetch_news.py) replace the news after this batch;
     # the fictional news.json is only the fallback when there is no live snapshot.
@@ -360,6 +369,7 @@ def _create_tables(seed=True):
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
     run(*(s for s in statements if seed or not s[0].lstrip().upper().startswith('INSERT')))
+    _move_testimonies_to_updates()
     if not seed:
         return
     if live_news:
@@ -448,11 +458,11 @@ def export_content():
     """Everything a church shows, in the import shape (see replace_content and README.md)."""
     return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS},
             'ministries': [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")],
-            'calendar': list_events()}
+            'calendar': list_events(), 'regions': list_regions()}
 
 
 def replace_content(content):
-    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar)
+    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar, regions)
     in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
     A ministry that saved connections or requests still point at is kept, so they stay readable."""
     statements = []
@@ -478,6 +488,17 @@ def replace_content(content):
         statements.append(("DELETE FROM events", ()))
         statements += [(f"INSERT INTO events (id, {', '.join(EVENT_COLUMNS)}) VALUES (?, {', '.join('?' * len(EVENT_COLUMNS))})",
                         (e['id'], *(e.get(c) for c in EVENT_COLUMNS))) for e in content['calendar']]
+    if 'regions' in content:
+        keep = [r['id'] for r in content['regions']]
+        statements += [("DELETE FROM field_updates", ()),
+                       (f"DELETE FROM regions WHERE id NOT IN ({', '.join('?' * len(keep)) or 'SELECT NULL WHERE 0'})", tuple(keep))]
+        for region in content['regions']:
+            data = {k: v for k, v in region.items() if k != 'updates'}
+            statements.append(("INSERT INTO regions VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+                               (region['id'], json.dumps(data))))
+            statements += [("INSERT INTO field_updates (id, region_id, date, title, body, author) VALUES (?, ?, ?, ?, ?, ?)",
+                            (u.get('id'), region['id'], u['date'], u['title'], u['body'], u['author']))
+                           for u in region['updates']]
     if statements:
         run(*statements)
     return export_content()
@@ -738,16 +759,43 @@ def mark_met(visit_id):
         RETURNING {STAFF_VISIT_COLUMNS}""", (visit_id,))
 
 
-# --- Prayer map: regions, news, and prayer angles ---
+# --- Prayer map: regions, field updates, and news ---
+
+
+def _field_update(row):
+    return {'id': row['id'], 'date': row['date'], 'title': row['title'], 'body': row['body'], 'author': row['author']}
+
+
+def _updates_by_region():
+    """Every region's field updates, newest first."""
+    out = {}
+    for row in query("SELECT id, region_id, date, title, body, author FROM field_updates ORDER BY date DESC, id DESC"):
+        out.setdefault(row['region_id'], []).append(_field_update(row))
+    return out
 
 
 def list_regions():
-    return [_data(row) for row in query("SELECT data FROM regions ORDER BY id")]
+    updates = _updates_by_region()
+    regions = [_data(row) for row in query("SELECT data FROM regions ORDER BY id")]
+    return [{**region, 'updates': updates.get(region['id'], [])} for region in regions]
 
 
 def get_region(region_id):
-    row = one("SELECT data FROM regions WHERE id = ?", (region_id,))
-    return _data(row) if row else None
+    return next((r for r in list_regions() if r['id'] == region_id), None)
+
+
+def _move_testimonies_to_updates():
+    """Older regions kept one `testimony` string; make it the region's first dated update."""
+    old = [(row['id'], _data(row)) for row in query("SELECT id, data FROM regions WHERE data LIKE '%\"testimony\"%'")]
+    statements = []
+    for region_id, region in old:
+        testimony = region.pop('testimony', '')
+        if testimony and not one("SELECT 1 FROM field_updates WHERE region_id = ?", (region_id,)):
+            statements.append(("INSERT INTO field_updates (region_id, date, title, body, author) VALUES (?, ?, '', ?, '')",
+                               (region_id, datetime.date.today().isoformat(), testimony)))
+        statements.append(("UPDATE regions SET data = ? WHERE id = ?", (json.dumps(region), region_id)))
+    if statements:
+        run(*statements)
 
 
 def list_news():
@@ -768,31 +816,6 @@ def replace_news(items, snapshot=None):
         *[("INSERT INTO news_events VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
            (item['id'], json.dumps(item))) for item in items],
         *marker)
-
-
-def news_for_country(country_code):
-    return [_data(row) for row in query("SELECT data FROM news_events WHERE json_extract(data, '$.country_code') = ? ORDER BY id", (country_code,))]
-
-
-def seen_angles(region_id):
-    rows = query("SELECT DISTINCT angle FROM prayer_angles WHERE region_id = ?", (region_id,))
-    return [row['angle'] for row in rows]
-
-
-def list_angles(region_id):
-    rows = query("SELECT angle_id, region_id, angle, summary, prayer_points, source_news_ids, created_at FROM prayer_angles WHERE region_id = ? ORDER BY created_at", (region_id,))
-    return [{**r, 'prayer_points': json.loads(r['prayer_points']), 'source_news_ids': json.loads(r['source_news_ids'])} for r in rows]
-
-
-def save_angle(region_id, angle, summary, prayer_points, source_news_ids):
-    row = one(f"""INSERT INTO prayer_angles (region_id, angle, summary, prayer_points, source_news_ids)
-        VALUES (?, ?, ?, ?, ?)
-        RETURNING angle_id, region_id, angle, summary, prayer_points, source_news_ids, created_at""",
-              (region_id, angle, summary, json.dumps(prayer_points), json.dumps(source_news_ids)))
-    if row:
-        row['prayer_points'] = json.loads(row['prayer_points'])
-        row['source_news_ids'] = json.loads(row['source_news_ids'])
-    return row
 
 
 # --- Blog posts ---

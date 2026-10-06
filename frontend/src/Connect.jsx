@@ -58,9 +58,9 @@ export default function Connect({ go, onAsk }) {
       <aside className="card about-block">
         <div className="eyebrow">Other ways</div>
         <h2>Talk to someone</h2>
-        <p>Prefer a conversation? Ask Belong about groups, events or service times, or look up the right person in the directory.</p>
+        <p>Prefer a conversation? Ask Tekton about groups, events or service times, or look up the right person in the directory.</p>
         <div className="about-actions stack">
-          <button className="secondary wide" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
+          <button className="secondary wide" onClick={onAsk}><Icon name="chat" size={18} />Ask Tekton</button>
           <button className="secondary wide" onClick={() => go('about/directory')}><Icon name="phone" size={18} />Contact directory</button>
           <button className="secondary wide" onClick={() => go('serve/saved')}><Icon name="bookmark" size={18} />My saved connections</button>
         </div>

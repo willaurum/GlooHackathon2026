@@ -23,7 +23,7 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'about/blog', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -41,7 +41,7 @@ const ABOUT_PAGES = {
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 // Pages that work before the church API knows about new churches: giving has its own API.
 // #/platform (every church, for the platform team) is not tied to the church showing.
-const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'platform']);
+const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'staff', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
@@ -60,13 +60,22 @@ function readLocation() {
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
-  // The blog moved under About; keep its first link (#/blog) working.
-  let route = ['start', 'give/start'].includes(where.route) ? 'give/staff' : where.route === 'blog' ? 'about/blog' : where.route;
+  // The blog moved under About, and Church staff out of Give; keep the old links (#/blog, #/give/staff, #/start) working.
+  let route = ['start', 'give/start', 'give/staff'].includes(where.route) ? 'staff' : where.route === 'blog' ? 'about/blog' : where.route;
   if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
   if (where.source === 'link') saveChurch(where.slug);
   return { ...where, route };
+}
+
+// The browser tab shows the church itself: its name as the title, and its letter badge (the same
+// sand-colored initial as beside the church name in the sidebar) as the icon.
+const xmlEscape = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+function churchIcon(name) {
+  const letter = xmlEscape(name.trim().charAt(0).toUpperCase() || '·');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#f3ecdd"/><text x="16" y="23" font-family="Georgia,serif" font-size="20" fill="#8f7a4f" text-anchor="middle">${letter}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
 const titleCase = slug => slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -149,7 +158,7 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
-    next = withDefault(['start', 'give/start'].includes(next) ? 'give/staff' : next, demo);
+    next = withDefault(['start', 'give/start', 'give/staff'].includes(next) ? 'staff' : next, demo);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
     setWhere(w => ({ ...w, route: next }));
@@ -187,6 +196,13 @@ export default function App() {
   }, [scrollTarget]);
 
   const name = listing?.name || (demo ? DEMO_INFO.name : '');
+  useEffect(() => {
+    if (!name) return;
+    document.title = name;
+    let icon = document.querySelector('link[rel="icon"]');
+    if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
+    icon.href = churchIcon(name);
+  }, [name]);
   const ready = demo || apiReady === true;
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
@@ -219,7 +235,7 @@ export default function App() {
       <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
       <PastorNotes route={route} go={go} />
     </div>}
-    {section === 'give' && <div className="page">
+    {(section === 'give' || section === 'staff') && <div className="page">
       <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
     </div>}
     {section === 'calendar' && <div className="page">
@@ -242,7 +258,7 @@ export default function App() {
 
   return <ChurchContext.Provider value={church}>
     <div className="app">
-      <Sidebar route={route} go={go} onAsk={() => setChatOpen(true)} savedCount={savedCount} />
+      <Sidebar route={route} go={go} savedCount={savedCount} />
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">
         <WorkspaceBar />
@@ -250,13 +266,13 @@ export default function App() {
         <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
           <footer className="site-footer">
-            <b>belong.</b>
             <span>{name || 'Your church'} · Helping people find their people.</span>
-            {demo ? <small>Demo site. Church details, people and contacts are fictional.</small> : <small>Made with belong.</small>}
+            {demo && <small>Demo site. Church details, people and contacts are fictional.</small>}
+            <small className="powered-by">Powered by Tekton</small>
           </footer>
         </main>
       </div>
-      <TabBar route={route} go={go} onAsk={() => setChatOpen(true)} chatOpen={chatOpen} savedCount={savedCount} />
+      <TabBar route={route} go={go} chatOpen={chatOpen} savedCount={savedCount} />
       <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onRequestFiled={() => setRequestsVersion(v => v + 1)} onNavigate={go} />
     </div>
   </ChurchContext.Provider>;

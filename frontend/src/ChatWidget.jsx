@@ -6,7 +6,7 @@ import { chatHistory } from './chatHistory.js';
 import { navigationPage, followSuggestion } from './chatNavigation.js';
 import { formatReply } from './chatFormat.js';
 
-const greetingFor = name => `Hi! I’m Belong, ${name || 'the church'}’s assistant. I can help with service times, events, small groups, or finding a place to serve.`;
+const greetingFor = name => `Hi! I’m Tekton, ${name || 'the church'}’s assistant. I can help with service times, events, small groups, or finding a place to serve.`;
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
 const actionLabels = {
   request_connection: 'Connection request saved for staff review',
@@ -55,8 +55,8 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
     } finally { setBusy(false); }
   }
   return <div className="chat">
-    {open && <section className="chat-panel" aria-label="Chat with Belong">
-      <div className="chat-head"><span className="icon color1"><Icon name="sparkle" size={20} /></span><div><strong>Ask Belong</strong><small>AI assistant · Staff review every request</small></div><button className="close" aria-label="Close chat" onClick={() => setOpen(false)}><Icon name="x" /></button></div>
+    {open && <section className="chat-panel" aria-label="Chat with Tekton">
+      <div className="chat-head"><span className="icon color1"><Icon name="sparkle" size={20} /></span><div><strong>Ask Tekton</strong><small>AI assistant · Staff review every request</small></div><button className="close" aria-label="Close chat" onClick={() => setOpen(false)}><Icon name="x" /></button></div>
       {!configured && <div className="chat-banner">Demo mode: basic church information and requests are available. AI conversation is not configured.</div>}
       <div className="chat-log" ref={log} aria-live="polite">
         <p className="bubble assistant">{greeting}</p>
@@ -79,6 +79,6 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
       </form>
       <small className="chat-note">Not for emergencies. In a crisis call or text 988, or call 911.</small>
     </section>}
-    {!open && <button className="chat-toggle primary" aria-expanded={open} onClick={() => setOpen(true)}><Icon name="chat" size={18} />Ask Belong</button>}
+    {!open && <button className="chat-toggle primary" aria-expanded={open} onClick={() => setOpen(true)}><Icon name="chat" size={18} />Ask Tekton</button>}
   </div>;
 }

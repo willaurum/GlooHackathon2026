@@ -115,7 +115,6 @@ const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/verse$/],
 	['GET', /^\/api\/blog(?:\/(categories|\d+))?$/],
 	['GET', /^\/api\/events\/\d+$/],
-	['GET', /^\/api\/regions\/\d+\/prayer-angles$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
 ];
@@ -143,7 +142,6 @@ const OPERATOR_ROUTES: Route[] = [['POST', /^\/api\/(ai|ollama)\/model$/]];
 const STAFF_ROUTES: Route[] = [
 	['GET', /^\/api\/church\/content$/],
 	['PUT', /^\/api\/church\/content$/],
-	['POST', new RegExp(`^/api/regions/${ID}/prayer-angles$`)],
 	// Blog routes match Ben's PR #52; drafting and approval workflows must filter drafts separately.
 	['POST', /^\/api\/blog(?:\/.*)?$/],
 	['PUT', /^\/api\/blog(?:\/.*)?$/],

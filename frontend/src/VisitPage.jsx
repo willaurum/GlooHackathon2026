@@ -115,7 +115,7 @@ export default function VisitPage() {
           <strong>{s.day} {s.time}</strong>
           <p>{s.note}</p>
         </article>)}
-      </div> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Belong or the church office in the meantime.'}</p>}
+      </div> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Tekton or the church office in the meantime.'}</p>}
     </section>
 
     {info.first_visit && <section className="card visit-section" id="visit-what-to-expect">
