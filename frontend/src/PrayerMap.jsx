@@ -143,7 +143,7 @@ export default function PrayerMap() {
             <Popup>
               <strong>{n.headline}</strong><br />
               {n.city}, {n.country} · {n.source} · {n.date}
-              <p>{n.summary}</p>
+              {n.url && <p><a href={n.url} target="_blank" rel="noopener noreferrer">Read at {n.source} ↗</a></p>}
             </Popup>
           </Marker>
         ))}
@@ -169,7 +169,9 @@ export default function PrayerMap() {
             {regionNews.length > 0
               ? regionNews.map(n => <article key={n.id}>
                   <b>{n.headline}</b>
-                  <small>{n.city} · {n.source} · {n.date}</small>
+                  <small>{n.city} · {n.source} · {n.date}
+                    {n.url && <> · <a href={n.url} target="_blank" rel="noopener noreferrer">Read source ↗</a></>}
+                  </small>
                 </article>)
               : <p>No recent news from {selected.country}.</p>}
           </div>

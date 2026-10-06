@@ -2,8 +2,8 @@
 
 NewsData's own `country` tag is a regional-coverage tag (wire stories carry 25+
 countries), so we search headlines for the country name instead. Pins sit on the
-capital with a small deterministic jitter so they don't stack. Each item's
-`summary` starts as the article's description; summarize.py may rewrite it.
+capital with a small deterministic jitter so they don't stack. Each item keeps
+the article's `url` so readers can verify the story at its source.
 """
 
 import json
@@ -82,7 +82,7 @@ def _item(code, article, title, description):
         "headline": title,
         "source": article.get("source_name") or article.get("source_id") or "unknown",
         "date": (article.get("pubDate") or "")[:10],
-        "summary": description[:400],
+        "url": article["link"],
     }
 
 
