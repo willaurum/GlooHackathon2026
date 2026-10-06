@@ -21,7 +21,7 @@ PROVIDERS = {
     'ollama': {'base_url': 'http://localhost:11434/v1', 'key': 'OLLAMA_API_KEY',
                'model': ('OLLAMA_MODEL', 'qwen3.8:27b'), 'extra_body': {}},
     'gloo': {'base_url': 'https://platform.ai.gloo.com/ai/v2/guarded', 'key': 'GLOO_API_KEY',
-             'model': ('GLOO_MODEL', 'gloo-anthropic-claude-haiku-4.5'), 'extra_body': {'auto_routing': False}},
+             'model': ('GLOO_MODEL', 'gloo-qwen-3.7-flash'), 'extra_body': {'auto_routing': False}},
     'openai': {'base_url': 'https://api.openai.com/v1', 'key': 'OPENAI_API_KEY',
                'model': ('OPENAI_MODEL', 'gpt-5-mini'), 'extra_body': {}},
     'anthropic': {'base_url': 'https://api.anthropic.com/v1/', 'key': 'ANTHROPIC_API_KEY',
@@ -193,7 +193,7 @@ def provider_chain():
         if name == 'ollama':
             key = key or 'ollama'  # The SDK requires a value; a local Ollama server does not.
         if key and name not in [c[0] for c in chain]:
-            model_name = os.environ.get(*spec['model'])
+            model_name = os.environ.get(spec['model'][0]) or spec['model'][1]
             if name == 'ollama' and model_name in ('qwen', 'qwen:'):
                 model_name = 'qwen3.8:27b'
             chain.append((name, model_name, spec['extra_body'], key))

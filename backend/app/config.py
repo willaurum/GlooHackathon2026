@@ -142,7 +142,7 @@ class Settings:
 
     @property
     def gloo_model(self) -> str:
-        return os.environ.get("GLOO_MODEL") or "gloo-anthropic-claude-haiku-4.5"
+        return os.environ.get("GLOO_MODEL") or "gloo-qwen-3.7-flash"
 
     @property
     def openai_api_key(self) -> str:

@@ -51,21 +51,23 @@ jobs:
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
           npm run deploy
 
-      # AI keys can live in GitHub secrets: whichever of these is set there is copied to the
+      # AI keys can live in GitHub secrets (and the model in a GitHub variable): whichever is set there is copied to the
       # pastor-notes Worker on every deploy. One that is not set in GitHub is left untouched.
       - name: Copy AI keys from GitHub secrets to the API Worker
         working-directory: api
         env:
           GLOO_API_KEY: ${{ secrets.GLOO_API_KEY }}
           NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
+          # Not secret: set it under Settings > Secrets and variables > Actions > Variables.
+          GLOO_MODEL: ${{ vars.GLOO_MODEL }}
         run: |
-          for name in GLOO_API_KEY NEWSDATA_API_KEY; do
+          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL; do
             value="${!name}"
             if [ -n "$value" ]; then
               printf '%s' "$value" | npx wrangler secret put "$name"
               echo "Set $name on the API Worker."
             else
-              echo "$name is not a GitHub secret; leaving the Worker's copy as it is."
+              echo "$name is not set in GitHub; leaving the Worker's copy as it is."
             fi
           done
 
