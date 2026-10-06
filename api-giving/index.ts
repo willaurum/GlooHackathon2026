@@ -48,6 +48,12 @@ const MAX_GIFT = 99_999_900;
 const SESSION_TTL = 12 * 60 * 60 * 1000;
 const PBKDF2_ITERATIONS = 100_000;
 
+// Staff roles. An owner can do everything, including adding and removing staff accounts; a site admin can do
+// everything except manage staff accounts.
+type StaffRole = 'owner' | 'site_admin';
+const STAFF_ROLES: StaffRole[] = ['owner', 'site_admin'];
+type StaffSession = { userId: string; role: StaffRole };
+
 // ALLOWED_ORIGIN is a comma-separated list of frontend origins. The first is the default.
 function allowedOrigins(env: GivingEnv): string[] {
   return String(env.ALLOWED_ORIGIN).split(',').map((o) => o.trim()).filter(Boolean);
@@ -383,6 +389,12 @@ export class GivingDO extends DurableObject<GivingEnv> {
       if (!churchCols.includes(col)) sql.exec(`ALTER TABLE church ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
     }
     sql.exec('CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)');
+    // Who a session belongs to. Sessions from the shared church password have no user and act as owner.
+    const sessionCols = sql.exec('PRAGMA table_info(sessions)').toArray().map((r: any) => String(r.name));
+    if (!sessionCols.includes('user_id')) sql.exec("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''");
+    if (!sessionCols.includes('role')) sql.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'");
+    // Staff accounts. Emails are stored lower-case.
+    sql.exec('CREATE TABLE IF NOT EXISTS staff_users (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, role TEXT NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL)');
   }
 
   get #sql() {
@@ -519,36 +531,62 @@ export class GivingDO extends DurableObject<GivingEnv> {
 
   // ---------- Staff sessions ----------
 
-  async #newSession(): Promise<string> {
+  /** A session for a staff account, or (no userId) for the shared church password, which acts as owner. */
+  async #newSession(userId = '', role: StaffRole = 'owner'): Promise<string> {
     const token = randomToken();
     const now = Date.now();
     this.#sql.exec('DELETE FROM sessions WHERE expires_at < ?', now);
-    this.#sql.exec('INSERT INTO sessions (token_hash, expires_at) VALUES (?, ?)', await sha256(token), now + SESSION_TTL);
+    this.#sql.exec('INSERT INTO sessions (token_hash, expires_at, user_id, role) VALUES (?, ?, ?, ?)', await sha256(token), now + SESSION_TTL, userId, role);
     return token;
   }
 
-  async #isAdmin(request: Request): Promise<boolean> {
+  async #session(request: Request): Promise<StaffSession | null> {
     const m = /^Bearer\s+([A-Za-z0-9_-]{20,100})$/.exec(request.headers.get('authorization') || '');
-    if (!m) return false;
-    const row = this.#sql.exec('SELECT expires_at FROM sessions WHERE token_hash = ?', await sha256(m[1])).toArray()[0];
-    return !!row && Number(row.expires_at) > Date.now();
+    if (!m) return null;
+    const row = this.#sql.exec('SELECT expires_at, user_id, role FROM sessions WHERE token_hash = ?', await sha256(m[1])).toArray()[0];
+    if (!row || Number(row.expires_at) <= Date.now()) return null;
+    const userId = String(row.user_id || '');
+    // An account's role is read fresh, so a change applies to sessions already open.
+    if (userId) {
+      const user = this.#sql.exec('SELECT role FROM staff_users WHERE id = ?', userId).toArray()[0];
+      return user ? { userId, role: user.role as StaffRole } : null;
+    }
+    return { userId: '', role: STAFF_ROLES.includes(row.role as StaffRole) ? (row.role as StaffRole) : 'owner' };
+  }
+
+  #staffCount(): number {
+    return Number(this.#sql.exec('SELECT COUNT(*) AS n FROM staff_users').toArray()[0].n);
+  }
+
+  /** Who is signed in, for the staff pages. The shared church password shows as "Church staff". */
+  #me(session: StaffSession) {
+    const u = session.userId ? this.#sql.exec('SELECT id, name, email FROM staff_users WHERE id = ?', session.userId).toArray()[0] : null;
+    return u
+      ? { id: String(u.id), name: String(u.name), email: String(u.email), role: session.role, shared: false }
+      : { id: '', name: 'Church staff', email: '', role: session.role, shared: true };
   }
 
   // ---------- RPC from the Worker: create a church ----------
 
-  async init(slug: string, name: string, city: string, currency: string, password: string): Promise<{ token?: string; error?: string }> {
+  /** With ownerEmail, the person signing up becomes the church's first owner account; without it, the church
+   *  starts on a shared staff password. */
+  async init(slug: string, name: string, city: string, currency: string, password: string, ownerName = '', ownerEmail = ''): Promise<{ token?: string; error?: string }> {
     this.#slug = slug;
     if (this.#sql.exec('SELECT 1 FROM church WHERE id = 1').toArray().length) return { error: 'That church already exists.' };
     const hash = await hashPassword(password);
     const now = new Date().toISOString();
+    const ownerId = ownerEmail ? crypto.randomUUID() : '';
     this.ctx.storage.transactionSync(() => {
       this.#sql.exec(
         'INSERT INTO church (id, slug, name, city, currency, presets, password_hash, demo_locked, created_at) VALUES (1, ?, ?, ?, ?, ?, ?, 0, ?)',
         slug, name, city, currency, JSON.stringify(NEW_CHURCH_PRESETS), hash, now
       );
+      if (ownerId) {
+        this.#sql.exec('INSERT INTO staff_users (id, name, email, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)', ownerId, ownerName, ownerEmail, 'owner', hash, now);
+      }
       this.#seedFunds(now);
     });
-    return { token: await this.#newSession() };
+    return { token: await this.#newSession(ownerId, 'owner') };
   }
 
   // ---------- RPC from the Worker: the platform team's church list ----------
@@ -902,11 +940,21 @@ export class GivingDO extends DurableObject<GivingEnv> {
     if (!this.#rateOk('login:' + ip, 5, 60_000) || !this.#rateOk('login-hour:' + ip, 30, 3_600_000)) return json({ error: 'Too many sign-in attempts. Wait a minute and try again.' }, 429);
     const body = await readJson(request);
     const password = typeof body.password === 'string' ? body.password.slice(0, 200) : '';
+    const email = str(body.email, 200).toLowerCase();
+    if (email) {
+      const user = this.#sql.exec('SELECT id, role, password_hash FROM staff_users WHERE email = ?', email).toArray()[0];
+      if (!user || !(await verifyPassword(password, String(user.password_hash)))) return json({ error: 'That email or password is not right.' }, 401);
+      const session: StaffSession = { userId: String(user.id), role: user.role as StaffRole };
+      return json({ token: await this.#newSession(session.userId, session.role), expiresIn: SESSION_TTL / 1000, me: this.#me(session) });
+    }
+    // The shared church password signs in as owner: always on the demo church (ADMIN_KEY, so the team never
+    // loses it), and on other churches only until their first staff account exists.
     let ok = false;
-    if (c.password_hash) ok = await verifyPassword(password, c.password_hash);
-    else if (c.demo_locked && this.env.ADMIN_KEY) ok = ctEqual(password, String(this.env.ADMIN_KEY));
+    if (c.demo_locked && this.env.ADMIN_KEY) ok = ctEqual(password, String(this.env.ADMIN_KEY));
+    else if (c.password_hash && !this.#staffCount()) ok = await verifyPassword(password, c.password_hash);
+    else if (c.password_hash) return json({ error: 'This church uses staff accounts now. Sign in with your email and password.' }, 401);
     if (!ok) return json({ error: 'That password is not right.' }, 401);
-    return json({ token: await this.#newSession(), expiresIn: SESSION_TTL / 1000 });
+    return json({ token: await this.#newSession(), expiresIn: SESSION_TTL / 1000, me: this.#me({ userId: '', role: 'owner' }) });
   }
 
   async #logout(request: Request): Promise<Response> {
@@ -932,7 +980,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     };
   }
 
-  #adminOverview(c: ChurchRow) {
+  #adminOverview(c: ChurchRow, session: StaffSession) {
     const pub = this.#publicChurch(c);
     const funds = this.#funds(true).map((f) => ({
       id: f.id,
@@ -950,32 +998,84 @@ export class GivingDO extends DurableObject<GivingEnv> {
       inStripe: !!f.product_id,
     }));
     const newApplications = Number(this.#sql.exec("SELECT COUNT(*) AS n FROM applications WHERE status = 'new'").toArray()[0].n);
-    return { church: { slug: c.slug, name: c.name, city: c.city, currency: c.currency, demo: !!c.demo_locked }, stripe: this.#stripeStatus(c), public: pub, funds, newApplications };
+    return { church: { slug: c.slug, name: c.name, city: c.city, currency: c.currency, demo: !!c.demo_locked }, stripe: this.#stripeStatus(c), public: pub, funds, newApplications, me: this.#me(session) };
   }
 
-  async #saveSettings(request: Request, c: ChurchRow): Promise<Response> {
+  async #saveSettings(request: Request, c: ChurchRow, session: StaffSession): Promise<Response> {
     const body = await readJson(request);
     const name = str(body.name, 80) || c.name;
     const city = typeof body.city === 'string' ? str(body.city, 80) : c.city;
     if (name.length < 3) return json({ error: 'Add your church name.' }, 400);
     this.#sql.exec('UPDATE church SET name = ?, city = ? WHERE id = 1', name, city);
     await this.env.GIVING_REGISTRY.getByName('registry').rename(c.slug, name, city);
-    return json(this.#adminOverview(this.#church()!));
+    return json(this.#adminOverview(this.#church()!, session));
   }
 
-  async #changePassword(request: Request, c: ChurchRow): Promise<Response> {
-    if (c.demo_locked) return json({ error: 'The demo church password cannot be changed here.' }, 403);
+  /** Staff accounts change their own password (signing out their other sessions); the shared church password
+   *  changes for everyone (signing out every shared-password session). */
+  async #changePassword(request: Request, c: ChurchRow, session: StaffSession): Promise<Response> {
     const body = await readJson(request);
     const current = typeof body.current === 'string' ? body.current.slice(0, 200) : '';
     const next = typeof body.next === 'string' ? body.next : '';
+    if (session.userId) {
+      const user = this.#sql.exec('SELECT password_hash FROM staff_users WHERE id = ?', session.userId).toArray()[0];
+      if (!user || !(await verifyPassword(current, String(user.password_hash)))) return json({ error: 'Your current password is not right.' }, 400);
+      if (next.length < 10 || next.length > 200) return json({ error: 'Use at least 10 characters for the new password.' }, 400);
+      this.#sql.exec('UPDATE staff_users SET password_hash = ? WHERE id = ?', await hashPassword(next), session.userId);
+      this.#sql.exec('DELETE FROM sessions WHERE user_id = ?', session.userId);
+      return json({ ok: true, token: await this.#newSession(session.userId, session.role) });
+    }
+    if (c.demo_locked) return json({ error: 'The demo church password cannot be changed here.' }, 403);
     if (!(await verifyPassword(current, c.password_hash))) return json({ error: 'Your current password is not right.' }, 400);
     if (next.length < 10 || next.length > 200) return json({ error: 'Use at least 10 characters for the new password.' }, 400);
     this.#sql.exec('UPDATE church SET password_hash = ? WHERE id = 1', await hashPassword(next));
-    this.#sql.exec('DELETE FROM sessions');
+    this.#sql.exec("DELETE FROM sessions WHERE user_id = ''");
     return json({ ok: true, token: await this.#newSession() });
   }
 
-  async #connectStripe(request: Request, c: ChurchRow): Promise<Response> {
+  // ---------- Staff accounts (owners add and remove; everyone signed in can see the list) ----------
+
+  #listStaff(session: StaffSession): Response {
+    const users = this.#sql.exec('SELECT id, name, email, role, created_at FROM staff_users ORDER BY created_at').toArray()
+      .map((u: any) => ({ id: String(u.id), name: String(u.name), email: String(u.email), role: String(u.role), createdAt: String(u.created_at), you: u.id === session.userId }));
+    return json({ users, canManage: session.role === 'owner', me: this.#me(session) });
+  }
+
+  async #addStaff(request: Request, session: StaffSession): Promise<Response> {
+    if (session.role !== 'owner') return json({ error: 'Only an owner can add staff accounts.' }, 403);
+    const body = await readJson(request);
+    const name = str(body.name, 80);
+    const email = str(body.email, 200).toLowerCase();
+    const role = body.role as StaffRole;
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (name.length < 2) return json({ error: 'Add their name.' }, 400);
+    if (!EMAIL_RE.test(email)) return json({ error: 'Add a valid email; they sign in with it.' }, 400);
+    if (!STAFF_ROLES.includes(role)) return json({ error: 'Choose Owner or Site admin.' }, 400);
+    if (password.length < 10 || password.length > 200) return json({ error: 'Give them a temporary password of at least 10 characters.' }, 400);
+    // The first account must be an owner, or nobody could manage accounts once the shared password stops working.
+    if (!this.#staffCount() && role !== 'owner') return json({ error: 'The first staff account must be an owner. Add yourself first.' }, 400);
+    if (this.#sql.exec('SELECT 1 FROM staff_users WHERE email = ?', email).toArray().length) return json({ error: 'Someone already has that email.' }, 409);
+    const id = crypto.randomUUID();
+    this.#sql.exec('INSERT INTO staff_users (id, name, email, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, name, email, role, await hashPassword(password), new Date().toISOString());
+    return this.#listStaff(session);
+  }
+
+  #removeStaff(session: StaffSession, id: string): Response {
+    if (session.role !== 'owner') return json({ error: 'Only an owner can remove staff accounts.' }, 403);
+    const user = this.#sql.exec('SELECT role FROM staff_users WHERE id = ?', id).toArray()[0];
+    if (!user) return json({ error: 'That staff account was not found.' }, 404);
+    if (id === session.userId) return json({ error: 'You cannot remove your own account. Ask another owner.' }, 400);
+    const owners = Number(this.#sql.exec("SELECT COUNT(*) AS n FROM staff_users WHERE role = 'owner'").toArray()[0].n);
+    if (user.role === 'owner' && owners <= 1) return json({ error: 'A church needs at least one owner.' }, 400);
+    this.ctx.storage.transactionSync(() => {
+      this.#sql.exec('DELETE FROM staff_users WHERE id = ?', id);
+      // Signed out everywhere, right away.
+      this.#sql.exec('DELETE FROM sessions WHERE user_id = ?', id);
+    });
+    return this.#listStaff(session);
+  }
+
+  async #connectStripe(request: Request, c: ChurchRow, session: StaffSession): Promise<Response> {
     if (c.demo_locked) return json({ error: 'The demo church always stays in demo mode. Sign up your own church to connect Stripe.' }, 403);
     if (!(await cryptoKey(this.env))) return json({ error: 'This server cannot store Stripe keys yet: STRIPE_KEY_ENCRYPTION_KEY is not set.' }, 503);
     const body = await readJson(request);
@@ -1010,10 +1110,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
       }
     });
     const provision = await this.#provisionAll(key);
-    return json({ ...this.#adminOverview(this.#church()!), provision });
+    return json({ ...this.#adminOverview(this.#church()!, session), provision });
   }
 
-  async #syncStripe(c: ChurchRow): Promise<Response> {
+  async #syncStripe(c: ChurchRow, session: StaffSession): Promise<Response> {
     if (!c.stripe_key || c.demo_locked) return json({ error: 'Connect Stripe first.' }, 400);
     let key: string;
     try {
@@ -1022,10 +1122,10 @@ export class GivingDO extends DurableObject<GivingEnv> {
       return json({ error: 'The saved key cannot be read. Connect Stripe again.' }, 400);
     }
     const provision = await this.#provisionAll(key);
-    return json({ ...this.#adminOverview(this.#church()!), provision });
+    return json({ ...this.#adminOverview(this.#church()!, session), provision });
   }
 
-  async #disconnectStripe(c: ChurchRow): Promise<Response> {
+  async #disconnectStripe(c: ChurchRow, session: StaffSession): Promise<Response> {
     if (c.stripe_key && c.webhook_id) {
       try {
         const key = await unseal(this.env, c.stripe_key, 'stripe-key:' + c.slug);
@@ -1037,7 +1137,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     this.#sql.exec(
       "UPDATE church SET stripe_key = '', stripe_hint = '', stripe_mode = '', stripe_account = '', webhook_id = '', webhook_secret = '', webhook_note = '', portal_config_id = '', portal_url = '', portal_note = '', provisioned_at = '', provision_error = '' WHERE id = 1"
     );
-    return json(this.#adminOverview(this.#church()!));
+    return json(this.#adminOverview(this.#church()!, session));
   }
 
   #priceMap(f: FundRow): Record<string, Record<string, string>> {
@@ -1224,7 +1324,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     return { ok: true, created, reused, webhookNote, portalNote };
   }
 
-  async #saveFund(request: Request, c: ChurchRow, id: string | null): Promise<Response> {
+  async #saveFund(request: Request, c: ChurchRow, id: string | null, session: StaffSession): Promise<Response> {
     const body = await readJson(request);
     const existing = id ? this.#fund(id) : null;
     if (id && !existing) return json({ error: 'Fund not found.' }, 404);
@@ -1271,7 +1371,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
         stripeNote = 'Saved, but Stripe was not updated: ' + (e instanceof StripeError ? e.message : 'unknown error') + ' Use "Re-run Stripe setup" to try again.';
       }
     }
-    return json({ ...this.#adminOverview(this.#church()!), fundId, stripeNote });
+    return json({ ...this.#adminOverview(this.#church()!, session), fundId, stripeNote });
   }
 
   #donations(c: ChurchRow): Response {
@@ -1418,18 +1518,23 @@ export class GivingDO extends DurableObject<GivingEnv> {
       if (p === '/c/admin' || p.startsWith('/c/admin/')) {
         const c = this.#church();
         if (!c) return json({ error: 'Church not found.' }, 404);
-        if (!(await this.#isAdmin(request))) return json({ error: 'Please sign in as church staff.' }, 401);
-        if (p === '/c/admin' && m === 'GET') return json(this.#adminOverview(c));
+        const session = await this.#session(request);
+        if (!session) return json({ error: 'Please sign in as church staff.' }, 401);
+        if (p === '/c/admin' && m === 'GET') return json(this.#adminOverview(c, session));
         // The church API Worker asks this to check a staff session for its own staff-only routes.
-        if (p === '/c/admin/session' && m === 'GET') return json({ ok: true, slug: c.slug, demo: !!c.demo_locked });
-        if (p === '/c/admin/settings' && m === 'PUT') return this.#saveSettings(request, c);
-        if (p === '/c/admin/password' && m === 'POST') return this.#changePassword(request, c);
-        if (p === '/c/admin/stripe' && m === 'POST') return this.#connectStripe(request, c);
-        if (p === '/c/admin/stripe/sync' && m === 'POST') return this.#syncStripe(c);
-        if (p === '/c/admin/stripe' && m === 'DELETE') return this.#disconnectStripe(c);
-        if (p === '/c/admin/funds' && m === 'POST') return this.#saveFund(request, c, null);
+        if (p === '/c/admin/session' && m === 'GET') return json({ ok: true, slug: c.slug, demo: !!c.demo_locked, me: this.#me(session) });
+        if (p === '/c/admin/settings' && m === 'PUT') return this.#saveSettings(request, c, session);
+        if (p === '/c/admin/password' && m === 'POST') return this.#changePassword(request, c, session);
+        if (p === '/c/admin/users' && m === 'GET') return this.#listStaff(session);
+        if (p === '/c/admin/users' && m === 'POST') return this.#addStaff(request, session);
+        r = /^\/c\/admin\/users\/([0-9a-f-]{36})$/.exec(p);
+        if (r && m === 'DELETE') return this.#removeStaff(session, r[1]);
+        if (p === '/c/admin/stripe' && m === 'POST') return this.#connectStripe(request, c, session);
+        if (p === '/c/admin/stripe/sync' && m === 'POST') return this.#syncStripe(c, session);
+        if (p === '/c/admin/stripe' && m === 'DELETE') return this.#disconnectStripe(c, session);
+        if (p === '/c/admin/funds' && m === 'POST') return this.#saveFund(request, c, null, session);
         r = /^\/c\/admin\/funds\/([\w-]{1,60})$/.exec(p);
-        if (r && m === 'PUT') return this.#saveFund(request, c, r[1]);
+        if (r && m === 'PUT') return this.#saveFund(request, c, r[1], session);
         if (p === '/c/admin/donations' && m === 'GET') return this.#donations(c);
         r = /^\/c\/admin\/donations\/([\w-]{1,60})\/cancel$/.exec(p);
         if (r && m === 'POST') return this.#staffCancel(c, r[1]);
@@ -1556,12 +1661,17 @@ async function signup(request: Request, env: GivingEnv): Promise<Response> {
   const city = str(body.city, 80);
   const currency = CURRENCIES.includes(body.currency) ? body.currency : 'usd';
   const password = typeof body.password === 'string' ? body.password : '';
+  // The person signing up becomes the first owner account when they give their name and email.
+  const ownerName = str(body.ownerName, 80);
+  const ownerEmail = str(body.ownerEmail, 200).toLowerCase();
   if (name.length < 3) return json({ error: 'Add your church name.' }, 400);
   if (password.length < 10 || password.length > 200) return json({ error: 'Choose a staff password of at least 10 characters.' }, 400);
+  if (ownerEmail && !EMAIL_RE.test(ownerEmail)) return json({ error: 'Add a valid email; you sign in with it.' }, 400);
+  if (ownerEmail && ownerName.length < 2) return json({ error: 'Add your name.' }, 400);
   const registry = env.GIVING_REGISTRY.getByName('registry');
   const reserved = await registry.reserve(name, city, request.headers.get('cf-connecting-ip') || 'anon');
   if (!reserved.slug) return json({ error: reserved.error || 'Could not create the church.' }, 429);
-  const out = await env.GIVING.getByName('church:' + reserved.slug).init(reserved.slug, name, city, currency, password);
+  const out = await env.GIVING.getByName('church:' + reserved.slug).init(reserved.slug, name, city, currency, password, ownerName, ownerEmail);
   if (!out.token) {
     await registry.release(reserved.slug);
     return json({ error: out.error || 'Could not create the church.' }, 409);

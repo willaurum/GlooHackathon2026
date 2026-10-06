@@ -428,8 +428,117 @@ check(demoGift2 && demoGift2.cancelable, 'new demo monthly gift is cancelable by
 r = await call('POST', DEMO + '/admin/donations/' + demoGift2.id + '/cancel', {}, demoToken);
 check(r.status === 200 && r.data.donations.find((d) => d.id === demoGift2.id).canceled, 'demo staff cancel', r.data);
 
+console.log('staff accounts');
+// A church that signs up with an owner account.
+r = await call('POST', '/api/churches', { name: 'Accounts Church ' + suffix, city: 'Austin', password: 'owner password 1', ownerName: 'Olive Owner', ownerEmail: 'Staff-Owner-' + suffix + '@Example.org' });
+check(r.status === 201 && r.data.token, 'sign-up with an owner account', r.data);
+const S = '/api/churches/' + r.data.slug;
+const ownerEmail = 'staff-owner-' + suffix + '@example.org';
+let ownerToken = r.data.token;
+r = await call('GET', S + '/admin', undefined, ownerToken);
+check(r.status === 200 && r.data.me.role === 'owner' && r.data.me.email === ownerEmail && !r.data.me.shared, 'sign-up session is the owner account (email stored lower-case)', r.data.me);
+r = await call('POST', S + '/admin/login', { password: 'owner password 1' });
+check(r.status === 401 && /email/.test(r.data.error), 'shared password stops working once accounts exist', r.data);
+r = await call('POST', S + '/admin/login', { email: ownerEmail.toUpperCase(), password: 'owner password 1' });
+check(r.status === 200 && r.data.me.role === 'owner', 'owner signs in with email (any case) and password', r.data);
+r = await call('POST', S + '/admin/login', { email: ownerEmail, password: 'wrong password 1' });
+check(r.status === 401, 'wrong account password rejected');
+r = await call('POST', S + '/admin/login', { email: 'nobody-' + suffix + '@example.org', password: 'owner password 1' });
+check(r.status === 401 && r.data.error === 'That email or password is not right.', 'unknown email gets the same answer as a wrong password', r.data);
+
+// The owner adds a site admin.
+const adminEmail = 'staff-admin-' + suffix + '@example.org';
+r = await call('POST', S + '/admin/users', { name: 'Sam Siteadmin', email: adminEmail, role: 'site_admin', password: 'temporary pass 1' }, ownerToken);
+check(r.status === 200 && r.data.users.length === 2 && r.data.canManage, 'owner adds a site admin', r.data);
+const siteAdminId = r.data.users.find((u) => u.email === adminEmail)?.id;
+r = await call('POST', S + '/admin/users', { name: 'Dup', email: adminEmail.toUpperCase(), role: 'site_admin', password: 'temporary pass 1' }, ownerToken);
+check(r.status === 409, 'duplicate email rejected', r.data);
+for (const [body, label] of [
+  [{ name: 'X', email: 'x-' + suffix + '@example.org', role: 'site_admin', password: 'temporary pass 1' }, 'too-short name'],
+  [{ name: 'Bad Email', email: 'not-an-email', role: 'site_admin', password: 'temporary pass 1' }, 'bad email'],
+  [{ name: 'Bad Role', email: 'r-' + suffix + '@example.org', role: 'superuser', password: 'temporary pass 1' }, 'unknown role'],
+  [{ name: 'Short Pass', email: 'p-' + suffix + '@example.org', role: 'site_admin', password: 'short' }, 'short temporary password'],
+]) {
+  r = await call('POST', S + '/admin/users', body, ownerToken);
+  check(r.status === 400, 'rejects ' + label, r.data);
+}
+r = await call('POST', S + '/admin/login', { email: adminEmail, password: 'temporary pass 1' });
+check(r.status === 200 && r.data.me.role === 'site_admin', 'site admin signs in', r.data);
+const siteAdminToken = r.data.token;
+
+// Site admins do everything except manage accounts.
+r = await call('GET', S + '/admin', undefined, siteAdminToken);
+check(r.status === 200 && r.data.me.role === 'site_admin', 'site admin opens the staff dashboard');
+r = await call('PUT', S + '/admin/funds/missions', { goal: 250000 }, siteAdminToken);
+check(r.status === 200, 'site admin edits a fund', r.data);
+r = await call('GET', S + '/admin/session', undefined, siteAdminToken);
+check(r.status === 200 && r.data.me.role === 'site_admin', 'session check reports the role', r.data);
+r = await call('GET', S + '/admin/users', undefined, siteAdminToken);
+check(r.status === 200 && r.data.users.length === 2 && !r.data.canManage, 'site admin sees the team but cannot manage it', r.data);
+r = await call('POST', S + '/admin/users', { name: 'Sneaky Add', email: 'sneaky-' + suffix + '@example.org', role: 'owner', password: 'temporary pass 1' }, siteAdminToken);
+check(r.status === 403, 'site admin cannot add accounts', r.data);
+const ownerId = (await call('GET', S + '/admin/users', undefined, ownerToken)).data.users.find((u) => u.role === 'owner').id;
+r = await call('DELETE', S + '/admin/users/' + ownerId, undefined, siteAdminToken);
+check(r.status === 403, 'site admin cannot remove accounts', r.data);
+
+// Guardrails for owners.
+r = await call('DELETE', S + '/admin/users/' + ownerId, undefined, ownerToken);
+check(r.status === 400, 'owner cannot remove their own account', r.data);
+r = await call('POST', S + '/admin/users', { name: 'Second Owner', email: 'owner2-' + suffix + '@example.org', role: 'owner', password: 'temporary pass 2' }, ownerToken);
+const owner2Id = r.data.users.find((u) => u.email === 'owner2-' + suffix + '@example.org').id;
+r = await call('POST', S + '/admin/login', { email: 'owner2-' + suffix + '@example.org', password: 'temporary pass 2' });
+const owner2Token = r.data.token;
+r = await call('DELETE', S + '/admin/users/' + ownerId, undefined, owner2Token);
+check(r.status === 200 && r.data.users.length === 2, 'another owner can remove the first owner', r.data);
+r = await call('GET', S + '/admin', undefined, ownerToken);
+check(r.status === 401, 'a removed account is signed out right away');
+r = await call('DELETE', S + '/admin/users/' + owner2Id, undefined, owner2Token);
+check(r.status === 400, 'the last owner cannot be removed (and not by themselves)', r.data);
+r = await call('DELETE', S + '/admin/users/00000000-0000-0000-0000-000000000000', undefined, owner2Token);
+check(r.status === 404, 'removing an unknown account is a 404', r.data);
+
+// Each account changes its own password and signs out its other sessions.
+r = await call('POST', S + '/admin/login', { email: adminEmail, password: 'temporary pass 1' });
+const siteAdminToken2 = r.data.token;
+r = await call('POST', S + '/admin/password', { current: 'temporary pass 1', next: 'my own password 1' }, siteAdminToken);
+check(r.status === 200 && r.data.token, 'site admin changes their own password', r.data);
+const siteAdminToken3 = r.data.token;
+r = await call('GET', S + '/admin', undefined, siteAdminToken2);
+check(r.status === 401, "the account's other sessions are signed out");
+r = await call('GET', S + '/admin', undefined, owner2Token);
+check(r.status === 200, "other people's sessions stay signed in");
+r = await call('GET', S + '/admin', undefined, siteAdminToken3);
+check(r.status === 200 && r.data.me.role === 'site_admin', 'the new session keeps the role');
+r = await call('POST', S + '/admin/login', { email: adminEmail, password: 'my own password 1' });
+check(r.status === 200, 'new password works');
+r = await call('DELETE', S + '/admin/users/' + siteAdminId, undefined, owner2Token);
+check(r.status === 200 && r.data.users.length === 1, 'owner removes the site admin', r.data);
+r = await call('GET', S + '/admin', undefined, siteAdminToken3);
+check(r.status === 401, 'removed site admin is signed out right away');
+
+// A church on the shared password moves to accounts: the first account must be an owner.
+r = await call('POST', '/api/churches', { name: 'Shared Church ' + suffix, city: 'Austin', password: 'shared password 1' });
+const L = '/api/churches/' + r.data.slug;
+const sharedToken = r.data.token;
+r = await call('GET', L + '/admin', undefined, sharedToken);
+check(r.status === 200 && r.data.me.shared && r.data.me.role === 'owner', 'the shared password acts as owner', r.data.me);
+r = await call('POST', L + '/admin/users', { name: 'Not First', email: 'nf-' + suffix + '@example.org', role: 'site_admin', password: 'temporary pass 1' }, sharedToken);
+check(r.status === 400, 'the first account must be an owner', r.data);
+r = await call('POST', L + '/admin/users', { name: 'Fran First', email: 'first-' + suffix + '@example.org', role: 'owner', password: 'first owner pass 1' }, sharedToken);
+check(r.status === 200 && r.data.users.length === 1, 'shared-password owner creates the first owner account', r.data);
+r = await call('POST', L + '/admin/login', { password: 'shared password 1' });
+check(r.status === 401, 'after that the shared password no longer signs in', r.data);
+r = await call('POST', L + '/admin/login', { email: 'first-' + suffix + '@example.org', password: 'first owner pass 1' });
+check(r.status === 200 && r.data.me.role === 'owner', 'the new owner signs in with email', r.data);
+
+// The demo church always keeps its ADMIN_KEY login, so the team never loses it.
+r = await call('POST', '/api/churches/grace-community/admin/login', { password: 'gloo-donate-demo' });
+check(r.status === 200 && r.data.me.role === 'owner', 'demo church ADMIN_KEY still signs in as owner', r.data);
+r = await call('POST', S + '/admin/login', { password: 'gloo-donate-demo' });
+check(r.status === 401, 'ADMIN_KEY does not open other churches', r.data);
+
 console.log('leak scan of every public response');
-const leaks = publicDumps.filter((d) => /GOOD|NOHOOK|sk_test_|rk_test_|whsec_|Private Person|private@example|Monthly Tither|tither@|Applicant One|app1@|Alice|Bob Donor|Trip Giver|tripgiver@|Second Tither|second@example|Demo Monthly|demo-monthly@|Demo Once|demo-once@|Card Holder|Address Giver|address@example|Old Page Name|oldpage@|cus_|sub_|bpc_|pbkdf2|password_hash|stripe_key/.test(d.text));
+const leaks = publicDumps.filter((d) => /GOOD|NOHOOK|sk_test_|rk_test_|whsec_|Private Person|private@example|Monthly Tither|tither@|Applicant One|app1@|Alice|Bob Donor|Trip Giver|tripgiver@|Second Tither|second@example|Demo Monthly|demo-monthly@|Demo Once|demo-once@|Card Holder|Address Giver|address@example|Old Page Name|oldpage@|staff-owner-|staff-admin-|Olive Owner|Sam Siteadmin|cus_|sub_|bpc_|pbkdf2|password_hash|stripe_key/.test(d.text));
 check(leaks.length === 0, 'no key, secret, donor or applicant data in ' + publicDumps.length + ' public responses', leaks.map((l) => l.path + ' ' + l.text.slice(0, 200)));
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
