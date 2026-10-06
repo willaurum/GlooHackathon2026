@@ -10,7 +10,7 @@ const KINDS = [['all', 'All'], ['update', 'Updates'], ['article', 'Articles']];
 // Pages an update can point to; anything else is a full web address.
 const PAGES = [['serve', 'Serve'], ['serve/find', 'Find a place to serve'], ['calendar', 'Calendar'], ['guests/plan', 'Plan your visit'],
   ['guests/welcome', 'Welcome team'], ['notes', 'Sermon Notes'], ['give', 'Give'], ['give/trips', 'Mission trips'],
-  ['about/connect', 'Connect'], ['prayer/map', 'Prayer map']];
+  ['about/connect', 'Connect'], ['prayer', 'Prayer map']];
 const isWebLink = url => /^https?:\/\//.test(url);
 // An article longer than this opens with its takeaways and a "Read the full article" button.
 const LONG = 420;

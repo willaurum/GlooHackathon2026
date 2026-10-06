@@ -22,7 +22,7 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -58,8 +58,10 @@ function readLocation() {
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
-  // The blog became part of News, and Church staff moved out of Give; keep the old links (#/blog, #/about/blog, #/give/staff, #/start) working.
-  let route = ['start', 'give/start', 'give/staff'].includes(where.route) ? 'staff' : ['blog', 'about/blog'].includes(where.route) ? 'about/news' : where.route;
+  // The blog became part of News, Church staff moved out of Give, and the prayer map lost its one sub-page;
+  // keep the old links (#/blog, #/about/blog, #/give/staff, #/start, #/prayer/map) working.
+  let route = ['start', 'give/start', 'give/staff'].includes(where.route) ? 'staff'
+    : ['blog', 'about/blog'].includes(where.route) ? 'about/news' : where.route === 'prayer/map' ? 'prayer' : where.route;
   if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
@@ -156,7 +158,7 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
-    next = withDefault(['start', 'give/start', 'give/staff'].includes(next) ? 'staff' : next, demo);
+    next = withDefault(['start', 'give/start', 'give/staff'].includes(next) ? 'staff' : next === 'prayer/map' ? 'prayer' : next, demo);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
     setWhere(w => ({ ...w, route: next }));

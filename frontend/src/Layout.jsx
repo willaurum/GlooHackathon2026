@@ -13,7 +13,7 @@ export const SECTIONS = [
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book', tab: true },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips']] },
-  { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
+  { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass' },
   { route: 'about', label: 'About', icon: 'info', children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect']] },
   { route: 'staff', label: 'Church staff', icon: 'lock', staffOnly: true },
 ];
