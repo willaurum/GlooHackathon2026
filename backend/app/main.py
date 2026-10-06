@@ -1,4 +1,4 @@
-"""Belong prototype API with persistent ministries and connections, plus Pastor Notes."""
+"""Tekton prototype API with persistent ministries and connections, plus Pastor Notes."""
 
 import asyncio
 import logging
@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
         db.close()
 
 
-app = FastAPI(title="Belong API", lifespan=lifespan)
+app = FastAPI(title="Tekton API", lifespan=lifespan)
 # Every request runs against one church's database (X-Church); see church_scope.py.
 app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)

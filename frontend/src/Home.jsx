@@ -29,7 +29,7 @@ export default function Home({ go, onAsk }) {
       <div className="hero-actions">
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={() => go('guests/plan')}>Planning your first visit?<Icon name="arrow" size={18} /></button>
-        <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
+        <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Tekton</button>
       </div>
       <div className="hero-art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /></div>
     </section>
@@ -94,7 +94,7 @@ export default function Home({ go, onAsk }) {
       <div>
         <div className="eyebrow">For church leaders</div>
         <h2>A big church can still feel personal.</h2>
-        <p>Belong helps leaders turn a desire to serve into a real connection: see which teams need people, meet a member where they are, and hand off to the right ministry lead.</p>
+        <p>Tekton helps leaders turn a desire to serve into a real connection: see which teams need people, meet a member where they are, and hand off to the right ministry lead.</p>
       </div>
       <ol className="steps">{STEPS.map(([title, text], i) => <li key={title}><span>{String(i + 1).padStart(2, '0')}</span><b>{title}</b><p>{text}</p></li>)}</ol>
     </section>

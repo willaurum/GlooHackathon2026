@@ -1,8 +1,8 @@
-# GlooHackathon2026: belong.
+# GlooHackathon2026: Tekton
 
 Liberty University's Gloo Hackathon team repository.
 
-belong. is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
@@ -12,7 +12,7 @@ belong. is the base church-site template for a future agentic templatizer. The t
 - **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and staff-managed Stripe setup.
 - **Prayer map**: world regions with news and prayer prompts.
 
-An **Ask Belong** chat assistant is available on every page.
+An **Ask Tekton** chat assistant is available on every page.
 
 ## What is deployed
 
@@ -43,7 +43,7 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 Visitors browse without an account. Staff sign in at **Staff sign in / Church setup**
 (`#/setup`, or `#/c/<slug>/setup`) with their staff email and password.
 Owners have every staff permission and can add or remove staff accounts. Site admins have
-every staff permission except adding or removing accounts. Manage accounts in Give → Church staff → Team.
+every staff permission except adding or removing accounts. Manage accounts in Church staff → Team.
 There are no individual member accounts or member commenting permissions yet.
 
 Staff sessions apply only to their own church. Admin controls appear only after the
@@ -65,16 +65,16 @@ is not implemented by these permission rules.
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Retired `#/start` and `#/give/start` links open Church staff sign-in. A section with sub-pages opens its first sub-page. |
+| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/staff` (Church staff; shown in the nav only to signed-in staff), `#/prayer/map`, `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Older `#/give/staff`, `#/start` and `#/give/start` links open Church staff. A section with sub-pages opens its first sub-page. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
 | `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
 | `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
 | `frontend/src/PastorNotes.jsx`, `verses.js` | Sermon Notes, and the Bible reference parser and passage loader. |
-| `frontend/src/Platform.jsx`, `platformChurches.js` | `#/platform`, the platform team's list of every church (see [The platform list](#the-platform-list-for-the-team-building-belong)). |
+| `frontend/src/Platform.jsx`, `platformChurches.js` | `#/platform`, the platform team's list of every church (see [The platform list](#the-platform-list-for-the-team-building-tekton)). |
 | `frontend/src/Give.jsx`, `GiveChurchBar.jsx`, `GiveStaff.jsx`, `giving.js` | Giving, the giving church bar, the giving staff area, and the giving API client. |
-| `frontend/src/ChatWidget.jsx`, `chatFormat.js`, `chatHistory.js`, `chatNavigation.js` | Ask Belong. |
+| `frontend/src/ChatWidget.jsx`, `chatFormat.js`, `chatHistory.js`, `chatNavigation.js` | Ask Tekton. |
 | `frontend/src/styles.css` | Design tokens (`:root`) and all styles. |
 | `frontend/src/api.js` | API helpers. `VITE_API_BASE` is the church API; `VITE_GIVING_API_BASE` is the giving API. `api()` calls go to the current church. |
 | `frontend/src/data/` | Static data bundled into the site (`countryBorders.json` for the Prayer map). |
@@ -120,9 +120,9 @@ Grace Community is the fictional demo of the base template. Existing church site
 
 Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church name sits at the top of the sidebar (the phone top bar on phones), with **Staff sign in / Church setup** (`#/setup`) under it.
 
-**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-belong) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
+**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-tekton) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
 
-### The platform list (for the team building belong.)
+### The platform list (for the team building Tekton)
 
 Churches never see each other, but the people building the site need to. `#/platform` is a hidden page (not in the navigation, not linked anywhere) that lists every church in the registry: name, city, the date it joined, its giving mode (demo, Stripe test or Stripe live), its number of funds and mission trips, its gift count and total, and whether giving setup is done (Stripe connected and a trip posted, the same checklist as the staff area). Each church has **Open site** (`#/c/<slug>/`), **Give page** and **Staff sign in** buttons, and a search box filters by name, city or link. Opening a church this way makes it this browser's church, like any church link.
 
@@ -132,10 +132,10 @@ To turn it on: deploy `api-giving/` (merge to `main`, or Actions > Deploy backen
 
 ### One registry, individual staff accounts
 
-The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: existing church slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
+The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: existing church slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Church staff is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
 
 Owner ("admin admin") and Site admin accounts are independent of church creation.
-Sign in to the existing church as Owner, then open Give → Church staff → Team.
+Sign in to the existing church as Owner, then open Church staff → Team.
 If there are no accounts, use the configured shared Owner password with email blank and
 create the first Owner account there. Then sign in with that account to add Site admins.
 Owners add staff with a name, email, Owner or Site admin role, and a
@@ -190,7 +190,7 @@ The demo church staff password is the `ADMIN_KEY` var in `api-giving/wrangler.js
 
 ### Church content import (the target for a site importer)
 
-A church is one JSON document, read with `GET /api/church/content` and written with `PUT /api/church/content` (staff only, up to 512 KB). Church setup saves through it, and it is what a future importer (a church gives us its old website, we build its belong. site) should produce. Every section is optional; a section that is sent replaces that whole section, and the rest is left alone. Items without an `id` get one. It is exactly the demo seed files combined, so `church.json` + `{"ministries": ministries.json}` + `{"calendar": events.json}` is a valid import (a test checks this). The schema is in `backend/app/church_content.py`:
+A church is one JSON document, read with `GET /api/church/content` and written with `PUT /api/church/content` (staff only, up to 512 KB). Church setup saves through it, and it is what a future importer (a church gives us its old website, we build its Tekton site) should produce. Every section is optional; a section that is sent replaces that whole section, and the rest is left alone. Items without an `id` get one. It is exactly the demo seed files combined, so `church.json` + `{"ministries": ministries.json}` + `{"calendar": events.json}` is a valid import (a test checks this). The schema is in `backend/app/church_content.py`:
 
 ```jsonc
 {
@@ -257,7 +257,6 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the version (default `3034`, Berean Standard Bible). |
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
 | `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. |
-| `TEAM_AI_URL`, `TEAM_AI_KEY` | `api/` | Optional, team only until the Gloo key arrives: the [team AI bridge](#team-ai-bridge-deployed-site-team-only) to the club's HPC model. Optional `TEAM_AI_MODEL` (default `qwen3.8:27b`). |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
 | `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
@@ -271,7 +270,6 @@ Workers secrets cannot be read back once set, so Jaron keeps a copy of each key 
 | `PLATFORM_ADMIN_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-platform-admin-key.txt` |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-stripe-key-encryption-key.txt` |
 | `YOUVERSION_APP_KEY` | `gloo-hackathon2026-api-pastor-notes` | `~/.secrets/youversion-app-key.txt` (app `belong-Gloo-Hackathon2026` on platform.youversion.com) |
-| `TEAM_AI_KEY` | `gloo-hackathon2026-api-pastor-notes` (once the bridge is turned on) | `~/.secrets/gloo-team-ai-key.txt` |
 
 - **Opening the platform list:** run `cat ~/.secrets/gloo-platform-admin-key.txt` on the dev server, open `<site>/#/platform` and paste the key. Share it with the team in person or through a password manager, never in chat or in a commit.
 - **Seeing what is set:** `npx wrangler secret list --name <worker>` shows the names (never the values).
@@ -305,9 +303,9 @@ Six fictional ministries, each with dated shifts, capacity, and onboarding requi
 
 Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. On the demo church this is a shared demo workspace without login; on every other church, Saved (connections and chat requests) is for signed-in staff.
 
-### Website chat (Ask Belong)
+### Website chat (Ask Tekton)
 
-The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
+The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
 
 - Set `GLOO_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) with `npx wrangler secret put` in `api/`; the Worker passes it into the container. Without a configured provider, the widget uses limited local demo replies for service times, events, groups, ministries, and requests, with a banner saying so. `GLOO_MODEL` defaults to `gloo-anthropic-claude-haiku-4.5`.
 - Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.
@@ -400,8 +398,8 @@ Turning it on (once):
 #### Tests
 
 ```bash
-python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts backend.tests.test_churches backend.tests.test_team_ai
-node --test frontend/src/*.test.js api/test/churches.test.mjs api/test/teamai.test.mjs
+python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts backend.tests.test_churches
+node --test frontend/src/*.test.js api/test/churches.test.mjs
 ```
 
 Run the Python tests from the repo root with the backend requirements installed. They mock the database, so no church DB is needed.
@@ -483,8 +481,8 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 
 **For a church:**
 
-1. **Sign in to the existing church** (`#/give/staff`): use your staff email and password. For the initial Owner account, use the configured shared Owner login with email blank, then create your Owner account under Team. Owners can add Site admins; no church signup is offered.
-2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
+1. **Sign in to the existing church** (`#/staff`): use your staff email and password. For the initial Owner account, use the configured shared Owner login with email blank, then create your Owner account under Team. Owners can add Site admins; no church signup is offered.
+2. **Connect Stripe** in the staff area (`#/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
    - one Product per fund and per mission trip, with preset Prices found again by `lookup_key` (plus monthly Prices for Tithes);
    - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, monthly tithes renew, and canceled monthly gifts are marked;
    - one customer portal configuration (found again by `metadata[belong_church]`), so donors can cancel a monthly gift themselves.
@@ -527,7 +525,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 Church events and services, seeded from `backend/app/events.json`, with a form to add events.
 
 - `GET /api/events`, `GET /api/events/{event_id}`, `POST /api/events`.
-- `POST /api/events/{event_id}/summarize` and `POST /api/events/summarize-all`: optional AI summaries from the first configured provider (the team AI bridge until Gloo is set up). `GET /api/ai/status` says which provider and whether it is reachable; without one the calendar shows "AI Endpoint: Offline" and the summarize routes return 503.
+- `POST /api/events/{event_id}/summarize` and `POST /api/events/summarize-all`: optional AI summaries (`GET /api/ai/status` says whether a provider is configured).
 
 ## Prayer map
 

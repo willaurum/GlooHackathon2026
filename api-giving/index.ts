@@ -1267,7 +1267,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     }
     // An endpoint for this URL whose signing secret we no longer hold is useless; replace it.
     for (const w of same) await stripe(this.env, key, 'DELETE', '/v1/webhook_endpoints/' + w.id).catch(() => null);
-    const params: Params = [['url', url], ['description', 'belong. giving for ' + c.name], ['metadata[belong_church]', c.slug]];
+    const params: Params = [['url', url], ['description', 'Tekton giving for ' + c.name], ['metadata[belong_church]', c.slug]];
     for (const e of WEBHOOK_EVENTS) params.push(['enabled_events[]', e]);
     const hook = await stripe(this.env, key, 'POST', '/v1/webhook_endpoints', params);
     if (!hook.secret) throw new StripeError('Stripe did not return a signing secret.', 502);
@@ -1309,7 +1309,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
     if (!config) {
       config = await stripe(
         this.env, key, 'POST', '/v1/billing_portal/configurations',
-        [...params, ['name', ('belong. giving for ' + c.name).slice(0, 256)], ['metadata[belong_church]', c.slug]],
+        [...params, ['name', ('Tekton giving for ' + c.name).slice(0, 256)], ['metadata[belong_church]', c.slug]],
         `belong-portal-${c.slug}`
       );
     } else if (!ready) {
