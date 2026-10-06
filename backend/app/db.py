@@ -26,8 +26,9 @@ log = logging.getLogger(__name__)
 
 CHURCH_DB_URL = os.environ.get("CHURCH_DB_URL", "http://church-db")
 
-_client = httpx.Client(base_url=CHURCH_DB_URL, timeout=30)
-_use_local_sqlite = False
+_USE_LOCAL_SQLITE = CHURCH_DB_URL.startswith("sqlite")
+
+_client = httpx.Client(base_url="http://church-db" if _USE_LOCAL_SQLITE else CHURCH_DB_URL, timeout=30)
 _sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
@@ -98,24 +99,20 @@ def _ensure_ready(slug):
 def run(*statements):
     """Run [(sql, params), ...] as one transaction in the current church. Returns one result per statement:
     {'rows': [...], 'rowsWritten': n}."""
-    global _use_local_sqlite
     slug = current_church()
     if slug not in _ready:
         _ensure_ready(slug)
 
-    if _use_local_sqlite or not CHURCH_DB_URL or CHURCH_DB_URL.startswith("sqlite"):
+    # Local SQLite only when asked for explicitly (docker-compose sets CHURCH_DB_URL=sqlite).
+    # A church-db failure must surface as an error, never as a silent switch to a local file.
+    if _USE_LOCAL_SQLITE:
         return _run_local_sqlite(slug, *statements)
 
     batch = [{'sql': sql, 'params': [int(p) if isinstance(p, bool) else p for p in params]}
              for sql, params in statements]
-    try:
-        response = _client.post('/sql', json={'batch': batch}, headers={'X-Church': slug})
-        response.raise_for_status()
-        return response.json()['results']
-    except Exception as exc:
-        log.warning("Remote church-db unavailable (%s); falling back to local SQLite", exc)
-        _use_local_sqlite = True
-        return _run_local_sqlite(slug, *statements)
+    response = _client.post('/sql', json={'batch': batch}, headers={'X-Church': slug})
+    response.raise_for_status()
+    return response.json()['results']
 
 
 def query(sql, params=()):
@@ -343,7 +340,7 @@ def _create_tables(seed=True):
         "It is easy to imagine that making a difference in the world requires grand gestures or extraordinary platforms. Yet throughout the Gospels, "
         "Jesus consistently revealed the kingdom of God through simple, faithful acts: sharing a meal, washing feet, listening with compassion, and meeting immediate physical needs.\n\n"
         "Here at Grace Community, our local outreach ministries and community food drives are built on this same conviction. When volunteers show up on a Saturday morning "
-        "to pack grocery hampers or mentor a neighborhood child, we are offering more than practical aid—we are communicating to our neighbors that they are seen, valued, and loved by God.\n\n"
+        "to pack grocery hampers or mentor a neighborhood child, we are offering more than practical aid; we are communicating to our neighbors that they are seen, valued, and loved by God.\n\n"
         "Stepping out to serve also transforms our own hearts. It moves our attention from our personal anxieties to the needs of others, expanding our vision of what God is doing "
         "across our city. We encourage everyone, whether you have an hour a month or a day a week, to find a place to connect and serve."
     )
