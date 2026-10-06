@@ -1,12 +1,12 @@
-// Example campus for the Plan your visit map: Thomas Road Baptist Church, Lynchburg, VA.
-// Building and lot outlines come from OpenStreetMap (© OpenStreetMap contributors, ODbL).
-// Which lot is for guests, and where each door is, are illustrative, not the church's real guidance.
+// Example campus for the Plan your visit map: the Limelight Boulder hotel, Boulder, CO (not a real church).
+// Building and lot outlines, and the main entrance, come from OpenStreetMap (© OpenStreetMap contributors, ODbL).
+// Which lot is for guests and the other doors are illustrative, for the demo only.
 
 export const EXAMPLE_CAMPUS = {
-  name: 'Thomas Road Baptist Church',
-  address: 'Mountain View Road, Lynchburg, VA',
-  directionsQuery: 'Thomas Road Baptist Church, Lynchburg, VA',
-  building: [[37.361202, -79.173065], [37.360477, -79.17369], [37.360107, -79.173012], [37.360124, -79.172997], [37.360742, -79.172465], [37.360833, -79.172386]],
+  name: 'Limelight Boulder',
+  address: 'University Avenue, Boulder, CO',
+  directionsQuery: 'Limelight Boulder, Boulder, CO',
+  building: [[40.011407, -105.277066], [40.011408, -105.276952], [40.011461, -105.276953], [40.011469, -105.276128], [40.01109, -105.276124], [40.010669, -105.27612], [40.010669, -105.276718], [40.010797, -105.276719], [40.010797, -105.27648], [40.011062, -105.276476], [40.011061, -105.276997], [40.011119, -105.276998], [40.011118, -105.277061]],
 };
 
 // kind 'area' outlines a lot; kind 'point' pins a door. `color` is shared by the map and the list beside it.
@@ -16,24 +16,24 @@ export const MAP_SPOTS = [
     color: '#22c55e',
     kind: 'area',
     label: 'First-time guest parking',
-    text: 'Reserved spaces right outside the main entrance. Look for the green "Guest" signs and a greeter in a lanyard.',
-    shape: [[37.36158, -79.17275], [37.361364, -79.172954], [37.361154, -79.17255], [37.361097, -79.172502], [37.361073, -79.172454], [37.361289, -79.172258], [37.361319, -79.172311], [37.361336, -79.172294]],
+    text: 'The parking structure on the north side. Reserved spaces on the ground level have green "Guest" signs, and a greeter in a lanyard can walk you in.',
+    shape: [[40.012163, -105.276863], [40.012054, -105.276339], [40.011725, -105.276146], [40.01163, -105.276142], [40.011628, -105.276768], [40.012103, -105.277045]],
   },
   {
     id: 'main-parking',
     color: '#3b82f6',
     kind: 'area',
     label: 'Main parking',
-    text: 'The large lot on the west side. Accessible spaces are in the row closest to the building.',
-    shape: [[37.361777, -79.173042], [37.36064, -79.174073], [37.360604, -79.1741], [37.360802, -79.17447], [37.360814, -79.174458], [37.36106, -79.174708], [37.362158, -79.173698]],
+    text: 'The lot just east of the main entrance. Accessible spaces are in the row closest to the building.',
+    shape: [[40.011025, -105.275913], [40.010896, -105.275909], [40.010899, -105.275797], [40.010902, -105.275639], [40.010859, -105.275638], [40.010859, -105.275586], [40.010859, -105.275562], [40.011031, -105.275567]],
   },
   {
     id: 'overflow-parking',
     color: '#a855f7',
     kind: 'area',
     label: 'Overflow parking',
-    text: 'When the main lot fills up on Sunday mornings, park here. It is a short walk to the main entrance.',
-    shape: [[37.360604, -79.1741], [37.359822, -79.174612], [37.359771, -79.174681], [37.359757, -79.17475], [37.359882, -79.1751], [37.360203, -79.174868], [37.360802, -79.17447]],
+    text: 'When the main lot fills up on Sunday mornings, park here, a little farther east. It is a short walk to the main entrance.',
+    shape: [[40.01103, -105.27554], [40.010739, -105.275536], [40.01074, -105.275351], [40.010974, -105.275355], [40.010975, -105.275178], [40.010974, -105.275138], [40.010976, -105.274892], [40.010978, -105.274867], [40.011035, -105.274868]],
   },
   {
     id: 'main-entrance',
@@ -41,23 +41,23 @@ export const MAP_SPOTS = [
     kind: 'point',
     label: 'Main entrance',
     text: 'Greeters meet you here, and the coffee bar is just inside the lobby. If you tapped "I\'m here", this is where your host will find you.',
-    at: [37.36102, -79.17273],
+    at: [40.01109, -105.276124],
   },
   {
     id: 'kids-check-in',
     color: '#ec4899',
     kind: 'point',
     label: 'Kids check-in',
-    text: 'The east doors lead straight to the Kids Welcome desk, where a volunteer prints matching name and pickup tags.',
-    at: [37.36079, -79.17246],
+    text: 'The south doors lead straight to the Kids Welcome desk, where a volunteer prints matching name and pickup tags.',
+    at: [40.010669, -105.27642],
   },
   {
     id: 'accessible-entrance',
     color: '#06b6d4',
     kind: 'point',
     label: 'Accessible entrance',
-    text: 'A step-free entrance facing the main lot, with elevator access and reserved seating near the front.',
-    at: [37.36084, -79.17338],
+    text: 'A step-free entrance facing the parking structure, with elevator access and reserved seating near the front.',
+    at: [40.011465, -105.27655],
   },
 ];
 

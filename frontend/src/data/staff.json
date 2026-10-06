@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Pastor Daniel Whitaker",
+    "role": "Lead pastor",
+    "email": "daniel.whitaker@example.com",
+    "note": "Preaching, vision and pastoral questions."
+  },
+  {
+    "name": "Pastor Naomi Alvarez",
+    "role": "Care pastor",
+    "email": "naomi.alvarez@example.com",
+    "note": "Prayer, hospital visits, grief and crisis support."
+  },
+  {
+    "name": "Tom Hendricks",
+    "role": "Executive director",
+    "email": "tom.hendricks@example.com",
+    "note": "Facilities, finance and building use."
+  },
+  {
+    "name": "Priya Nair",
+    "role": "Office manager",
+    "email": "priya.nair@example.com",
+    "note": "General questions, room bookings and the church directory."
+  }
+]

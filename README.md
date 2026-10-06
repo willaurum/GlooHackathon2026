@@ -38,6 +38,27 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 - Before opening a PR, merge the latest `jaron-frontend` into your branch so conflicts are fixed on your side. `App.jsx`, `Layout.jsx` and `styles.css` change often.
 - `jaron-frontend` goes to `main` once it is production ready. A push to `main` deploys the frontend and the APIs.
 
+## Visitors and church admin permissions
+
+Visitors browse without an account. Staff sign in at **Staff sign in / Church setup**
+(`#/setup`, or `#/c/<slug>/setup`) with the password chosen when that church signed up.
+There are no individual member accounts or member commenting permissions yet.
+
+Staff sessions apply only to their own church. Admin controls appear only after the
+session is validated. Calendar creation and summary generation, request review, saved
+connections, the welcome queue, prayer prompt generation and church setup require staff
+on every church, including Grace Community. Public event and summary reads remain open.
+The shared AI model setting requires the operator API key, even on the demo church.
+Sign out revokes the session on the server; expired or revoked sessions lose admin access.
+Temporary sign-in service failures return 503 and keep the browser token for retry. Failed
+sign-out keeps the dashboard and a retryable sign-out button visible. Password changes
+keep the current admin page and confirmation message while replacing the session token.
+
+Blog reads and staff-only write/categorize/summarize/delete/approve route permissions are
+prepared for Ben's PR #52. That feature has not been merged into this branch: its UI must
+hide editing controls for visitors when integrated. A separate draft/approval workflow
+is not implemented by these permission rules.
+
 ## Repo layout
 
 | Path | What's in it |
@@ -127,11 +148,11 @@ The first request for a church creates its tables. Only the demo church is seede
 
 | Routes | Demo church | Any other church |
 |---|---|---|
-| Info, church, ministries, events, matches, chat, guest sign-up and "I am here", prayer map, verse | public | public |
-| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | public, as before (shared demo workspace) | that church staff |
+| Info, church, ministries, events, matches, chat, guest sign-up and "I am here", viewing the prayer map, verse | public | public |
+| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries; generating prayer-map prompts (`POST /api/regions/<id>/prayer-angles`) | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
 | Sermon Notes and the chat log | `NOTES_API_KEY` or that church staff | `NOTES_API_KEY` or that church staff |
-| The shared AI model setting (`POST /api/ai/model`) | public, as before | `NOTES_API_KEY` |
+| The shared AI model setting (`POST /api/ai/model`) | `NOTES_API_KEY` | `NOTES_API_KEY` |
 
 The demo church staff password is the `ADMIN_KEY` var in `api-giving/wrangler.jsonc`.
 
@@ -224,7 +245,7 @@ Workers secrets cannot be read back once set, so Jaron keeps a copy of each key 
 - **Seeing what is set:** `npx wrangler secret list --name <worker>` shows the names (never the values).
 - **Replacing a key:** `openssl rand -base64 32 | tee ~/.secrets/<file> | npx wrangler secret put <NAME> --name <worker>`. Replacing `STRIPE_KEY_ENCRYPTION_KEY` means every church must paste its Stripe key again, so only do it if it leaked.
 
-The Serve, Guests, Calendar, Prayer map, verse and chat routes are public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key or that church staff session; screens with people and their contact details are staff only on every church except the demo church (see [Who may call what](#who-may-call-what)). Churches add no new secrets: the church API reaches the giving Worker through the `GIVING` service binding.
+Browsing Serve, Guests, Calendar, the Prayer map, the verse and chat is public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key or that church staff session; screens with people and their contact details, and generating AI summaries or prayer-map prompts, are staff only on every church, the demo church included (see [Who may call what](#who-may-call-what)). Churches add no new secrets: the church API reaches the giving Worker through the `GIVING` service binding.
 
 ## First-time guests
 
@@ -292,6 +313,20 @@ Turning it on (once):
 **Switching to Gloo on Oct 7:** `npx wrangler secret put GLOO_API_KEY` in `api/`. Gloo then comes first for the chat, Find a place and calendar summaries, and the bridge stays as a backup whenever someone runs it. To retire the bridge, `npx wrangler secret delete TEAM_AI_KEY` and `TEAM_AI_URL`, then delete the tunnel.
 
 **Policy:** the bridge exposes the club's HPC model behind a key, for the hackathon only. Confirm with Ben before relying on it.
+
+#### Ollama on another machine (Tailscale or LAN)
+
+An Ollama on another machine, such as a desktop on the tailnet, needs only the provider and the endpoint:
+
+```
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://100.x.y.z:11434/v1
+OLLAMA_MODEL=qwen3.8:27b
+```
+
+Give the address, not a name: the container resolves through Docker, which does not know Tailscale MagicDNS or `.local`. Nothing else is needed, because `docker-compose.yml` falls `AI_BASE_URL` back to `OLLAMA_BASE_URL` and `AI_MODEL` back to `OLLAMA_MODEL`, and `ai_client` strips the trailing `/v1` for the calendar's native calls. `host.docker.internal` is for an Ollama on the Docker host and will not reach another machine.
+
+Check it with `GET /api/ai/status` (`connected: true`, with the model list) and `GET /api/chat/status` (`providers: ["ollama:<model>"]`). A 27B model answers in roughly 20-25 seconds, so a first calendar summary is slow rather than stuck.
 
 #### Tests
 
@@ -427,7 +462,9 @@ Church events and services, seeded from `backend/app/events.json`, with a form t
 
 ## Prayer map
 
-A world map of regions (`backend/app/regions.json`) with news headlines (`backend/app/news.json`) and prayer prompts for each region.
+A world map of regions (`backend/app/regions.json`) with news headlines and prayer prompts for each region. Sharp facts, soft people: news gets an exact pin on a city, while a missionary team only ever gets its whole country (a soft glow and a beacon in the middle of the country, never a real location). Clicking a country shows the team's testimony and that country's news side by side, then the prayer points.
 
-- `GET /api/regions`, `GET /api/news`.
-- `GET /api/regions/{region_id}/prayer-angles`, `POST /api/regions/{region_id}/prayer-angles`: prayer prompts for a region, generated on request.
+- `GET /api/regions`, `GET /api/news`. The demo church's news is the real headlines in `backend/app/news_live.json` when that snapshot exists, replaced on every backend start; the fictional `backend/app/news.json` is only the fallback.
+- `POST /api/news/refresh` (staff or API key): pulls live English stories for the region countries from NewsData.io (`NEWSDATA_API_KEY`), writes a one-sentence summary of each with the configured AI provider (or keeps the article's own description), and replaces that church's news. Answers 503 when `NEWSDATA_API_KEY` is not set.
+- To refresh the snapshot instead: `cd backend && python -m scripts.fetch_news` (needs `NEWSDATA_API_KEY`), then commit `backend/app/news_live.json`.
+- `GET /api/regions/{region_id}/prayer-angles`, `POST /api/regions/{region_id}/prayer-angles` (staff): prayer prompts for a region, generated on request.

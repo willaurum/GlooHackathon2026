@@ -29,7 +29,7 @@ name: Previews
 
 on:
   push:
-    branches: ['main', 'jaron-*', 'ben-*', 'erik-*', 'will-*', 'feature/**']
+    branches: ['main', 'jaron-*', 'ben-*', 'erik-*', 'will-*', 'isaac-*', 'isaiah-*', 'feature/**']
   pull_request:
     types: [opened, synchronize, reopened, closed]
   workflow_dispatch:

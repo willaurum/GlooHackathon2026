@@ -32,10 +32,10 @@ function announceArrival(v) {
   } catch { /* some browsers refuse page-level notifications; the queue still updates */ }
 }
 
-// Guests names and arrival times: staff only, except on the shared demo church.
+// Guests names and arrival times: staff only, including on the demo church.
 export default function WelcomeTeam() {
   const church = useChurch();
-  return church.demo || church.staff ? <WelcomeQueue /> : <StaffOnly what="The welcome team screen" />;
+  return church.staff ? <WelcomeQueue /> : <StaffOnly what="The welcome team screen" />;
 }
 
 function WelcomeQueue() {

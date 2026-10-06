@@ -70,10 +70,62 @@ export function saveChurch(slug) {
 
 // Staff sessions (from the giving service sign-in) last for this browser tab only.
 const staffKey = slug => 'belong-staff:' + slug;
+// Memory only: restored browser tokens must be checked again; fresh server-issued tokens need no second login.
+const verifiedTokens = new Map();
+export const getVerifiedStaffToken = slug => verifiedTokens.get(slug) || '';
 export function getStaffToken(slug) {
   try { return sessionStorage.getItem(staffKey(slug)) ?? ''; } catch { return ''; }
 }
-export function setStaffToken(slug, token) {
+export function setStaffToken(slug, token, { verified = false } = {}) {
+  verifiedTokens.delete(slug);
   try { token ? sessionStorage.setItem(staffKey(slug), token) : sessionStorage.removeItem(staffKey(slug)); } catch { /* private mode */ }
+  if (verified && token && getStaffToken(slug) === token) verifiedTokens.set(slug, token);
   globalThis.dispatchEvent?.(new Event('belong-staff'));
+}
+
+// A password change revokes the old token on the server before the new one reaches us. Other requests
+// rejected in between must not sign staff out (and remount the page), so rejections wait for it.
+const rotations = new Map();
+// Per church: sign-outs started, and sign-outs still waiting on the server. A password change must not install
+// its replacement if a sign-out started while it ran, or is still in progress when it answers.
+const signOuts = new Map(), signingOut = new Map();
+
+/** Call when staff start signing out, before waiting on the server; call the returned function when it settles. */
+export function noteStaffSignOut(slug) {
+  signOuts.set(slug, (signOuts.get(slug) || 0) + 1);
+  signingOut.set(slug, (signingOut.get(slug) || 0) + 1);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const left = signingOut.get(slug) - 1;
+    left ? signingOut.set(slug, left) : signingOut.delete(slug);
+  };
+}
+
+/** Forget a token the server rejected, unless it was already replaced or is being replaced right now. */
+export function clearRejectedStaffToken(slug, token) {
+  if (token && !rotations.get(slug) && getStaffToken(slug) === token) setStaffToken(slug, '');
+}
+
+/** Run a request that returns a replacement token ({ token }) and store it. `installed` is false when staff
+ *  signed out (or in again) while it ran: the replacement then belongs to nobody and the caller should revoke it. */
+export async function rotateStaffToken(slug, request) {
+  const old = getStaffToken(slug), signOutsBefore = signOuts.get(slug) || 0;
+  let rejected = false;
+  rotations.set(slug, (rotations.get(slug) || 0) + 1);
+  try {
+    const res = await request();
+    if (getStaffToken(slug) !== old || (signOuts.get(slug) || 0) !== signOutsBefore || signingOut.get(slug)) return { ...res, installed: false };
+    setStaffToken(slug, res.token, { verified: true });
+    return { ...res, installed: true };
+  } catch (err) {
+    rejected = err.status === 401;
+    throw err;
+  } finally {
+    const left = rotations.get(slug) - 1;
+    left ? rotations.set(slug, left) : rotations.delete(slug);
+    // The change itself was refused because the session is gone: now it really is signed out.
+    if (rejected) clearRejectedStaffToken(slug, old);
+  }
 }

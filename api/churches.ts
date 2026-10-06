@@ -16,23 +16,25 @@ const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const DEMO: Church = { slug: DEMO_SLUG, name: 'Grace Community', city: 'Springfield', demo: true };
 const FOUND_TTL = 60_000;
 const MISSING_TTL = 15_000;
-const STAFF_TTL = 60_000;
 
 export type Church = { slug: string; name: string; city: string; demo: boolean };
 
 export const validSlug = (slug: string) => SLUG_RE.test(slug);
 
-/** The church slug and the plain /api/... path, or null when the slug is malformed. */
+/** The church slug and the plain /api/... path, or null when the slug or path is malformed. */
 export function churchPath(pathname: string): { slug: string; path: string } | null {
+	// Access is decided on the path as written here, so it must be the path the container will run. The container
+	// decodes percent-escapes (/api/ai/%6dodel runs as /api/ai/model, /api/int%65rnal/... as internal) and redirects
+	// a trailing slash (/api/visits/ to /api/visits). No API path needs an escape, a trailing slash or an empty segment.
+	if (pathname.includes('%')) return null;
 	const m = /^\/api\/churches\/([^/]+)(\/.*)?$/.exec(pathname);
-	if (!m) return { slug: DEMO_SLUG, path: pathname };
-	if (!validSlug(m[1])) return null;
-	return { slug: m[1], path: '/api' + (m[2] && m[2] !== '/' ? m[2] : '/church') };
+	const target = !m ? { slug: DEMO_SLUG, path: pathname }
+		: validSlug(m[1]) ? { slug: m[1], path: '/api' + (m[2] && m[2] !== '/' ? m[2] : '/church') } : null;
+	return target && !/\/\/|\/$/.test(target.path) ? target : null;
 }
 
 // Small per-isolate caches so a page load does not ask the registry on every call.
 const directory = new Map<string, { until: number; church: Church | null }>();
-const sessions = new Map<string, number>();
 
 /** The church, null when no church has that slug, or 'unavailable' when the registry cannot be asked. */
 export async function findChurch(env: AppEnv, slug: string): Promise<Church | null | 'unavailable'> {
@@ -70,30 +72,37 @@ export async function findChurch(env: AppEnv, slug: string): Promise<Church | nu
 /** Forget a cached listing, after staff rename their church. */
 export const forgetChurch = (slug: string) => directory.delete(slug);
 
-async function sha256(value: string): Promise<string> {
-	const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
-	return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** True when the request carries a valid staff session for this church (Authorization: Bearer <token>). */
-export async function isStaff(request: Request, env: AppEnv, slug: string): Promise<boolean> {
+/** Validate a church session without treating service outages as invalid credentials. */
+export async function isStaff(request: Request, env: AppEnv, slug: string): Promise<boolean | 'unavailable'> {
 	const auth = request.headers.get('Authorization') ?? '';
-	if (!/^Bearer [A-Za-z0-9_-]{20,100}$/.test(auth) || !env.GIVING) return false;
-	const key = slug + ':' + (await sha256(auth));
-	if ((sessions.get(key) ?? 0) > Date.now()) return true;
+	if (!/^Bearer [A-Za-z0-9_-]{20,100}$/.test(auth)) return false;
+	if (!env.GIVING) return 'unavailable';
 	try {
 		let response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin/session`, { headers: { Authorization: auth } });
 		// An older giving service has no session route; its staff overview needs the same login.
 		if (response.status === 404) response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin`, { headers: { Authorization: auth } });
-		if (!response.ok) return false;
+		if ([401, 403, 404].includes(response.status)) return false;
+		if (!response.ok) return 'unavailable';
 		const body = await response.json<{ slug?: string; church?: { slug?: string } }>();
 		if ((body.slug ?? body.church?.slug) !== slug) return false;
 	} catch {
-		return false;
+		return 'unavailable';
 	}
-	if (sessions.size > 500) sessions.clear();
-	sessions.set(key, Date.now() + STAFF_TTL);
 	return true;
+}
+
+/** On a 401, tells the browser its stored staff session was rejected and should be dropped. */
+export const STAFF_SESSION_INVALID = 'staff_session_invalid';
+
+/** Whether the caller presented a staff session at all, valid or not. */
+export const sentStaffToken = (request: Request) => /^Bearer /.test(request.headers.get('Authorization') ?? '');
+
+/** Staff-only endpoints deny access during an outage but preserve the caller's session. */
+export async function requireStaff(request: Request, env: AppEnv, slug: string): Promise<Response | null> {
+	const result = await isStaff(request, env, slug);
+	if (result === true) return null;
+	if (result === 'unavailable') return Response.json({ detail: 'The staff sign-in service is unavailable right now. Please try again.' }, { status: 503 });
+	return Response.json({ detail: 'Please sign in as church staff.', ...(sentStaffToken(request) && { code: STAFF_SESSION_INVALID }) }, { status: 401 });
 }
 
 type Route = [string, RegExp];
@@ -104,32 +113,43 @@ const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/(health|church|info|ministries|events|chat\/status|ai\/status|ollama\/status|regions|news)$/],
 	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
 	['GET', /^\/api\/verse$/],
+	['GET', /^\/api\/blog(?:\/(categories|\d+))?$/],
 	['GET', /^\/api\/events\/\d+$/],
 	['GET', /^\/api\/regions\/\d+\/prayer-angles$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
-	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
 ];
 
-// Staff work: the welcome team queue, chat requests, saved connections and adding to the calendar.
-// The demo church leaves these open, because it is a shared demo workspace with no login. Every
-// other church needs its own staff session, since these show guests' names and contact details.
-const DEMO_OPEN_ROUTES: Route[] = [
+// Staff-only ids match any segment, not just digits: the container also accepts forms like +1 or 01 for 1,
+// so a digits-only pattern would let those fall through to a weaker rule. A bad id is the container's 404.
+const ID = '[^/]+';
+
+// Staff work requires a church session, including on the demo church.
+const STAFF_WORK_ROUTES: Route[] = [
 	['GET', /^\/api\/(connections|requests|visits)$/],
-	['POST', /^\/api\/visits\/\d+\/(claim|met)$/],
+	['POST', new RegExp(`^/api/visits/${ID}/(claim|met)$`)],
 	['POST', /^\/api\/events$/],
-	['POST', /^\/api\/events\/\d+\/summarize$/],
+	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],
 	['POST', /^\/api\/events\/summarize-all$/],
-	['DELETE', /^\/api\/(connections|requests)\/\d+$/],
-	['PATCH', /^\/api\/requests\/\d+$/],
+	['DELETE', new RegExp(`^/api/(connections|requests)/${ID}$`)],
+	['PATCH', new RegExp(`^/api/requests/${ID}$`)],
 ];
 
-// Settings shared by every church (the AI model). Open on the demo church as before; otherwise the API key.
+// Settings shared by every church (the AI model) require the operator API key.
 const OPERATOR_ROUTES: Route[] = [['POST', /^\/api\/(ai|ollama)\/model$/]];
 
 // Church setup and content import: that church's staff, on every church. (The demo church's staff
 // password is ADMIN_KEY in api-giving.)
-const STAFF_ROUTES: Route[] = [['GET', /^\/api\/church\/content$/], ['PUT', /^\/api\/church\/content$/]];
+const STAFF_ROUTES: Route[] = [
+	['GET', /^\/api\/church\/content$/],
+	['PUT', /^\/api\/church\/content$/],
+	['POST', new RegExp(`^/api/regions/${ID}/prayer-angles$`)],
+	// Blog routes match Ben's PR #52; drafting and approval workflows must filter drafts separately.
+	['POST', /^\/api\/blog(?:\/.*)?$/],
+	['PUT', /^\/api\/blog(?:\/.*)?$/],
+	['PATCH', /^\/api\/blog(?:\/.*)?$/],
+	['DELETE', /^\/api\/blog(?:\/.*)?$/],
+];
 
 export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
 
@@ -137,8 +157,8 @@ export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
 export function access(method: string, path: string, demo: boolean): Access {
 	if (matches(STAFF_ROUTES, method, path)) return 'staff';
 	if (matches(PUBLIC_ROUTES, method, path)) return 'public';
-	if (matches(DEMO_OPEN_ROUTES, method, path)) return demo ? 'public' : 'staff';
-	if (matches(OPERATOR_ROUTES, method, path)) return demo ? 'public' : 'key';
+	if (matches(STAFF_WORK_ROUTES, method, path)) return 'staff';
+	if (matches(OPERATOR_ROUTES, method, path)) return 'key';
 	return 'key-or-staff';
 }
 

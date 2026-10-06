@@ -193,7 +193,7 @@ async def _probe(base_url: str | None, current_model: str, target: dict) -> dict
         }
 
 
-def clean_summary(text: str) -> str:
+def clean_summary(text: str, join_delimiter: str = " ") -> str:
     """Strip reasoning/thought blocks and metadata labels from LLM output so only narrative sentences remain."""
     if not text:
         return ""
@@ -233,11 +233,142 @@ def clean_summary(text: str) -> str:
                 line = line[len(prefix) :].strip()
         if line:
             cleaned_lines.append(line)
-    result = " ".join(cleaned_lines).strip()
+    result = join_delimiter.join(cleaned_lines).strip()
     # Strip enclosing quotation marks if returned by the LLM
     if result.startswith('"') and result.endswith('"') and len(result) > 2:
         result = result[1:-1].strip()
     return result if result else text.strip()
+
+
+async def generate_text(
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    temperature: float = 0.6,
+    max_tokens: int = 800,
+    client: httpx.AsyncClient | None = None,
+    preserve_newlines: bool = False,
+) -> str:
+    """Send a prompt to the configured AI endpoint to generate completion text."""
+    requested_model = model or get_default_model()
+    target = endpoint()
+    url_base = target["base_url"]
+    headers = _get_headers()
+    delim = "\n" if preserve_newlines else " "
+    # Chat-provider base URLs already include the API version (Gloo's has no /v1 at all).
+    from_chat = target["provider"] not in ("custom", "local")
+
+    # Verify AI endpoint status
+    status = await get_status()
+    if not status.get("connected"):
+        raise RuntimeError(
+            f"Cannot connect to AI endpoint at {url_base}. "
+            f"Please verify the AI service is running and accessible."
+        )
+
+    # Use resolved installed model or requested model
+    available = status.get("available_models", [])
+    resolved_model = find_matching_model(requested_model, available) or requested_model
+
+    result_text = ""
+
+    async def _execute_with_client(http_client: httpx.AsyncClient):
+        nonlocal result_text
+        # 1. Primary method: OpenAPI / OpenAI-compatible /chat/completions
+        chat_url = (f"{url_base}/chat/completions" if from_chat or url_base.endswith("/v1")
+                    else f"{url_base}/v1/chat/completions")
+        native_fallback = not from_chat or target["provider"] == "ollama"
+        try:
+            chat_resp = await http_client.post(
+                chat_url,
+                json={
+                    **target["extra_body"],
+                    "model": resolved_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+            )
+            if chat_resp.status_code == 200:
+                chat_data = chat_resp.json()
+                choices = chat_data.get("choices", [])
+                if choices:
+                    msg = choices[0].get("message", {})
+                    content = msg.get("content", "")
+                    result_text = clean_summary(content, join_delimiter=delim)
+            elif chat_resp.status_code == 404:
+                logger.info(f"OpenAPI chat endpoint {chat_url} returned 404, attempting fallback endpoints...")
+            else:
+                native_fallback = False
+                logger.info(f"AI chat endpoint returned HTTP {chat_resp.status_code}")
+        except Exception as exc:
+            # Not after a timeout: the native endpoints would triple the wait on a slow model.
+            native_fallback = False
+            logger.debug(f"OpenAPI chat completion call failed on {chat_url}: {exc}")
+
+        # 2. Fallback: Ollama native /api/generate
+        if not result_text and native_fallback:
+            try:
+                gen_prompt = f"{system_prompt}\n\n{user_prompt}"
+                gen_resp = await http_client.post(
+                    f"{native_root(url_base)}/api/generate",
+                    json={
+                        "model": resolved_model,
+                        "prompt": gen_prompt,
+                        "stream": False,
+                        "options": {
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                        },
+                    },
+                )
+                if gen_resp.status_code == 200:
+                    data = gen_resp.json()
+                    result_text = clean_summary(data.get("response", ""), join_delimiter=delim)
+            except Exception as gen_err:
+                logger.debug(f"/api/generate attempt failed: {gen_err}")
+
+        # 3. Fallback: Ollama native /api/chat
+        if not result_text and native_fallback:
+            try:
+                native_chat_resp = await http_client.post(
+                    f"{native_root(url_base)}/api/chat",
+                    json={
+                        "model": resolved_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "stream": False,
+                        "options": {
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                        },
+                    },
+                )
+                if native_chat_resp.status_code == 200:
+                    chat_data = native_chat_resp.json()
+                    msg = chat_data.get("message", {})
+                    result_text = clean_summary(msg.get("content", ""), join_delimiter=delim)
+            except Exception as native_err:
+                logger.debug(f"/api/chat attempt failed: {native_err}")
+
+    if client:
+        await _execute_with_client(client)
+    else:
+        async with httpx.AsyncClient(timeout=get_timeout(), headers=headers) as local_client:
+            await _execute_with_client(local_client)
+
+    if not result_text:
+        raise RuntimeError(
+            f"AI endpoint ({resolved_model}) returned an empty response. "
+            f"Please check your AI service and model configuration."
+        )
+
+    return result_text
 
 
 async def summarize_event(
@@ -255,25 +386,6 @@ async def summarize_event(
     Compatible with any OpenAPI / OpenAI chat completions endpoint
     as well as native Ollama generate/chat endpoints.
     """
-    requested_model = model or get_default_model()
-    target = endpoint()
-    url_base = target["base_url"]
-    headers = _get_headers()
-    # Chat-provider base URLs already include the API version (Gloo's has no /v1 at all).
-    from_chat = target["provider"] not in ("custom", "local")
-
-    # Verify AI endpoint status
-    status = await get_status()
-    if not status.get("connected"):
-        raise RuntimeError(
-            f"Cannot connect to AI endpoint at {url_base}. "
-            f"Please verify the AI service is running and accessible."
-        )
-
-    # Use resolved installed model or requested model
-    available = status.get("available_models", [])
-    resolved_model = find_matching_model(requested_model, available) or requested_model
-
     system_prompt = (
         "You are an editor for a church newsletter. Write a warm, inviting 2-sentence bulletin summary "
         "of this church event for members and visitors. Output ONLY the summary."
@@ -285,103 +397,5 @@ async def summarize_event(
         f"Event Details: {description}\n\n"
         "Bulletin Summary:"
     )
+    return await generate_text(system_prompt, user_prompt, model=model, client=client)
 
-    summary = ""
-
-    async def _execute_with_client(http_client: httpx.AsyncClient):
-        nonlocal summary
-        # 1. Primary method: OpenAPI / OpenAI-compatible /chat/completions
-        chat_url = (f"{url_base}/chat/completions" if from_chat or url_base.endswith("/v1")
-                    else f"{url_base}/v1/chat/completions")
-        native_fallback = not from_chat or target["provider"] == "ollama"
-        try:
-            chat_resp = await http_client.post(
-                chat_url,
-                json={
-                    **target["extra_body"],
-                    "model": resolved_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 0.6,
-                    "max_tokens": 600,
-                },
-            )
-            if chat_resp.status_code == 200:
-                chat_data = chat_resp.json()
-                choices = chat_data.get("choices", [])
-                if choices:
-                    msg = choices[0].get("message", {})
-                    content = msg.get("content", "")
-                    summary = clean_summary(content)
-            elif chat_resp.status_code == 404:
-                logger.info(f"OpenAPI chat endpoint {chat_url} returned 404, attempting fallback endpoints...")
-            else:
-                native_fallback = False
-                logger.info(f"AI chat endpoint returned HTTP {chat_resp.status_code}")
-        except Exception as exc:
-            # Not after a timeout: the native endpoints would triple the wait on a slow model.
-            native_fallback = False
-            logger.info(f"AI chat completion call failed ({type(exc).__name__})")
-
-        # 2. Fallback: Ollama native /api/generate
-        if not summary and native_fallback:
-            try:
-                gen_prompt = f"{system_prompt}\n\n{user_prompt}"
-                gen_resp = await http_client.post(
-                    f"{native_root(url_base)}/api/generate",
-                    json={
-                        "model": resolved_model,
-                        "prompt": gen_prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.6,
-                            "num_predict": 600,
-                        },
-                    },
-                )
-                if gen_resp.status_code == 200:
-                    data = gen_resp.json()
-                    summary = clean_summary(data.get("response", ""))
-            except Exception as gen_err:
-                logger.debug(f"/api/generate attempt failed: {gen_err}")
-
-        # 3. Fallback: Ollama native /api/chat
-        if not summary and native_fallback:
-            try:
-                native_chat_resp = await http_client.post(
-                    f"{native_root(url_base)}/api/chat",
-                    json={
-                        "model": resolved_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.6,
-                            "num_predict": 600,
-                        },
-                    },
-                )
-                if native_chat_resp.status_code == 200:
-                    chat_data = native_chat_resp.json()
-                    msg = chat_data.get("message", {})
-                    summary = clean_summary(msg.get("content", ""))
-            except Exception as native_err:
-                logger.debug(f"/api/chat attempt failed: {native_err}")
-
-    if client:
-        await _execute_with_client(client)
-    else:
-        async with httpx.AsyncClient(timeout=get_timeout(), headers=headers) as local_client:
-            await _execute_with_client(local_client)
-
-    if not summary:
-        raise RuntimeError(
-            f"AI endpoint ({resolved_model}) returned an empty response. "
-            f"Please check your AI service and model configuration."
-        )
-
-    return summary

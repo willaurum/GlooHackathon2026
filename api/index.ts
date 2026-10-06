@@ -2,7 +2,7 @@ import { Container, ContainerProxy, getContainer } from '@cloudflare/containers'
 import { DurableObject } from 'cloudflare:workers';
 import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
-import { DEMO_SLUG, access, churchHeaders, churchPath, findChurch, isStaff, onBaseDomain, validSlug } from './churches';
+import { DEMO_SLUG, STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
@@ -138,14 +138,23 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 	if (!church) return json({ detail: 'Church not found' }, 404);
 
 	const rule = access(request.method, path, church.demo);
-	if (rule === 'staff' && !(await isStaff(request, env, church.slug))) return json({ detail: 'Please sign in as church staff.' }, 401);
+	if (rule === 'staff') {
+		const denied = await requireStaff(request, env, church.slug);
+		if (denied) return denied;
+	}
 	if (rule === 'key') {
 		const denied = await authorize(request, env);
 		if (denied) return denied;
 	}
-	if (rule === 'key-or-staff' && !(await isStaff(request, env, church.slug))) {
-		const denied = await authorize(request, env);
-		if (denied) return denied;
+	if (rule === 'key-or-staff') {
+		const staff = await isStaff(request, env, church.slug);
+		if (staff !== true) {
+			const denied = await authorize(request, env);
+			if (denied && staff === 'unavailable') return json({ detail: 'The staff sign-in service is unavailable right now. Please try again.' }, 503);
+			// A rejected staff session: say so, so the browser drops it (a missing API key alone never does).
+			if (denied?.status === 401 && sentStaffToken(request)) return json({ ...(await denied.json<Record<string, unknown>>()), code: STAFF_SESSION_INVALID }, 401);
+			if (denied) return denied;
+		}
 	}
 	if (path !== '/api/notes/upload') {
 		const rejected = tooLarge(request, path === '/api/church/content' ? MAX_IMPORT_BYTES : undefined);
@@ -156,7 +165,8 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 	const container = getContainer(env.CHURCH_API, 'main');
 	const plain = new URL(url);
 	plain.pathname = path;
-	const forwarded = new Request(plain, { method: request.method, headers: churchHeaders(request.headers, church), body: request.body });
+	// A redirect from the container goes back to the browser, so its next request is authorized again here.
+	const forwarded = new Request(plain, { method: request.method, headers: churchHeaders(request.headers, church), body: request.body, redirect: 'manual' });
 	if (!church.demo && request.method === 'POST' && STARTS_NOTE.test(path)) {
 		await churchDb(env).rememberNotesChurch(church.slug).catch(() => {});
 	}

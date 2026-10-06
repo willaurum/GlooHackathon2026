@@ -1,20 +1,45 @@
 import { useEffect, useState } from 'react';
-import { fmt } from './api.js';
-import { shareLink } from './church.js';
+import { useChurch } from './ChurchContext.js';
+import { fmt, whenCapabilitiesKnown } from './api.js';
+import { rotateStaffToken, shareLink } from './church.js';
 import Icon from './Icon.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
-import { churchApi, friendly, getStaffToken, givingCapabilities, percent, setStaffToken, staffApi, tripDates } from './giving.js';
+import { churchApi, friendly, getStaffToken, givingCapabilities, percent, revokeStaffToken, setStaffToken, signOutStaff, staffApi, tripDates } from './giving.js';
 
 const VIEWS = [['overview', 'Overview'], ['funds', 'Funds & trips'], ['applications', 'Applications'], ['gifts', 'Gifts']];
 
 export default function GiveStaff({ slug, church, go, onPickChurch, onChanged }) {
+  const { staff } = useChurch();
   const [token, setToken] = useState(() => getStaffToken(slug)), [ready, setReady] = useState(null);
-  useEffect(() => { setToken(getStaffToken(slug)); }, [slug]);
-  useEffect(() => { givingCapabilities().then(c => setReady(c.churches)); }, []);
+  useEffect(() => {
+    const sync = () => setToken(getStaffToken(slug));
+    sync();
+    window.addEventListener('belong-staff', sync);
+    return () => window.removeEventListener('belong-staff', sync);
+  }, [slug]);
+  // While the giving service is down, a signed-in user still sees "Verifying" and its Sign out.
+  useEffect(() => whenCapabilitiesKnown(givingCapabilities, setReady), []);
 
   if (ready === false) return <div className="card give-pad"><h2>Church accounts are almost here.</h2><p>Staff sign-in, Stripe setup and trip applications open as soon as the updated giving service is deployed.</p></div>;
-  if (!token) return <SignIn slug={slug} church={church} go={go} onPickChurch={onPickChurch} onSignedIn={t => { setStaffToken(slug, t); setToken(t); }} />;
-  return <Dashboard key={slug} slug={slug} go={go} onChanged={onChanged} onSignedOut={() => { setStaffToken(slug, ''); setToken(''); }} />;
+  if (!token) return <SignIn slug={slug} church={church} go={go} onPickChurch={onPickChurch} onSignedIn={t => { setStaffToken(slug, t, { verified: true }); }} />;
+  if (!staff) return <Verifying slug={slug} />;
+  return <Dashboard key={slug} slug={slug} go={go} onChanged={onChanged} />;
+}
+
+// Verification retries while the giving service is down; this gives staff a way out meanwhile.
+function Verifying({ slug }) {
+  const [busy, setBusy] = useState(false);
+  async function signOut() {
+    setBusy(true);
+    // Revoke on the server when it answers; if it can't be reached, at least forget the session here
+    // (but never a newer sign-in that replaced it while this was waiting).
+    const token = getStaffToken(slug);
+    try { await signOutStaff(slug); } catch { if (getStaffToken(slug) === token) setStaffToken(slug, ''); }
+  }
+  return <div className="card give-pad">
+    <p role="status">Verifying your staff session…</p>
+    <p className="form-note">Taking too long? <button type="button" className="link" disabled={busy} onClick={signOut}>{busy ? 'Signing out…' : 'Sign out'}</button></p>
+  </div>;
 }
 
 function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
@@ -41,14 +66,16 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
   </div>;
 }
 
-function Dashboard({ slug, go, onChanged, onSignedOut }) {
-  const [data, setData] = useState(null), [err, setErr] = useState(''), [view, setView] = useState('overview');
-  function fail(e) { if (e.status === 401) onSignedOut(); else setErr(friendly(e)); }
+function Dashboard({ slug, go, onChanged }) {
+  const [data, setData] = useState(null), [err, setErr] = useState(''), [view, setView] = useState('overview'), [signingOut, setSigningOut] = useState(false), [signOutError, setSignOutError] = useState('');
+  function fail(e) { if (e.status !== 401) setErr(friendly(e)); }
   useEffect(() => { staffApi(slug, '').then(setData).catch(fail); }, [slug]);
   function update(next) { setData(next); onChanged(); }
   async function signOut() {
-    await staffApi(slug, '/logout', { method: 'POST' }).catch(() => {});
-    onSignedOut();
+    setSigningOut(true); setSignOutError('');
+    try { await signOutStaff(slug); }
+    catch (err) { setSignOutError('You are still signed in. ' + friendly(err)); }
+    finally { setSigningOut(false); }
   }
   if (err) return <div className="card give-pad give-error" role="alert"><h2>Could not load the staff area.</h2><p>{err}</p></div>;
   if (!data) return <div className="card give-pad"><p role="status">Loading your church…</p></div>;
@@ -56,8 +83,9 @@ function Dashboard({ slug, go, onChanged, onSignedOut }) {
   return <div className="give-staff">
     <div className="give-staff-head">
       <div><div className="eyebrow">Signed in as staff</div><h2>{data.church.name}</h2></div>
-      <button className="secondary" onClick={signOut}>Sign out</button>
+      <button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
     </div>
+    {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
     <div className="filters give-views" role="tablist" aria-label="Staff sections">
       {VIEWS.map(([v, label]) => <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'selected' : ''} onClick={() => setView(v)}>
         {label}{v === 'applications' && data.newApplications > 0 && <b className="count">{data.newApplications}</b>}
@@ -180,8 +208,9 @@ function ChurchSettings({ slug, church, update, fail }) {
   async function changePassword(e) {
     e.preventDefault(); setMsg(''); setErr('');
     try {
-      const res = await staffApi(slug, '/password', { method: 'POST', body: JSON.stringify(pw) });
-      setStaffToken(slug, res.token);
+      const res = await rotateStaffToken(slug, () => staffApi(slug, '/password', { method: 'POST', body: JSON.stringify(pw) }));
+      // Signed out while the change was in flight: don't leave the new session behind.
+      if (!res.installed) return revokeStaffToken(slug, res.token);
       setPw({ current: '', next: '' });
       setMsg('Password changed. Other staff sessions were signed out.');
     } catch (e2) { if (e2.status === 401) fail(e2); else setErr(friendly(e2)); }

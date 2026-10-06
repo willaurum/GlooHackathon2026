@@ -130,7 +130,7 @@ legend { font-weight: 600; font-size: 14px; color: var(--ink); padding: 0; }
 fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips button { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line-strong); background: var(--card); color: var(--text); border-radius: 999px; font-size: 14px; }
-.chips button.chosen { background: var(--green-100); border-color: var(--green-200); color: var(--green-800); font-weight: 600; }
+.chips button.chosen, .chips button.active { background: var(--green-100); border-color: var(--green-200); color: var(--green-800); font-weight: 600; }
 .disclaimer { font-size: 13px; text-align: center; margin-top: 14px; color: var(--faint); }
 .filters { display: inline-flex; gap: 4px; padding: 4px; background: #edf1ec; border-radius: 12px; }
 .filters button { min-height: 38px; padding: 0 14px; border-radius: 9px; color: var(--muted); font-size: 14px; font-weight: 500; }
@@ -864,7 +864,25 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .map-shell{height:480px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);position:relative}.map-shell .leaflet-tile-pane{filter:saturate(.55) sepia(.12) hue-rotate(-6deg) brightness(1.03)}
 .news-pin{background:var(--danger);border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px #00000040}
 @keyframes pulseGlow{0%,100%{opacity:.4}50%{opacity:.72}}
-.region-glow{animation:pulseGlow 4s ease-in-out infinite;filter:blur(5px)}
+.region-glow{animation:pulseGlow 4s ease-in-out infinite;filter:blur(5px);cursor:pointer;transition:fill-opacity .2s}.region-glow:hover{fill-opacity:.65}.region-glow.selected{animation:none;filter:none}
+/* Country beacons: the center of a country, never a team's real location. */
+@keyframes beaconPulse{0%{transform:scale(.6);opacity:.8}100%{transform:scale(2.8);opacity:0}}
+.beacon{cursor:pointer}.beacon>span{position:absolute}
+.beacon-ring{inset:0;border-radius:50%;background:var(--green-600);animation:beaconPulse 2.4s ease-out infinite}.beacon-ring.delay{animation-delay:1.2s}
+.beacon-core{inset:3px;border-radius:50%;background:var(--green-700);border:2px solid #fff;box-shadow:0 1px 4px #00000040;transition:transform .15s}
+.beacon:hover .beacon-core,.beacon.selected .beacon-core{transform:scale(1.25)}
+.beacon-label{left:24px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#fff;color:var(--green-700);font:700 12px var(--font);padding:3px 8px;border-radius:12px;box-shadow:0 1px 4px #00000026}
+.beacon.selected .beacon-label{background:var(--green-700);color:#fff}.beacon.selected .beacon-ring{background:var(--green-700)}
+@media (prefers-reduced-motion: reduce){.beacon-ring{animation:none;opacity:0}}
+/* Region details: testimony and news side by side, then prayer points. */
+.source-columns{display:grid;grid-template-columns:1fr 1fr;margin-top:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.source-block{padding:16px 20px 18px 0}.source-block+.source-block{padding:16px 0 18px 20px;border-left:1px solid var(--line)}.source-block p{font-size:15px}
+.source-label{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;color:var(--muted);margin-bottom:8px}
+.source-block article+article{margin-top:12px}.source-block b{display:block;font-size:14px;color:var(--ink)}.source-block small{font-size:12px}
+.prayer-points{padding-top:16px}.prayer-points>b{display:block;font-size:14px;color:var(--ink)}.prayer-points ul{margin:10px 0 0;padding-left:18px;line-height:1.7;color:var(--text);font-size:15px;list-style:disc}.prayer-points .primary{margin-top:16px}
+.prayer-points .angle-pill{margin:0 0 0 10px;vertical-align:middle}
+@media(max-width:600px){.source-columns{grid-template-columns:1fr}.source-block,.source-block+.source-block{padding:14px 0;border-left:0}.source-block+.source-block{border-top:1px solid var(--line)}}
+
 .prayer-card{position:relative;padding:28px;margin-top:20px}.prayer-card h2{margin-top:12px}
 .angle-pill{display:inline-block;font-size:9px;letter-spacing:.6px;text-transform:uppercase;background:var(--green-100);color:var(--green-700);border-radius:20px;padding:5px 11px;margin-top:14px;font-weight:700}
 .situational-summary{margin-top:12px}
@@ -929,3 +947,57 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .platform-list { grid-template-columns: 1fr; }
   .platform-bar .search { max-width: none; }
 }
+/* ---------- About, Beliefs, News, Directory, Connect ---------- */
+.about, .directory, .connect { display: flex; flex-direction: column; gap: 18px; }
+.about-block { padding: 24px 26px; }
+.about-block h2 { margin-top: 2px; }
+.about-block p { margin-top: 10px; font-size: 15px; }
+.about-mission { background: var(--green-800); border-color: var(--green-800); }
+.about-mission .eyebrow { color: var(--sage); }
+.about-mission h2 { color: #fff; font-size: clamp(20px, 3vw, 26px); line-height: 1.4; max-width: 760px; }
+.about-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.about-actions.stack { flex-direction: column; }
+.values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 4px; }
+.value { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.value p { font-size: 14px; }
+.beliefs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.belief { display: grid; grid-template-columns: 40px 1fr; column-gap: 14px; padding: 20px 22px; }
+.belief-num { font-family: var(--display); font-weight: 800; font-size: 18px; color: var(--green-600); }
+.belief p { font-size: 14px; margin-top: 6px; }
+.news-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+.news-list { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+.news-item { padding: 20px 22px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.news-item p { font-size: 15px; }
+.news-meta { display: flex; align-items: center; gap: 10px; }
+.news-side { padding: 20px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 24px; }
+.news-side ul { display: flex; flex-direction: column; gap: 10px; }
+.news-side li b { display: block; color: var(--ink); font-size: 14px; }
+.office { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 14px; }
+.dir-search { margin: 0; max-width: 420px; }
+.dir-search input { width: 100%; }
+.people { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+.person { padding: 18px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.person-role { font-size: 13px; font-weight: 600; color: var(--green-600); }
+.person p { font-size: 14px; margin: 6px 0 8px; flex: 1; }
+.person .link { word-break: break-all; }
+.paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.path { cursor: pointer; font: inherit; }
+.connect-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.connect-note { display: block; margin-top: 10px; }
+.know-us { margin: 20px 0; }
+.know-links { display: flex; flex-wrap: wrap; gap: 10px; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.footer-links a { color: var(--muted); text-decoration: none; }
+.footer-links a:hover { color: var(--green-700); text-decoration: underline; }
+@media (max-width: 1100px) { .values { grid-template-columns: repeat(2, minmax(0, 1fr)); } .people { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) {
+  .news-layout, .connect-grid { grid-template-columns: 1fr; }
+  .news-side { position: static; }
+  .beliefs, .paths { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .values, .people { grid-template-columns: 1fr; }
+  .about-block { padding: 20px; }
+  .about-actions > button { flex: 1 1 100%; }
+}
+.api-message { padding: 12px 16px; border-radius: var(--r); background: var(--danger-50); color: var(--danger); font-size: 14px; }
