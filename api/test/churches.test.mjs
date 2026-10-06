@@ -52,6 +52,16 @@ test('percent-encoded paths are refused, so a route cannot be checked as one thi
   assert.equal(access('POST', churchPath('/api/ai/model').path, false), 'key');
 });
 
+test('other spellings of an id stay staff only (the container reads +1, 01 and 1_0 as numbers)', () => {
+  for (const id of ['+1', '01', '1_0', ' 1', '1.0', 'abc']) {
+    for (const [m, p] of [['PATCH', `/api/requests/${id}`], ['DELETE', `/api/requests/${id}`], ['DELETE', `/api/connections/${id}`],
+      ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`], ['POST', `/api/regions/${id}/prayer-angles`]])
+      for (const demo of [true, false]) assert.equal(access(m, p, demo), 'staff', `${m} ${p}`);
+  }
+  // A guest's own visit token and "I'm here" stay public.
+  assert.equal(access('POST', '/api/visits/abcDEF_123/arrive', false), 'public');
+});
+
 test('trailing and doubled slashes are refused, so /api/visits/ cannot be read as an unknown route', () => {
   // The container redirects these to the staff-only /api/visits, /api/requests and /api/church/content.
   for (const p of ['/api/visits/', '/api/visits//', '/api/churches/hope-chapel/requests/', '/api/church/content/', '/api//visits', '/api/churches/hope-chapel//visits', '/api/'])

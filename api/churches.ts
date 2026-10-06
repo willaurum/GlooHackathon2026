@@ -120,15 +120,19 @@ const PUBLIC_ROUTES: Route[] = [
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
 ];
 
+// Staff-only ids match any segment, not just digits: the container also accepts forms like +1 or 01 for 1,
+// so a digits-only pattern would let those fall through to a weaker rule. A bad id is the container's 404.
+const ID = '[^/]+';
+
 // Staff work requires a church session, including on the demo church.
 const STAFF_WORK_ROUTES: Route[] = [
 	['GET', /^\/api\/(connections|requests|visits)$/],
-	['POST', /^\/api\/visits\/\d+\/(claim|met)$/],
+	['POST', new RegExp(`^/api/visits/${ID}/(claim|met)$`)],
 	['POST', /^\/api\/events$/],
-	['POST', /^\/api\/events\/\d+\/summarize$/],
+	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],
 	['POST', /^\/api\/events\/summarize-all$/],
-	['DELETE', /^\/api\/(connections|requests)\/\d+$/],
-	['PATCH', /^\/api\/requests\/\d+$/],
+	['DELETE', new RegExp(`^/api/(connections|requests)/${ID}$`)],
+	['PATCH', new RegExp(`^/api/requests/${ID}$`)],
 ];
 
 // Settings shared by every church (the AI model) require the operator API key.
@@ -139,7 +143,7 @@ const OPERATOR_ROUTES: Route[] = [['POST', /^\/api\/(ai|ollama)\/model$/]];
 const STAFF_ROUTES: Route[] = [
 	['GET', /^\/api\/church\/content$/],
 	['PUT', /^\/api\/church\/content$/],
-	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
+	['POST', new RegExp(`^/api/regions/${ID}/prayer-angles$`)],
 	// Blog routes match Ben's PR #52; drafting and approval workflows must filter drafts separately.
 	['POST', /^\/api\/blog(?:\/.*)?$/],
 	['PUT', /^\/api\/blog(?:\/.*)?$/],

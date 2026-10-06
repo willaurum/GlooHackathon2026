@@ -1,5 +1,5 @@
 import { gapi } from './api.js';
-import { DEMO_CHURCH, clearRejectedStaffToken, getStaffToken, setStaffToken } from './church.js';
+import { DEMO_CHURCH, clearRejectedStaffToken, getStaffToken, noteStaffSignOut, setStaffToken } from './church.js';
 
 // The built-in demo church. Its page also works against an older giving API
 // that only has the single-church endpoints (/api/config, /api/checkout).
@@ -32,6 +32,7 @@ export async function verifyStaffSession(slug) {
 // Revoke the server session before clearing this tab. Keep it on network failure so staff can retry.
 export async function signOutStaff(slug) {
   const token = getStaffToken(slug);
+  noteStaffSignOut(slug);
   try {
     await staffApi(slug, '/logout', { method: 'POST' });
   } catch (err) {

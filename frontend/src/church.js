@@ -86,6 +86,11 @@ export function setStaffToken(slug, token, { verified = false } = {}) {
 // A password change revokes the old token on the server before the new one reaches us. Other requests
 // rejected in between must not sign staff out (and remount the page), so rejections wait for it.
 const rotations = new Map();
+// Counts sign-outs started per church, so a password change that answers mid sign-out doesn't sign back in.
+const signOuts = new Map();
+
+/** Call when staff start signing out, before waiting on the server. */
+export const noteStaffSignOut = slug => signOuts.set(slug, (signOuts.get(slug) || 0) + 1);
 
 /** Forget a token the server rejected, unless it was already replaced or is being replaced right now. */
 export function clearRejectedStaffToken(slug, token) {
@@ -95,12 +100,12 @@ export function clearRejectedStaffToken(slug, token) {
 /** Run a request that returns a replacement token ({ token }) and store it. `installed` is false when staff
  *  signed out (or in again) while it ran: the replacement then belongs to nobody and the caller should revoke it. */
 export async function rotateStaffToken(slug, request) {
-  const old = getStaffToken(slug);
+  const old = getStaffToken(slug), signOutsBefore = signOuts.get(slug) || 0;
   let rejected = false;
   rotations.set(slug, (rotations.get(slug) || 0) + 1);
   try {
     const res = await request();
-    if (getStaffToken(slug) !== old) return { ...res, installed: false };
+    if (getStaffToken(slug) !== old || (signOuts.get(slug) || 0) !== signOutsBefore) return { ...res, installed: false };
     setStaffToken(slug, res.token, { verified: true });
     return { ...res, installed: true };
   } catch (err) {

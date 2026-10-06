@@ -140,6 +140,22 @@ test('signing out while a password change is in flight stays signed out', async 
   storage.clear();
 });
 
+test('sign-out wins even when the password change answers first', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    setStaffToken('hope-chapel', 'a'.repeat(32), { verified: true });
+    let finishRotation, finishLogout;
+    const rotation = rotateStaffToken('hope-chapel', () => new Promise(resolve => { finishRotation = resolve; }));
+    globalThis.fetch = () => new Promise(resolve => { finishLogout = () => resolve(Response.json({ ok: true })); });
+    const signOut = signOutStaff('hope-chapel'); // clicked while the password change is in flight
+    finishRotation({ token: 'b'.repeat(32) }); // password response arrives first
+    assert.equal((await rotation).installed, false);
+    finishLogout();
+    await signOut;
+    assert.equal(getStaffToken('hope-chapel'), '');
+  } finally { globalThis.fetch = originalFetch; storage.clear(); }
+});
+
 test('whenCapabilitiesKnown keeps checking while a service is unreachable, then reports it', async () => {
   const answers = [{ churches: false, unavailable: true }, { churches: true }];
   const originalSetTimeout = globalThis.setTimeout;
