@@ -306,7 +306,13 @@ Leave `OLLAMA_BASE_URL` unset. Under docker compose it defaults to `http://host.
 
 The bind address matters. `-L 0.0.0.0:11434` is what lets the container reach the tunnel; with the older `-L 127.0.0.1:11434` the tunnel accepts only loopback connections, and a container arrives over the Docker bridge instead. On Docker Desktop (macOS and Windows) loopback happens to work, because `host.docker.internal` is proxied through its VM, so `0.0.0.0` is the one spelling that works everywhere.
 
-On Linux, also let the Docker bridges reach the host, or the container's connection is dropped before it arrives. With `ufw` enabled (`DEFAULT_INPUT_POLICY="DROP"` is the Ubuntu default) the symptom is a timeout on `/api/ai/status` while the same URL works from a terminal on the host:
+On Linux, also let the Docker bridges reach the host. With `ufw` enabled this is not specific to Ollama: `DEFAULT_INPUT_POLICY="DROP"` drops every container-to-host connection, so `host.docker.internal` reaches nothing at all. Ubuntu ships `ufw` inactive, so most machines never meet this; `sudo ufw status` says whether yours is one of them. The symptom is a timeout on `/api/ai/status` while the same URL answers from a terminal on the host. To confirm it is the firewall rather than the tunnel, reach for a port you know is open:
+
+```bash
+docker compose exec backend python -c "import socket;socket.create_connection(('172.17.0.1',22),5)"
+```
+
+A timeout there means the firewall, since that port has nothing to do with this project. Then allow the bridges:
 
 ```bash
 sudo ufw allow from 172.17.0.0/16 to any port 11434 proto tcp
@@ -315,7 +321,7 @@ sudo ufw allow from 172.22.0.0/16 to any port 11434 proto tcp
 
 Use the subnets rather than interface names: the compose bridge is named `br-<id>` and is renamed whenever the network is recreated. `docker network inspect <project>_default` prints the subnet in use if it differs.
 
-Check it with `GET /api/ai/status`: `connected: true` and the model list means the tunnel is reachable. `connected: false` with the tunnel running is the firewall or the bind address above. If the tunnel's own far end is down, `curl 127.0.0.1:11434/api/tags` on the host returns nothing at all rather than JSON.
+Check it with `GET /api/ai/status`: `connected: true` and the model list means the tunnel is reachable. `connected: false` with the tunnel running is the firewall or the bind address above. If the tunnel's own far end is down, `curl 127.0.0.1:11434/api/tags` on the host returns nothing at all rather than JSON. Once it is up, `gpt-oss:20b` answers a chat turn or a calendar summary in about three seconds.
 
 This tunnel only works locally, not from Cloudflare; for the deployed site, see the team AI bridge below.
 
