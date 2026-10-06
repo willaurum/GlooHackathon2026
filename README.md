@@ -10,7 +10,7 @@ belong. is the base church-site template for a future agentic templatizer. The t
 - **Sermon Notes**: sermons are transcribed on Cloudflare and highlighted (Bible quotes, current events, stories), Bible references open the passage from YouVersion, and questions are answered only from the transcript, with timestamps.
 - **Calendar**: church events and services, with optional AI summaries.
 - **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and staff-managed Stripe setup.
-- **Prayer map**: world regions with news and prayer prompts.
+- **Prayer map**: the countries a church prays for, with dated updates from the field and real news.
 
 An **Ask Belong** chat assistant is available on every page.
 
@@ -48,7 +48,7 @@ There are no individual member accounts or member commenting permissions yet.
 
 Staff sessions apply only to their own church. Admin controls appear only after the
 session is validated. Calendar creation and summary generation, request review, saved
-connections, the welcome queue, prayer prompt generation and church setup require staff
+connections, the welcome queue, and church setup (including the Prayer map places) require staff
 on every church, including Grace Community. Public event and summary reads remain open.
 The shared AI model setting requires the operator API key, even on the demo church.
 Sign out revokes the session on the server; expired or revoked sessions lose admin access.
@@ -179,7 +179,7 @@ The first request for an existing church creates its tables. Only the demo churc
 | Routes | Demo church | Any other church |
 |---|---|---|
 | Info, church, ministries, events, matches, chat, guest sign-up and "I am here", viewing the prayer map, verse | public | public |
-| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries; generating prayer-map prompts (`POST /api/regions/<id>/prayer-angles`) | that church staff | that church staff |
+| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
 | Staff accounts: `GET /api/churches/<slug>/admin/users` | that church staff | that church staff |
 | Add or remove staff: `POST /api/churches/<slug>/admin/users`, `DELETE /api/churches/<slug>/admin/users/<id>` | Owner only | Owner only |
@@ -210,11 +210,16 @@ A church is one JSON document, read with `GET /api/church/content` and written w
     "shifts": [{ "id": "0-1", "date": "2026-10-11", "start_time": "08:30", "end_time": "10:30", "filled": 0, "total": 6,
                  "services": ["sunday-9"], "frequencies": ["one-time", "weekly", "monthly"] }]
   }],
-  "calendar": [{ "id": 1, "title": "Serve Day", "category": "Outreach", "date": "2026-10-17", "time": "9:00 AM", "location": "", "description": "" }]
+  "calendar": [{ "id": 1, "title": "Serve Day", "category": "Outreach", "date": "2026-10-17", "time": "9:00 AM", "location": "", "description": "" }],
+  "regions": [{                    // regions.json; one entry per country, country_code is ISO 3166-1 alpha-3
+    "id": 0, "country": "Nepal", "country_code": "NPL", "codename": "Team Highland",
+    "field_of_ministry": "Community health training", "since": 2019, "team_size": 4,
+    "updates": [{ "date": "2026-05-01", "title": "", "body": "What the team is seeing.", "author": "Pat" }]   // From the field
+  }]
 }
 ```
 
-Extra fields are kept. A ministry that saved connections or requests still point at is not deleted by an import, so those stay readable. Giving funds and mission trips are not part of this document: they live in the giving Worker (`/api/churches/<slug>/admin/funds`), with the same staff session. The prayer map regions are not in it yet.
+Extra fields are kept. A ministry that saved connections or requests still point at is not deleted by an import, so those stay readable. Giving funds and mission trips are not part of this document: they live in the giving Worker (`/api/churches/<slug>/admin/funds`), with the same staff session. Prayer map places and their field updates are in it under `regions`.
 
 ### Adding an endpoint
 
@@ -510,9 +515,8 @@ Church events and services, seeded from `backend/app/events.json`, with a form t
 
 ## Prayer map
 
-A world map of regions (`backend/app/regions.json`) with news headlines and prayer prompts for each region. Sharp facts, soft people: news gets an exact pin on a city, while a missionary team only ever gets its whole country (a soft glow and a beacon in the middle of the country, never a real location). Clicking a country shows the team's testimony and that country's news side by side, then the prayer points.
+A world map of the countries a church prays for, with news headlines and dated updates from the field for each. Staff add the places and their updates under Church setup, then Prayer map places (saved with the rest of the church through `PUT /api/church/content`, under `regions`); the demo church starts from `backend/app/regions.json`. Sharp facts, soft people: news gets an exact pin on a city, while a missionary team only ever gets its whole country (a soft glow and a beacon in the middle of the country, never a real location). Clicking a country shows the team's updates from the field (newest first, each with its date, so earlier ones stay as a history) and that country's news side by side.
 
-- `GET /api/regions`, `GET /api/news`. The demo church's news is the real headlines in `backend/app/news_live.json` when that snapshot exists, replaced on every backend start; the fictional `backend/app/news.json` is only the fallback.
+- `GET /api/regions` (each region carries its `updates`, newest first), `GET /api/news`. Updates live in the `field_updates` table; an older single `testimony` becomes the region's first update. Prayer points were removed. The demo church's news is the real headlines in `backend/app/news_live.json` when that snapshot exists, replaced on every backend start; the fictional `backend/app/news.json` is only the fallback.
 - `POST /api/news/refresh` (staff or API key): pulls live English stories for the region countries from NewsData.io (`NEWSDATA_API_KEY`), keeps each story's source link, and replaces that church's news. Answers 503 when `NEWSDATA_API_KEY` is not set.
 - To refresh the snapshot instead: `cd backend && python -m scripts.fetch_news` (needs `NEWSDATA_API_KEY`), then commit `backend/app/news_live.json`.
-- `GET /api/regions/{region_id}/prayer-angles`, `POST /api/regions/{region_id}/prayer-angles` (staff): prayer prompts for a region, generated on request.
