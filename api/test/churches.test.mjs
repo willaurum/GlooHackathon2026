@@ -55,7 +55,7 @@ test('percent-encoded paths are refused, so a route cannot be checked as one thi
 test('other spellings of an id stay staff only (the container reads +1, 01 and 1_0 as numbers)', () => {
   for (const id of ['+1', '01', '1_0', ' 1', '1.0', 'abc']) {
     for (const [m, p] of [['PATCH', `/api/requests/${id}`], ['DELETE', `/api/requests/${id}`], ['DELETE', `/api/connections/${id}`],
-      ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`], ['POST', `/api/regions/${id}/prayer-angles`]])
+      ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`]])
       for (const demo of [true, false]) assert.equal(access(m, p, demo), 'staff', `${m} ${p}`);
   }
   // A guest's own visit token and "I'm here" stay public.
@@ -145,7 +145,7 @@ test('visitors can read posts and summaries but cannot publish, approve or regen
       ['POST', '/api/blog'], ['POST', '/api/blog/categorize'], ['POST', '/api/blog/12/summarize'],
       ['POST', '/api/blog/12/approve'], ['PATCH', '/api/blog/12'], ['PUT', '/api/blog/12'],
       ['DELETE', '/api/blog/12'], ['POST', '/api/events/12/summarize'],
-      ['POST', '/api/events/summarize-all'], ['POST', '/api/regions/12/prayer-angles'],
+      ['POST', '/api/events/summarize-all'],
     ]) assert.equal(access(method, path, demo), 'staff', method + ' ' + path);
     assert.equal(access('POST', '/api/ai/model', demo), 'key');
     assert.equal(access('POST', '/api/ollama/model', demo), 'key');

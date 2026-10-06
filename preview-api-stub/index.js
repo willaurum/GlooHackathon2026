@@ -27,6 +27,12 @@ const pickEvent = row => Object.fromEntries(EVENT_FIELDS.map(key => [key, row[ke
 
 const church = SEED.church && typeof SEED.church === 'object' ? SEED.church : {};
 
+// Field updates get ids and come newest first, like GET /api/regions.
+function withFieldUpdates(region) {
+  const updates = (region.updates ?? []).map((u, i) => ({ id: i + 1, title: '', author: '', ...u }));
+  return { ...region, updates: updates.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id) };
+}
+
 const state = {
   ministries: byId(SEED.ministries),
   connections: [],
@@ -41,12 +47,11 @@ const state = {
   // Calendar events (ben-calandar-update's events.json), not church.json's events.
   events: byId(SEED.events).map(pickEvent),
   aiModel: 'preview-template',
-  regions: byId(SEED.regions),
+  regions: byId(SEED.regions).map(withFieldUpdates),
   news: byId(SEED.news),
-  angles: [],
 };
 
-const ids = { connection: 1, item: 1, request: 1, visit: 1, angle: 1 };
+const ids = { connection: 1, item: 1, request: 1, visit: 1 };
 const nextId = kind => ids[kind]++;
 const nowIso = () => new Date().toISOString();
 
@@ -800,103 +805,6 @@ function setAiModel({ body }) {
 }
 
 // ---------------------------------------------------------------------------
-// Prayer map (feature/prayer-map); a port of ai.py's template synthesizer
-// ---------------------------------------------------------------------------
-
-const ANGLES = ['safety', 'provision', 'gospel access', 'endurance', 'local relationships'];
-const ANGLE_FRAMES = {
-  safety: 'physical safety and the practical hazards of the terrain and season',
-  provision: 'provision — the material needs of the team and the people they serve',
-  'gospel access': 'open doors for the gospel and the relationships forming around it',
-  endurance: 'endurance and the toll steady, unglamorous work takes on the team',
-  'local relationships': 'the local partnerships and relationships the work depends on',
-};
-
-function nextAngle(seen) {
-  const fresh = ANGLES.find(angle => !seen.includes(angle));
-  // All angles exhausted: cycle back in rather than dead-ending the button.
-  return fresh ?? ANGLES[seen.length % ANGLES.length];
-}
-
-// textwrap.shorten: collapse whitespace, then keep whole words that fit with the placeholder.
-function shorten(text, width, placeholder = '...') {
-  const words = String(text).split(/\s+/).filter(Boolean);
-  const joined = words.join(' ');
-  if (joined.length <= width) return joined;
-  let line = '';
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (candidate.length + placeholder.length > width) break;
-    line = candidate;
-  }
-  return line ? line + placeholder : placeholder.trim();
-}
-
-function prayerPoints(angle, region, newsItems) {
-  const { country, codename } = region;
-  const headlines = newsItems.slice(0, 2).map(n => n.headline);
-  const points = {
-    safety: [
-      `Pray for ${codename}'s physical safety as they travel ${country}'s terrain, especially where recent conditions have made routes harder or slower.`,
-      `Pray for wisdom in timing travel and outreach around the season's risks in ${country}.`,
-    ],
-    provision: [
-      `Pray for the material needs ${codename} has named directly: capacity, funding, or supplies stretched thin by current demand.`,
-      `Pray for provision for the families and partners ${codename} serves in ${country}, particularly where local conditions have tightened resources.`,
-    ],
-    'gospel access': [
-      `Pray for the specific openness ${codename} has described in their community in ${country} — that curiosity would deepen into lasting faith.`,
-      `Pray for courage and clarity as ${codename} responds to invitations to share more.`,
-    ],
-    endurance: [
-      `Pray for the team's endurance — ${codename} has described real fatigue alongside real fruit this season.`,
-      `Pray for rest and encouragement for the team members carrying the heaviest load in ${country} right now.`,
-    ],
-    'local relationships': [
-      `Pray for the local partners and leaders ${codename} depends on in ${country}, that trust would keep deepening.`,
-      `Pray for the emerging local leaders ${codename} has mentioned, that they would be equipped to carry this work forward.`,
-    ],
-  }[angle];
-  if (headlines.length) points.push("Pray in light of what's happening regionally right now: " + headlines.join('; ') + '.');
-  return points;
-}
-
-function synthesize(region, newsItems, angle) {
-  const parts = [
-    `${region.codename} has been serving in ${region.country} since ${region.since}, focused on ${String(region.field_of_ministry).toLowerCase()}.`,
-    shorten(region.testimony ?? '', 220),
-  ];
-  if (newsItems.length) parts.push(`Recent regional news adds context: "${newsItems[0].headline}".`);
-  parts.push(`This angle looks specifically at ${ANGLE_FRAMES[angle]}.`);
-  return { summary: parts.join(' '), prayer_points: prayerPoints(angle, region, newsItems) };
-}
-
-function regionFor(params) {
-  const region = state.regions.find(r => r.id === pathInt(params, 'region_id'));
-  if (!region) fail(404, 'Region not found');
-  return region;
-}
-
-function angleHistory({ params }) {
-  const region = regionFor(params);
-  return json(clone(state.angles.filter(a => a.region_id === region.id)));
-}
-
-function generateAngle({ params }) {
-  const region = regionFor(params);
-  const newsItems = state.news.filter(n => n.country_code === region.country_code);
-  const seen = [...new Set(state.angles.filter(a => a.region_id === region.id).map(a => a.angle))];
-  const angle = nextAngle(seen);
-  const { summary, prayer_points } = synthesize(region, newsItems, angle);
-  const row = {
-    angle_id: nextId('angle'), region_id: region.id, angle, summary, prayer_points,
-    source_news_ids: newsItems.map(n => n.id), created_at: nowIso(),
-  };
-  state.angles.push(row);
-  return json(clone(row), 201);
-}
-
-// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -938,8 +846,6 @@ const ROUTES = [
 
   ['GET', '/api/regions', () => json(clone(state.regions))],
   ['GET', '/api/news', () => json(clone(state.news))],
-  ['GET', '/api/regions/:region_id/prayer-angles', angleHistory],
-  ['POST', '/api/regions/:region_id/prayer-angles', generateAngle],
 ].map(([method, path, handler]) => {
   const keys = [];
   const pattern = path.replace(/:(\w+)/g, (_, key) => { keys.push(key); return '([^/]+)'; });

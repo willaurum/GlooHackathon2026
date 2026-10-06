@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai, ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations
+from . import ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -279,19 +279,26 @@ def met_visit(visit_id: int):
     return visit
 
 
-# --- Prayer map: regions, news, and prayer angles ---
+# --- Prayer map: regions, field updates, and news ---
+
+
+class FieldUpdateOut(BaseModel):
+    id: int
+    date: str
+    title: str
+    body: str
+    author: str
 
 
 class RegionOut(BaseModel):
-    model_config = ConfigDict(extra='forbid')
     id: int
     country: str
     country_code: str
     codename: str
-    field_of_ministry: str
-    testimony: str
-    since: int
-    team_size: int
+    field_of_ministry: str = ''
+    since: int | None = None
+    team_size: int = 0
+    updates: list[FieldUpdateOut]  # newest first
 
 
 class NewsEventOut(BaseModel):
@@ -306,16 +313,6 @@ class NewsEventOut(BaseModel):
     source: str
     date: str
     url: str | None = None
-
-
-class PrayerAngleOut(BaseModel):
-    angle_id: int
-    region_id: int
-    angle: str
-    summary: str
-    prayer_points: list[str]
-    source_news_ids: list[int]
-    created_at: datetime
 
 
 @app.get('/api/regions', response_model=list[RegionOut])
@@ -338,25 +335,6 @@ def refresh_news():
         raise HTTPException(status_code=502, detail='NewsData returned no articles; the news is unchanged.')
     db.replace_news(items)
     return {'articles': len(items)}
-
-
-@app.get('/api/regions/{region_id}/prayer-angles', response_model=list[PrayerAngleOut])
-def prayer_angle_history(region_id: int):
-    if db.get_region(region_id) is None:
-        raise HTTPException(status_code=404, detail='Region not found')
-    return db.list_angles(region_id)
-
-
-@app.post('/api/regions/{region_id}/prayer-angles', status_code=201, response_model=PrayerAngleOut)
-def generate_prayer_angle(region_id: int):
-    region = db.get_region(region_id)
-    if region is None:
-        raise HTTPException(status_code=404, detail='Region not found')
-    news_items = db.news_for_country(region['country_code'])
-    angle = ai.next_angle(db.seen_angles(region_id))
-    result = ai.synthesize(region, news_items, angle)
-    return db.save_angle(region_id, angle, result['summary'], result['prayer_points'],
-                          [n['id'] for n in news_items])
 
 
 # --- Calendar events + AI summaries (ported to the Durable-Object stack) ---

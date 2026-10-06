@@ -875,17 +875,15 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .beacon-label{left:24px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#fff;color:var(--green-700);font:700 12px var(--font);padding:3px 8px;border-radius:12px;box-shadow:0 1px 4px #00000026}
 .beacon.selected .beacon-label{background:var(--green-700);color:#fff}.beacon.selected .beacon-ring{background:var(--green-700)}
 @media (prefers-reduced-motion: reduce){.beacon-ring{animation:none;opacity:0}}
-/* Region details: testimony and news side by side, then prayer points. */
+/* Region details: updates from the field and news side by side. */
 .source-columns{display:grid;grid-template-columns:1fr 1fr;margin-top:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .source-block{padding:16px 20px 18px 0}.source-block+.source-block{padding:16px 0 18px 20px;border-left:1px solid var(--line)}.source-block p{font-size:15px}
 .source-label{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;color:var(--muted);margin-bottom:8px}
 .source-block article+article{margin-top:12px}.source-block b{display:block;font-size:14px;color:var(--ink)}.source-block small{font-size:12px}
-.prayer-points{padding-top:16px}.prayer-points>b{display:block;font-size:14px;color:var(--ink)}.prayer-points ul{margin:10px 0 0;padding-left:18px;line-height:1.7;color:var(--text);font-size:15px;list-style:disc}.prayer-points .primary{margin-top:16px}
-.prayer-points .angle-pill{margin:0 0 0 10px;vertical-align:middle}
+.field-updates{list-style:none;margin:0;padding:0;max-height:320px;overflow-y:auto}.field-updates li+li{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}.field-updates li>b{margin-top:2px}.field-updates li>p{margin-top:4px}
 @media(max-width:600px){.source-columns{grid-template-columns:1fr}.source-block,.source-block+.source-block{padding:14px 0;border-left:0}.source-block+.source-block{border-top:1px solid var(--line)}}
 
 .prayer-card{position:relative;padding:28px;margin-top:20px}.prayer-card h2{margin-top:12px}
-.angle-pill{display:inline-block;font-size:9px;letter-spacing:.6px;text-transform:uppercase;background:var(--green-100);color:var(--green-700);border-radius:20px;padding:5px 11px;margin-top:14px;font-weight:700}
 .situational-summary{margin-top:12px}
 @media(max-width:850px){.map-shell{height:380px}}
 @media(max-width:600px){.map-shell{height:300px}.map-legend{gap:6px 16px}}
@@ -920,6 +918,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .setup-remove { min-height: 46px; }
 .setup-item { display: grid; gap: 4px; padding: 14px 0; border-top: 1px solid var(--line); }
 .setup-item:first-of-type { border-top: 0; }
+.setup-updates { display: grid; gap: 10px; margin: 6px 0; padding: 12px 14px; background: var(--green-100, #f3f7f4); border-radius: 10px; }
+.setup-update { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+.setup-update > .ghost { justify-self: start; display: inline-flex; align-items: center; gap: 6px; }
 .setup-item > .ghost { justify-self: start; display: inline-flex; align-items: center; gap: 6px; }
 .setup-number { max-width: 200px; }
 .staff-signin { max-width: 560px; }
