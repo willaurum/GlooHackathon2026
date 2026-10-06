@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 # first; if it has no key or a call fails, AI_FALLBACK takes over.
 PROVIDERS = {
     'ollama': {'base_url': 'http://localhost:11434/v1', 'key': 'OLLAMA_API_KEY',
-               'model': ('OLLAMA_MODEL', 'gpt-oss:20b'), 'extra_body': {}},
+               'model': ('OLLAMA_MODEL', 'qwen3.8:27b'), 'extra_body': {}},
     'gloo': {'base_url': 'https://platform.ai.gloo.com/ai/v2/guarded', 'key': 'GLOO_API_KEY',
              'model': ('GLOO_MODEL', 'gloo-anthropic-claude-haiku-4.5'), 'extra_body': {'auto_routing': False}},
     'openai': {'base_url': 'https://api.openai.com/v1', 'key': 'OPENAI_API_KEY',
@@ -176,15 +176,27 @@ TOOLS = [
 
 def provider_chain():
     """Configured providers in the order to try them: [(name, model, extra_body, api_key), ...]."""
+    try:
+        from .config import settings
+        primary = settings.ai_provider
+        fallback = settings.ai_fallback
+    except Exception:
+        primary = os.environ.get('AI_PROVIDER', 'ollama')
+        fallback = os.environ.get('AI_FALLBACK', '')
     chain = []
-    for name in (os.environ.get('AI_PROVIDER', 'gloo'), os.environ.get('AI_FALLBACK', '')):
+    for name in (primary, fallback):
         name = name.strip().lower()
+        if not name:
+            continue
         spec = PROVIDERS.get(name)
         key = os.environ.get(spec['key'], '').strip() if spec else ''
         if name == 'ollama':
             key = key or 'ollama'  # The SDK requires a value; a local Ollama server does not.
         if key and name not in [c[0] for c in chain]:
-            chain.append((name, os.environ.get(*spec['model']), spec['extra_body'], key))
+            model_name = os.environ.get(*spec['model'])
+            if name == 'ollama' and model_name in ('qwen', 'qwen:'):
+                model_name = 'qwen3.8:27b'
+            chain.append((name, model_name, spec['extra_body'], key))
     return chain
 
 
@@ -195,8 +207,12 @@ def status():
 
 def ollama_base_url():
     # The calendar's AI client takes OLLAMA_BASE_URL with or without /v1; the OpenAI SDK needs it.
-    url = (os.environ.get('OLLAMA_BASE_URL') or PROVIDERS['ollama']['base_url']).rstrip('/')
-    return url if url.endswith('/v1') else url + '/v1'
+    try:
+        from .config import settings
+        return settings.ollama_base_url
+    except Exception:
+        url = (os.environ.get('OLLAMA_BASE_URL') or PROVIDERS['ollama']['base_url']).rstrip('/')
+        return url if url.endswith('/v1') else url + '/v1'
 
 
 def make_clients():
@@ -205,6 +221,7 @@ def make_clients():
             base_url=ollama_base_url() if name == 'ollama' else PROVIDERS[name]['base_url'],
             timeout=60, max_retries=1))
             for name, model, extra_body, key in provider_chain()]
+
 
 
 def looks_like_contact(value):

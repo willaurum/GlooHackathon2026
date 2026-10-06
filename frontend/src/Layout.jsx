@@ -7,6 +7,7 @@ export const SECTIONS = [
   { route: '', label: 'Home', icon: 'home' },
   { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
   { route: 'serve', label: 'Serve', icon: 'users', children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
+  { route: 'blog', label: 'Blog', short: 'Blog', icon: 'document' },
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book' },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff']] },
