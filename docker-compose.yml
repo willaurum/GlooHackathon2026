@@ -20,10 +20,38 @@ services:
       timeout: 5s
       retries: 10
 
+  # The AI, in a container beside the backend. Nothing crosses to the host, so no
+  # firewall rule, VPN or SSH tunnel is needed and it behaves the same on Linux,
+  # macOS and Windows. Point OLLAMA_BASE_URL elsewhere to use a different endpoint.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: gloo-ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # Downloads the model once into the ollama_models volume, then exits.
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: gloo-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${OLLAMA_MODEL:-llama3.2:3b}"]
+    restart: "no"
+
   backend:
     build: ./backend
     container_name: gloo-backend
-    # Reaches an Ollama (or other AI endpoint) running on this machine.
+    # Only for an AI endpoint on the host (an SSH tunnel, or Ollama installed natively).
+    # The ollama service above needs none of this.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -35,10 +63,10 @@ services:
       # in the church_data volume.
       CHURCH_DB_URL: ${CHURCH_DB_URL:-sqlite}
       SQLITE_DB_DIR: /app/data
-      AI_PROVIDER: ${AI_PROVIDER:-gloo}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_FALLBACK: ${AI_FALLBACK:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:27b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       GLOO_API_KEY: ${GLOO_API_KEY:-}
       GLOO_MODEL: ${GLOO_MODEL:-gloo-anthropic-claude-haiku-4.5}
@@ -46,8 +74,8 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
-      AI_BASE_URL: ${AI_BASE_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}}
-      AI_MODEL: ${AI_MODEL:-${OLLAMA_MODEL:-qwen3.8:27b}}
+      AI_BASE_URL: ${AI_BASE_URL:-${OLLAMA_BASE_URL:-http://ollama:11434/v1}}
+      AI_MODEL: ${AI_MODEL:-${OLLAMA_MODEL:-llama3.2:3b}}
       AI_API_KEY: ${AI_API_KEY:-}
       NEWSDATA_API_KEY: ${NEWSDATA_API_KEY:-}
     # Local dev only: reload on code changes (start.sh, the production entrypoint, does not).
@@ -58,6 +86,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"        # only so you can hit the API / docs directly
 
@@ -72,3 +102,4 @@ services:
 volumes:
   db_data:
   church_data:
+  ollama_models:

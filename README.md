@@ -317,6 +317,27 @@ The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) ta
 - Guardrails: the system prompt keeps the assistant to church and site topics and tells it to decline everything else, and obvious prompt-override attempts ("ignore previous instructions", "system prompt", "developer mode") get a fixed reply without calling the model. These reduce off-topic use; they are not a guarantee.
 - Replies may use **bold** and simple lists, rendered by `frontend/src/chatFormat.js` as React elements (never raw HTML).
 
+#### Running on one laptop
+
+```bash
+git clone <repo> && cd GlooHackathon2026
+docker compose up -d
+```
+
+That is the whole setup. No `.env`, no API key, no VPN, no SSH tunnel and no firewall change. The frontend is on <http://localhost:3000> and the API on <http://localhost:8000>.
+
+The AI is an `ollama` container beside the backend, so the backend reaches it at `http://ollama:11434/v1` over the compose network. Nothing crosses to the host, which is what makes the firewall irrelevant and makes it behave the same on Linux, macOS and Windows. A container that talks to the host instead has to get past the host's firewall: on Ubuntu `ufw` defaults to dropping every container-to-host connection, and Windows Defender does the same, which is the usual reason `host.docker.internal` times out.
+
+The first `docker compose up` downloads the Ollama image and the model (`llama3.2:3b`, about 2 GB) into the `ollama_models` volume, so it takes a few minutes once and starts quickly afterwards. `ollama-pull` is a one-shot service that exits 0 when the model is in place; the backend waits for it.
+
+On the CPU a chat reply takes roughly 40 seconds and a calendar summary about 6. With an NVIDIA GPU and the NVIDIA Container Toolkit installed, this is much faster:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+To use a larger model, set `OLLAMA_MODEL` in `.env` before the first start (`docker compose up -d ollama-pull` fetches it). To use an Ollama elsewhere instead of the container, set `OLLAMA_BASE_URL`; the HPC tunnel below is one way to do that, and is the one path that needs host networking.
+
 #### HPC Ollama for local development
 
 Everyone runs this on their own machine: the Liberty student VPN, the SSH tunnel, and docker compose. Nothing is shared between teammates and no fixed addresses are involved.
