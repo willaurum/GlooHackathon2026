@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getStaffToken, setStaffToken } from './church.js';
-import { signOutStaff, staffApi } from './giving.js';
+import { getStaffToken, getVerifiedStaffToken, setStaffToken } from './church.js';
+import { signOutStaff, staffApi, verifyStaffSession } from './giving.js';
 
 const storage = new Map();
 globalThis.sessionStorage = {
@@ -53,4 +53,30 @@ test('a delayed rejection of an old token does not clear a newer sign-in', async
     await assert.rejects(staffApi('hope-chapel', '/session'), /Old session expired/);
     assert.equal(getStaffToken('hope-chapel'), 'b'.repeat(32));
   } finally { globalThis.fetch = originalFetch; storage.clear(); }
+});
+
+
+test('server-issued tokens retain verified access during rotation; restored tokens require validation', () => {
+  setStaffToken('hope-chapel', 'a'.repeat(32), { verified: true });
+  assert.equal(getVerifiedStaffToken('hope-chapel'), 'a'.repeat(32));
+  setStaffToken('hope-chapel', 'b'.repeat(32), { verified: true });
+  assert.equal(getVerifiedStaffToken('hope-chapel'), 'b'.repeat(32));
+  setStaffToken('hope-chapel', 'c'.repeat(32));
+  assert.equal(getVerifiedStaffToken('hope-chapel'), '');
+  setStaffToken('hope-chapel', 'd'.repeat(32), { verified: true });
+  setStaffToken('hope-chapel', '');
+  assert.equal(getVerifiedStaffToken('hope-chapel'), '');
+});
+
+test('old giving services validate via the overview; outage keeps the token', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    setStaffToken('hope-chapel', 'a'.repeat(32));
+    globalThis.fetch = async url => url.endsWith('/session')
+      ? Response.json({}, { status: 404 }) : Response.json({ church: { slug: 'hope-chapel' } });
+    assert.equal(await verifyStaffSession('hope-chapel'), true);
+    globalThis.fetch = async () => Response.json({ error: 'Unavailable' }, { status: 503 });
+    await assert.rejects(verifyStaffSession('hope-chapel'), /Unavailable/);
+    assert.equal(getStaffToken('hope-chapel'), 'a'.repeat(32));
+  } finally { globalThis.fetch = originalFetch; setStaffToken('hope-chapel', ''); storage.clear(); }
 });

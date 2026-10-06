@@ -50,6 +50,9 @@ connections, the welcome queue, prayer prompt generation and church setup requir
 on every church, including Grace Community. Public event and summary reads remain open.
 The shared AI model setting requires the operator API key, even on the demo church.
 Sign out revokes the session on the server; expired or revoked sessions lose admin access.
+Temporary sign-in service failures return 503 and keep the browser token for retry. Failed
+sign-out keeps the dashboard and a retryable sign-out button visible. Password changes
+keep the current admin page and confirmation message while replacing the session token.
 
 Blog reads and staff-only write/categorize/summarize/delete/approve route permissions are
 prepared for Ben's PR #52. That feature has not been merged into this branch: its UI must

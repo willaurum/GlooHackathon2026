@@ -43,7 +43,7 @@ export function StaffSignIn() {
     try {
       const res = await churchApi(church.slug, '/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
       setPassword('');
-      setStaffToken(church.slug, res.token);
+      setStaffToken(church.slug, res.token, { verified: true });
     } catch (e2) { setErr(friendly(e2)); }
     finally { setBusy(false); }
   }

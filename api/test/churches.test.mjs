@@ -2,7 +2,7 @@
 // (Node 22.18+ loads the TypeScript directly.)
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { access, churchHeaders, churchPath, findChurch, isStaff, onBaseDomain } from '../churches.ts';
+import { access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, onBaseDomain } from '../churches.ts';
 
 // A stand-in for the giving Worker: two churches, one staff token each.
 const TOKENS = { ['a'.repeat(32)]: 'hope-chapel', ['b'.repeat(32)]: 'other-church' };
@@ -135,6 +135,28 @@ test('revoked sessions lose access immediately and directory failures deny acces
   assert.equal(await isStaff(request, service, 'revocation-test'), true);
   valid = false;
   assert.equal(await isStaff(request, service, 'revocation-test'), false);
-  assert.equal(await isStaff(request, { GIVING: { fetch: async () => { throw new Error('Offline'); } } }, 'revocation-test'), false);
-  assert.equal(await isStaff(request, {}, 'revocation-test'), false);
+  assert.equal(await isStaff(request, { GIVING: { fetch: async () => { throw new Error('Offline'); } } }, 'revocation-test'), 'unavailable');
+  assert.equal(await isStaff(request, {}, 'revocation-test'), 'unavailable');
+});
+
+
+test('staff endpoints return 503 on service failure and 401 only for rejected credentials', async () => {
+  const request = asStaff('s'.repeat(32));
+  for (const fetch of [
+    async () => { throw new Error('Offline'); },
+    async () => Response.json({ error: 'Unavailable' }, { status: 503 }),
+    async () => new Response('bad gateway', { status: 502 }),
+    async () => new Response('not json', { status: 200 }),
+  ]) {
+    const response = await requireStaff(request, { GIVING: { fetch } }, 'hope-chapel');
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).detail, /unavailable/);
+  }
+  assert.equal((await requireStaff(request, {}, 'hope-chapel')).status, 503);
+  assert.equal((await requireStaff(new Request('https://api.test'), {}, 'hope-chapel')).status, 401);
+  const rejected = await requireStaff(request, { GIVING: { fetch: async () => Response.json({}, { status: 401 }) } }, 'hope-chapel');
+  assert.equal(rejected.status, 401);
+  const wrongChurch = await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'other-church' }) } }, 'hope-chapel');
+  assert.equal(wrongChurch.status, 401);
+  assert.equal(await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'hope-chapel' }) } }, 'hope-chapel'), null);
 });

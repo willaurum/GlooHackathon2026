@@ -68,21 +68,32 @@ export async function findChurch(env: AppEnv, slug: string): Promise<Church | nu
 /** Forget a cached listing, after staff rename their church. */
 export const forgetChurch = (slug: string) => directory.delete(slug);
 
-/** True when the request carries a valid staff session for this church (Authorization: Bearer <token>). */
-export async function isStaff(request: Request, env: AppEnv, slug: string): Promise<boolean> {
+/** Validate a church session without treating service outages as invalid credentials. */
+export async function isStaff(request: Request, env: AppEnv, slug: string): Promise<boolean | 'unavailable'> {
 	const auth = request.headers.get('Authorization') ?? '';
-	if (!/^Bearer [A-Za-z0-9_-]{20,100}$/.test(auth) || !env.GIVING) return false;
+	if (!/^Bearer [A-Za-z0-9_-]{20,100}$/.test(auth)) return false;
+	if (!env.GIVING) return 'unavailable';
 	try {
 		let response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin/session`, { headers: { Authorization: auth } });
 		// An older giving service has no session route; its staff overview needs the same login.
 		if (response.status === 404) response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin`, { headers: { Authorization: auth } });
-		if (!response.ok) return false;
+		if ([401, 403, 404].includes(response.status)) return false;
+		if (!response.ok) return 'unavailable';
 		const body = await response.json<{ slug?: string; church?: { slug?: string } }>();
 		if ((body.slug ?? body.church?.slug) !== slug) return false;
 	} catch {
-		return false;
+		return 'unavailable';
 	}
 	return true;
+}
+
+/** Staff-only endpoints deny access during an outage but preserve the caller's session. */
+export async function requireStaff(request: Request, env: AppEnv, slug: string): Promise<Response | null> {
+	const result = await isStaff(request, env, slug);
+	if (result === true) return null;
+	return Response.json({ detail: result === 'unavailable'
+		? 'The staff sign-in service is unavailable right now. Please try again.'
+		: 'Please sign in as church staff.' }, { status: result === 'unavailable' ? 503 : 401 });
 }
 
 type Route = [string, RegExp];

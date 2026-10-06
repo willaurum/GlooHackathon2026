@@ -18,6 +18,17 @@ export async function staffApi(slug, path, options = {}) {
   }
 }
 
+// Older giving services expose the authenticated overview instead of /session.
+export async function verifyStaffSession(slug) {
+  let session;
+  try { session = await staffApi(slug, '/session'); }
+  catch (err) {
+    if (err.status !== 404) throw err;
+    session = await staffApi(slug, '');
+  }
+  return (session.slug ?? session.church?.slug) === slug;
+}
+
 // Revoke the server session before clearing this tab. Keep it on network failure so staff can retry.
 export async function signOutStaff(slug) {
   const token = getStaffToken(slug);
