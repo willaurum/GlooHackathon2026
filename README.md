@@ -2,14 +2,14 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-belong. is a church website any church can sign up for ("Add your church"), so each church gets the whole site below, with its own data. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+belong. is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
 - **Serve**: browse ministry teams, see where volunteers are needed, match a member to a team, and review requests from the website chat.
 - **Sermon Notes**: sermons are transcribed on Cloudflare and highlighted (Bible quotes, current events, stories), Bible references open the passage from YouVersion, and questions are answered only from the transcript, with timestamps.
 - **Calendar**: church events and services, with optional AI summaries.
-- **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and self-serve church sign-up with automatic Stripe setup.
+- **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and staff-managed Stripe setup.
 - **Prayer map**: world regions with news and prayer prompts.
 
 An **Ask Belong** chat assistant is available on every page.
@@ -65,9 +65,9 @@ is not implemented by these permission rules.
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/start` (Add your church), `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` and `#/give/start` still work. A section with sub-pages opens its first sub-page. |
+| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Retired `#/start` and `#/give/start` links open Church staff sign-in. A section with sub-pages opens its first sub-page. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
-| `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchStart.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Add your church, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
+| `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
 | `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
@@ -107,7 +107,7 @@ For local API development run `npx wrangler dev` in `api/` or `api-giving/`.
 
 ## Churches
 
-Any church can sign up and get the whole site. Grace Community is just the demo church.
+Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future templatizer provisioning is outside this change.
 
 ### Which church the site shows
 
@@ -120,7 +120,7 @@ Any church can sign up and get the whole site. Grace Community is just the demo 
 
 Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church name sits at the top of the sidebar (the phone top bar on phones), with **Staff sign in / Church setup** (`#/setup`) under it.
 
-**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-belong) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup and the end of sign-up show the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church** and **Add your church**, and is not kept as the saved church. Grace Community stays a public demo.
+**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-belong) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
 
 ### The platform list (for the team building belong.)
 
@@ -132,19 +132,32 @@ To turn it on: deploy `api-giving/` (merge to `main`, or Actions > Deploy backen
 
 ### One registry, individual staff accounts
 
-The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: sign-up (`POST /api/churches`), unique slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
+The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: existing church slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
 
-Sign-up accepts `ownerName` and `ownerEmail` to create the first Owner account using the
-chosen password. Owners add staff with a name, email, Owner or Site admin role, and a
+Owner ("admin admin") and Site admin accounts are independent of church creation.
+Sign in to the existing church as Owner, then open Give → Church staff → Team.
+If there are no accounts, use the configured shared Owner password with email blank and
+create the first Owner account there. Then sign in with that account to add Site admins.
+Owners add staff with a name, email, Owner or Site admin role, and a
 temporary password of at least 10 characters. Staff change their own password in Overview;
 only that account's other sessions are signed out. Removing an account revokes its sessions
 immediately. You cannot remove yourself or the last Owner, and the first account must be an Owner.
 
-For older churches with no accounts, leave email blank to use the shared church password
+For existing churches with no accounts, leave email blank to use the shared church password
 as Owner. Once an account exists, new sign-ins require email and password. Existing shared
 sessions remain valid until sign-out or expiry. Grace Community always retains the demo
 Owner login with email blank; its password lives in `ADMIN_KEY` in `api-giving/wrangler.jsonc`.
-Deploy the giving API alongside the frontend when releasing staff accounts.
+Public `POST /api/churches` returns 403 and creates nothing. Internal church initialization
+remains for existing infrastructure and local test fixtures; no new provisioning UI or
+templatizer is included. Deploy the giving API alongside the frontend to disable the old
+public endpoint and enable staff accounts.
+
+For the full local giving checks (Node 22.13+), run `node test/fake-stripe.mjs` and
+`node test/local-worker.mjs` in separate terminals from `api-giving/`, then set
+`API=http://127.0.0.1:8803` and `FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches`
+and run `node test/api.test.mjs`. The localhost-only adapter initializes test churches
+through internal RPC, never through a production registration endpoint. It exercises
+the real handlers and SQLite but does not substitute for Cloudflare runtime verification.
 
 Run `node --test api-giving/test/staff-races.test.mjs` with Node 22.13+ for deterministic
 account-removal and password-rotation concurrency checks using the real handlers and SQLite.
@@ -159,7 +172,7 @@ account-removal and password-rotation concurrency checks using the real handlers
 
 One SQLite Durable Object per church, named after the slug (`church:<slug>`). The demo church keeps the original database (`church`), so all existing data stays with Grace Community and there is nothing to migrate. Church info, service times, FAQs, events and groups, ministries and shifts, the calendar, visits and guests, connections and requests, the chat log, the prayer map and Sermon Notes are all in that one database, so one church can never read another church data. Uploaded sermon files go to the shared R2 bucket under a random id; only the church that owns the note can reach it.
 
-The first request for a church creates its tables. Only the demo church is seeded from the JSON files (in `db.initialize`, every `INSERT` in the setup batch is skipped for other churches). A new church starts with its name and city from sign-up and empty sections, and each page shows a plain "not set up yet" state, with a button to Church setup for signed-in staff.
+The first request for an existing church creates its tables. Only the demo church is seeded from the JSON files (in `db.initialize`, every `INSERT` in the setup batch is skipped for other churches). Other configured churches use their stored name and city and empty sections, and each page shows a plain "not set up yet" state, with a button to Church setup for signed-in staff.
 
 ### Who may call what
 
@@ -433,7 +446,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 
 **For a church:**
 
-1. **Sign up** (`#/start`, "Add your church"): name, city, a staff password and (under More options) the currency. The church gets the whole site at `#/c/<slug>/` (giving link `#/c/<slug>/give`), and starts with three funds: General giving, Tithes & offerings, and Missions. It stays in demo mode until Stripe is connected.
+1. **Sign in to the existing church** (`#/give/staff`): use your staff email and password. For the initial Owner account, use the configured shared Owner login with email blank, then create your Owner account under Team. Owners can add Site admins; no church signup is offered.
 2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
    - one Product per fund and per mission trip, with preset Prices found again by `lookup_key` (plus monthly Prices for Tithes);
    - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, monthly tithes renew, and canceled monthly gifts are marked;
@@ -443,7 +456,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 3. **Mission trips**: staff create trips with dates, location, goal, team spots and an open/closed switch for applications. People apply (name, email, phone, message) or give toward a specific trip. Staff accept, waitlist or decline, and add private notes. The public page only shows "3 of 12 spots filled".
 4. **Staff area**: setup checklist, funds and trips, applications, a private gift list with CSV download, church details and password change.
 
-Staff sign in with the church's password (stored hashed). Sign-in gives a 12-hour session token, stored only as a hash; attempts are rate limited per IP, and changing the password signs out other sessions. There is no password reset yet.
+Staff sign in with their own email and password (stored hashed). Sign-in gives a 12-hour session token, stored only as a hash; attempts are rate limited per IP, and changing the password signs out other sessions. There is no password reset yet.
 
 The built-in demo church, **Grace Community** (`grace-community`), is locked to demo mode, so no real Stripe key can be attached to it. Its staff password is the `ADMIN_KEY` var.
 
@@ -453,7 +466,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 |---|---|---|---|
 | `GET` | `/api/health` | none | Liveness; `churches: true` means church support is deployed. |
 | `GET` | `/api/churches` | none | Only the public demo church, whatever the query. Churches are not listed or searchable; kept so older builds still render. |
-| `POST` | `/api/churches` | none (rate-limited) | Sign up a church. |
+| `POST` | `/api/churches` | unavailable | Public registration is disabled (403); creates nothing. |
 | `GET` | `/api/platform/churches` | `PLATFORM_ADMIN_KEY` (wrong keys rate-limited) | Every church for the platform team: slug, name, city, `createdAt`, `demo`, and `giving` (mode, currency, fund, trip and gift counts, total raised, setup checklist). 404 when the secret is not set. |
 | `GET` | `/api/directory/{slug}` | none | One church listing (slug, name, city) from the registry. The church API uses it to check a church exists. |
 | `GET` | `/api/churches/{slug}/admin/session` | staff session | 200 when the session is valid for that church. The church API uses it for its staff-only routes. |
@@ -469,7 +482,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 | `GET` / `POST` | `/api/config`, `/api/gifts`, `/api/checkout`, `/api/confirm/{id}` | none | The original single-church API, now served by the demo church for older builds. `/api/gifts` returns only a count and total. |
 
 - **Demo mode**: with no Stripe key connected, checkout is simulated and gifts are recorded as `demo`, so previews work with zero keys.
-- **Testing without Stripe**: `api-giving/test/fake-stripe.mjs` is a small fake Stripe server and `api-giving/test/api.test.mjs` runs the API checks against `wrangler dev`. For the platform list, put a `PLATFORM_ADMIN_KEY` in `.dev.vars` and run the test with the same value in `PLATFORM_KEY` (and optionally `API_NO_PLATFORM` pointing at a second `wrangler dev` without it, to check the 404). Point the Worker at the fake with the `STRIPE_API_BASE` var (default `https://api.stripe.com`); never set it in production.
+- **Testing without Stripe**: `api-giving/test/fake-stripe.mjs` is a small fake Stripe server and `api-giving/test/api.test.mjs` runs the API checks against the real handlers via the localhost-only `test/local-worker.mjs` SQLite adapter, with internal test fixtures (`FIXTURE_API`). For the platform list, set the same `PLATFORM_KEY` for the local adapter and tests (and optionally `API_NO_PLATFORM` pointing at a separate runtime without it, to check the 404). Point the Worker at the fake with the `STRIPE_API_BASE` var (default `https://api.stripe.com`); never set it in production.
 - Checkout success and cancel links go back to the frontend origin that started the gift (it must be listed in `ALLOWED_ORIGIN`). A checkout started from a branch preview returns to the live site.
 
 ## Calendar

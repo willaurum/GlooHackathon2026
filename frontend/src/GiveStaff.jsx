@@ -63,7 +63,7 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
       <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
       {err && <div className="banner error" role="alert">{err}</div>}
       <button className="primary wide" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
-      <p className="form-note">New here? <button type="button" className="link" onClick={() => go('start')}>Sign up your church<Icon name="arrow" size={16} /></button></p>
+      <p className="form-note">Need an account? Ask your church Owner to add you.</p>
     </form>
   </div>;
 }
@@ -161,7 +161,6 @@ function StripeCard({ slug, stripe, update, fail, go }) {
     <div className="form-title"><span className="icon color3"><Icon name="lock" size={22} /></span><div><h2>Stripe</h2><p>{stripe.connected ? 'Gifts go straight to your Stripe account.' : 'Connect your Stripe account to take real gifts.'}</p></div></div>
     {stripe.locked && <>
       <p>The demo church always runs in demo mode, so no real money can move here.</p>
-      <button className="primary" onClick={() => go('start')}>Sign up your own church</button>
     </>}
     {stripe.connected && <dl className="give-facts">
       <div><dt>Mode</dt><dd><span className={'badge' + (stripe.mode === 'live' ? '' : ' urgent')}>{stripe.mode === 'live' ? 'Live' : 'Test mode'}</span></dd></div>
@@ -268,7 +267,7 @@ function Team({ slug }) {
     {!data ? <div className="card give-pad"><p role="status">{err ? 'Could not load the team.' : 'Loading the team…'}</p></div> : <>
       <section className="card give-pad">
         <h3>Team</h3><p>Owners and site admins have all staff permissions. Owners can also add and remove staff accounts.</p>
-        {data.me.shared && !data.users.length && <p className="form-note">Create your owner account first. Then sign out and sign in with your email and new password.</p>}
+        {data.me.shared && !data.users.length && <p className="form-note">Create your Owner account first using the form below. Then sign out and sign in with your email and new password. You can then add Site admins.</p>}
         {data.me.shared && !!data.users.length && <p className="form-note">You are using the shared password. Sign in with your own staff email and password next time.</p>}
         {!data.users.length && <p>No staff accounts yet.</p>}
         {data.users.map(user => <div className="give-fund-row" key={user.id}>

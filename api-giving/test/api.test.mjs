@@ -32,17 +32,27 @@ async function call(method, path, body, token, ip = '10.0.0.' + Math.floor(Math.
   return { status: r.status, data, text };
 }
 const stripeLog = async () => (await fetch(STRIPE + '/__log')).json();
+async function fixtureChurch(body) {
+  const url = process.env.FIXTURE_API;
+  if (!url || new URL(url).hostname !== '127.0.0.1') throw new Error('Set FIXTURE_API to the localhost fixture endpoint from test/local-worker.mjs. Public church signup is disabled.');
+  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw new Error('Local church fixture could not be initialized.');
+  return { status: response.status, data, text: JSON.stringify(data) };
+}
 
 const suffix = Date.now().toString(36).slice(-4);
-console.log('signup');
+console.log('public registration disabled; internal test fixtures');
 let r = await call('POST', '/api/churches', { name: 'Hope Chapel ' + suffix, city: 'Austin', currency: 'usd', password: 'short' });
-check(r.status === 400, 'rejects short password', r.data);
-r = await call('POST', '/api/churches', { name: 'Hope Chapel ' + suffix, city: 'Austin', currency: 'usd', password: 'correct horse battery' });
+check(r.status === 403, 'public registration is disabled', r.data);
+r = await fixtureChurch({ name: 'Hope Chapel ' + suffix, city: 'Austin', currency: 'usd', password: 'correct horse battery' });
 check(r.status === 201 && r.data.token && r.data.slug, 'creates church', r.data);
 const slug = r.data.slug; let token = r.data.token;
 const C = '/api/churches/' + slug;
+r = await call('POST', '/api/churches', { name: 'Forbidden Church ' + suffix, password: 'fixture password 1', ownerName: 'Forbidden Owner', ownerEmail: 'forbidden@example.org' }, token);
+check(r.status === 403, 'a church Owner cannot create another church through the public endpoint', r.data);
 
-r = await call('POST', '/api/churches', { name: 'Hope Chapel ' + suffix, city: 'Dallas', password: 'another password 1' });
+r = await fixtureChurch({ name: 'Hope Chapel ' + suffix, city: 'Dallas', password: 'another password 1' });
 check(r.status === 201 && r.data.slug !== slug, 'same name gets a different slug', r.data);
 const slugB = r.data.slug; const tokenB = r.data.token;
 
@@ -432,14 +442,14 @@ r = await call('POST', DEMO + '/admin/donations/' + demoGift2.id + '/cancel', {}
 check(r.status === 200 && r.data.donations.find((d) => d.id === demoGift2.id).canceled, 'demo staff cancel', r.data);
 
 console.log('staff accounts');
-// A church that signs up with an owner account.
-r = await call('POST', '/api/churches', { name: 'Accounts Church ' + suffix, city: 'Austin', password: 'owner password 1', ownerName: 'Olive Owner', ownerEmail: 'Staff-Owner-' + suffix + '@Example.org' });
-check(r.status === 201 && r.data.token, 'sign-up with an owner account', r.data);
+// An existing church initialized internally with an owner account.
+r = await fixtureChurch({ name: 'Accounts Church ' + suffix, city: 'Austin', password: 'owner password 1', ownerName: 'Olive Owner', ownerEmail: 'Staff-Owner-' + suffix + '@Example.org' });
+check(r.status === 201 && r.data.token, 'internal fixture with an owner account', r.data);
 const S = '/api/churches/' + r.data.slug;
 const ownerEmail = 'staff-owner-' + suffix + '@example.org';
 let ownerToken = r.data.token;
 r = await call('GET', S + '/admin', undefined, ownerToken);
-check(r.status === 200 && r.data.me.role === 'owner' && r.data.me.email === ownerEmail && !r.data.me.shared, 'sign-up session is the owner account (email stored lower-case)', r.data.me);
+check(r.status === 200 && r.data.me.role === 'owner' && r.data.me.email === ownerEmail && !r.data.me.shared, 'initialized session is the owner account (email stored lower-case)', r.data.me);
 r = await call('POST', S + '/admin/login', { password: 'owner password 1' });
 check(r.status === 401 && /email/.test(r.data.error), 'shared password stops working once accounts exist', r.data);
 r = await call('POST', S + '/admin/login', { email: ownerEmail.toUpperCase(), password: 'owner password 1' });
@@ -520,7 +530,7 @@ r = await call('GET', S + '/admin', undefined, siteAdminToken3);
 check(r.status === 401, 'removed site admin is signed out right away');
 
 // A church on the shared password moves to accounts: the first account must be an owner.
-r = await call('POST', '/api/churches', { name: 'Shared Church ' + suffix, city: 'Austin', password: 'shared password 1' });
+r = await fixtureChurch({ name: 'Shared Church ' + suffix, city: 'Austin', password: 'shared password 1' });
 const L = '/api/churches/' + r.data.slug;
 const sharedToken = r.data.token;
 r = await call('GET', L + '/admin', undefined, sharedToken);

@@ -449,13 +449,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .give-applied { display: flex; align-items: flex-start; gap: 10px; margin: 8px 0; padding: 12px 14px; border-radius: var(--r); background: var(--green-50); border: 1px solid var(--green-100); color: var(--green-700); }
 .give-applied b { color: var(--ink); }
 .give-applied p { font-size: 14px; margin-top: 2px; }
-.give-signup { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 20px; align-items: start; }
-.give-steps { display: flex; flex-direction: column; gap: 14px; padding: 20px; }
-.give-steps li { display: grid; grid-template-columns: 32px 1fr; gap: 12px; }
-.give-steps span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--green-100); color: var(--green-700); font-weight: 700; }
-.give-steps li.current span { background: var(--green-700); color: #fff; }
-.give-steps b { color: var(--ink); }
-.give-steps p { font-size: 14px; line-height: 1.5; margin-top: 2px; }
 .give-signin { display: flex; flex-direction: column; gap: 16px; max-width: 540px; }
 .give-signin .form-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .give-staff { display: flex; flex-direction: column; gap: 16px; }
@@ -522,7 +515,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (max-width: 860px) {
-  .give-trips, .give-overview, .give-signup { grid-template-columns: 1fr; }
+  .give-trips, .give-overview { grid-template-columns: 1fr; }
   .give-views { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-self: stretch; }
   .give-pad { padding: 20px; }
   .give-fund-row { flex-wrap: wrap; }
@@ -904,7 +897,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .church-state .hero-actions { margin-top: 6px; }
 .home-setup { margin-bottom: 24px; }
 
-/* Add your church and Church setup. */
+/* Church setup. */
 .more-options { margin: 4px 0 12px; }
 .more-options summary { cursor: pointer; color: var(--green-700); font-weight: 600; min-height: 32px; }
 .setup { display: grid; gap: 18px; max-width: 860px; }

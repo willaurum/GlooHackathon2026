@@ -5,7 +5,7 @@
 // church's gifts, funds or applications. A small registry object
 // (GivingRegistry) owns church names and URL slugs.
 //
-// A church signs up with a staff password, then pastes its own Stripe secret
+// A configured church starts with a staff password, then pastes its own Stripe secret
 // key once. The key is checked against Stripe, encrypted with AES-GCM under
 // STRIPE_KEY_ENCRYPTION_KEY and kept only in that church's Durable Object. It
 // is never sent back to a browser or logged. On connect the Worker sets up
@@ -1106,7 +1106,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
   }
 
   async #connectStripe(request: Request, c: ChurchRow, session: StaffSession): Promise<Response> {
-    if (c.demo_locked) return json({ error: 'The demo church always stays in demo mode. Sign up your own church to connect Stripe.' }, 403);
+    if (c.demo_locked) return json({ error: 'The demo church always stays in demo mode. Stripe cannot be connected here.' }, 403);
     if (!(await cryptoKey(this.env))) return json({ error: 'This server cannot store Stripe keys yet: STRIPE_KEY_ENCRYPTION_KEY is not set.' }, 503);
     const body = await readJson(request);
     const key = str(body.key, 300);
@@ -1680,35 +1680,6 @@ function forward(env: GivingEnv, request: Request, doName: string, slug: string,
   return env.GIVING.getByName(doName).fetch(req);
 }
 
-async function signup(request: Request, env: GivingEnv): Promise<Response> {
-  let body: any;
-  try {
-    body = await readJson(request);
-  } catch (e: any) {
-    return json({ error: e.message }, 400);
-  }
-  const name = str(body.name, 80);
-  const city = str(body.city, 80);
-  const currency = CURRENCIES.includes(body.currency) ? body.currency : 'usd';
-  const password = typeof body.password === 'string' ? body.password : '';
-  // The person signing up becomes the first owner account when they give their name and email.
-  const ownerName = str(body.ownerName, 80);
-  const ownerEmail = str(body.ownerEmail, 200).toLowerCase();
-  if (name.length < 3) return json({ error: 'Add your church name.' }, 400);
-  if (password.length < 10 || password.length > 200) return json({ error: 'Choose a staff password of at least 10 characters.' }, 400);
-  if (ownerEmail && !EMAIL_RE.test(ownerEmail)) return json({ error: 'Add a valid email; you sign in with it.' }, 400);
-  if (ownerEmail && ownerName.length < 2) return json({ error: 'Add your name.' }, 400);
-  const registry = env.GIVING_REGISTRY.getByName('registry');
-  const reserved = await registry.reserve(name, city, request.headers.get('cf-connecting-ip') || 'anon');
-  if (!reserved.slug) return json({ error: reserved.error || 'Could not create the church.' }, 429);
-  const out = await env.GIVING.getByName('church:' + reserved.slug).init(reserved.slug, name, city, currency, password, ownerName, ownerEmail);
-  if (!out.token) {
-    await registry.release(reserved.slug);
-    return json({ error: out.error || 'Could not create the church.' }, 409);
-  }
-  return json({ slug: reserved.slug, name, token: out.token }, 201);
-}
-
 // Every church, for the platform team only (the #/platform page). Churches never see this list.
 // Off (404) until the PLATFORM_ADMIN_KEY secret is set; then it needs Authorization: Bearer <key>.
 async function platformChurches(request: Request, env: GivingEnv): Promise<Response> {
@@ -1756,7 +1727,7 @@ async function route(request: Request, env: GivingEnv): Promise<Response> {
     const demo = await env.GIVING_REGISTRY.getByName('registry').get(DEMO_SLUG);
     return json({ churches: demo ? [demo] : [] });
   }
-  if (p === '/api/churches' && m === 'POST') return signup(request, env);
+  if (p === '/api/churches' && m === 'POST') return json({ error: 'Public church registration is not available on this site.' }, 403);
   if (p === '/api/platform/churches' && m === 'GET') return platformChurches(request, env);
   // One church's public listing (name and city), straight from the registry. The church API uses it to
   // check that a church exists before it opens that church's database.

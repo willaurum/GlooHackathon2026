@@ -56,7 +56,7 @@ export function StaffSignIn() {
     <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
-    <p className="form-note">Not signed up yet? <button type="button" className="link" onClick={() => church.go('start')}>Add your church<Icon name="arrow" size={16} /></button></p>
+    <p className="form-note">Need an account? Ask your church Owner to add you in Give → Church staff → Team.</p>
   </form>;
 }
 

@@ -5,7 +5,6 @@ import ChatWidget from './ChatWidget.jsx';
 import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
-import ChurchStart from './ChurchStart.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
@@ -24,7 +23,7 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -42,7 +41,7 @@ const ABOUT_PAGES = {
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 // Pages that work before the church API knows about new churches: giving has its own API.
 // #/platform (every church, for the platform team) is not tied to the church showing.
-const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'start', 'platform']);
+const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
@@ -62,7 +61,7 @@ function readLocation() {
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
   // The blog moved under About; keep its first link (#/blog) working.
-  let route = where.route === 'give/start' ? 'start' : where.route === 'blog' ? 'about/blog' : where.route;
+  let route = ['start', 'give/start'].includes(where.route) ? 'give/staff' : where.route === 'blog' ? 'about/blog' : where.route;
   if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
@@ -150,14 +149,14 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
-    next = withDefault(next === 'give/start' ? 'start' : next, demo);
+    next = withDefault(['start', 'give/start'].includes(next) ? 'give/staff' : next, demo);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
     setWhere(w => ({ ...w, route: next }));
     setChatOpen(false);
     setScrollTarget({ id: sectionId ?? null });
   }
-  // Switch the whole site to another church (after sign-up, or the demo church from the not-found page).
+  // Open an existing church, or the demo church from the not-found page.
   function choose(next, nextRoute = '') {
     saveChurch(next);
     if (source === 'subdomain') {
@@ -200,7 +199,7 @@ export default function App() {
   // A new church on an older church API: everything but giving waits for the deploy.
   const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
   let page;
-  if (listing?.missing && section !== 'start' && section !== 'platform') page = <ChurchMissing />;
+  if (listing?.missing && section !== 'platform') page = <ChurchMissing />;
   else if (blocked) page = <ChurchNotReady section={section} />;
   else page = <>
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
@@ -237,7 +236,6 @@ export default function App() {
       <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
       <PrayerMap />
     </div>}
-    {section === 'start' && <div className="page"><ChurchStart /></div>}
     {section === 'setup' && <div className="page"><ChurchSetup /></div>}
     {section === 'platform' && <div className="page"><Platform /></div>}
   </>;
