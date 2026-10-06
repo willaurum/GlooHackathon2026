@@ -1,19 +1,25 @@
+import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
 import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 
-// One navigation for every screen size: a sidebar on desktop, a tab bar on phones.
+// One navigation for every screen size: a sidebar on desktop; on phones, a tab bar holds the
+// sections marked `tab` and everything else sits in the Menu (burger) sheet.
+// `staffOnly` sections appear only while church staff are signed in.
 export const SECTIONS = [
-  { route: '', label: 'Home', icon: 'home' },
-  { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
-  { route: 'serve', label: 'Serve', icon: 'users', children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
-  { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book' },
+  { route: '', label: 'Home', icon: 'home', tab: true },
+  { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', tab: true, children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
+  { route: 'serve', label: 'Serve', icon: 'users', tab: true, children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
+  { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book', tab: true },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
-  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff']] },
+  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
-  // In the sidebar on desktop and behind the info button in the phone top bar, so the tab bar stays uncrowded.
-  { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect'], ['about/blog', 'Blog']] },
+  { route: 'about', label: 'About', icon: 'info', children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect'], ['about/blog', 'Blog']] },
+  { route: 'staff', label: 'Church staff', icon: 'lock', staffOnly: true },
 ];
+// The sections this visitor can see: staff-only ones are hidden until staff sign in.
+export const visibleSections = staff => SECTIONS.filter(s => staff || !s.staffOnly);
+const childrenFor = (s, demo) => (s.children || []).filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r));
 
 // The About pages other than the blog hold Grace Community's own text, so only the demo church
 // shows them. Other churches see the blog until they have About content of their own.
@@ -46,12 +52,12 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
     <ChurchName />
     <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
-      {SECTIONS.map(s => <div key={s.route}>
+      {visibleSections(staff).map(s => <div key={s.route}>
         <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
           <Icon name={s.icon} />{s.label}
         </button>
         {s.children && sectionOf(route) === s.route && <div className="nav-children">
-          {s.children.filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r)).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
+          {childrenFor(s, demo).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
             {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
           </button>)}
         </div>}
@@ -75,7 +81,6 @@ export function TopBar({ go, onAsk }) {
     <Brand onClick={() => go('')} />
     <ChurchName compact />
     <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
-    <button className="icon-btn" aria-label="About and blog" onClick={() => go('about')}><Icon name="info" /></button>
     <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />
   </header>;
@@ -90,13 +95,45 @@ export function WorkspaceBar() {
   </div>;
 }
 
-export function TabBar({ route, go, onAsk, chatOpen, savedCount }) {
-  return <nav className="tabbar" aria-label="Main">
-    {SECTIONS.filter(s => s.tab !== false).map(s => <button key={s.route} className={!chatOpen && sectionOf(route) === s.route ? 'active' : ''} onClick={() => go(s.route)}>
-      <span className="tab-icon"><Icon name={s.icon} size={22} />{s.route === 'serve' && savedCount > 0 && <b className="dot" />}</span>{s.short ?? s.label}
-    </button>)}
-    <button className={chatOpen ? 'active' : ''} onClick={onAsk}><span className="tab-icon"><Icon name="chat" size={22} /></span>Ask</button>
-  </nav>;
+export function TabBar({ route, go, chatOpen, savedCount }) {
+  const { demo, staff } = useChurch();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const tabs = SECTIONS.filter(s => s.tab);
+  const more = visibleSections(staff).filter(s => !s.tab);
+  const current = sectionOf(route);
+  const inMenu = more.some(s => s.route === current);
+  function open(next) { setMenuOpen(false); go(next); }
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = e => { if (e.key === 'Escape') setMenuOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+  // Close the menu if the chat opens over it.
+  useEffect(() => { if (chatOpen) setMenuOpen(false); }, [chatOpen]);
+
+  return <>
+    {menuOpen && <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />}
+    {menuOpen && <div className="menu-sheet" id="more-menu" role="dialog" aria-label="More pages">
+      {more.map(s => {
+        const kids = childrenFor(s, demo);
+        return <div key={s.route} className="menu-group">
+          <button className={'nav-item' + (current === s.route ? ' active' : '')} onClick={() => open(s.route)}><Icon name={s.icon} />{s.label}</button>
+          {kids.length > 1 && <div className="nav-children">
+            {kids.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => open(r)}>{label}</button>)}
+          </div>}
+        </div>;
+      })}
+    </div>}
+    <nav className="tabbar" aria-label="Main">
+      {tabs.map(s => <button key={s.route} className={!chatOpen && !menuOpen && current === s.route ? 'active' : ''} onClick={() => open(s.route)}>
+        <span className="tab-icon"><Icon name={s.icon} size={22} />{s.route === 'serve' && savedCount > 0 && <b className="dot" />}</span>{s.short ?? s.label}
+      </button>)}
+      <button className={menuOpen || (!chatOpen && inMenu) ? 'active' : ''} aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen(o => !o)}>
+        <span className="tab-icon"><Icon name={menuOpen ? 'x' : 'menu'} size={22} /></span>Menu
+      </button>
+    </nav>
+  </>;
 }
 
 export function PageHeader({ eyebrow, title, text, action }) {

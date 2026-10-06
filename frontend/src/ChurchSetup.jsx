@@ -29,7 +29,7 @@ export default function ChurchSetup() {
       action={<button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>} />
     {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
     <ChurchLink />
-    {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Give, then Church staff.</p></div>}
+    {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Church staff.</p></div>}
   </>;
 }
 
@@ -49,14 +49,14 @@ export function StaffSignIn() {
     finally { setBusy(false); }
   }
   return <form className="card give-pad staff-signin" onSubmit={submit}>
-    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Give, then Church staff.</p></div></div>
+    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Church staff.</p></div></div>
     {ready === false && <div className="banner demo" role="status"><Icon name="sparkle" /><span>Staff sign-in opens as soon as the updated service is deployed.</span></div>}
     {church.demo && <p className="form-note">This is the shared demo church, so anything you change here is visible to everyone.</p>}
     <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
     <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
-    <p className="form-note">Need an account? Ask your church Owner to add you in Give → Church staff → Team.</p>
+    <p className="form-note">Need an account? Ask your church Owner to add you in Church staff → Team.</p>
   </form>;
 }
 
@@ -90,7 +90,7 @@ function SetupForms() {
       <ul className="give-checklist">{steps.map(([label, ok, id]) => <li key={label} className={ok ? 'done' : ''}>
         <Icon name={ok ? 'check' : 'clock'} size={18} /><a href={'#' + id} onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); }}>{label}</a>
       </li>)}</ul>
-      <p className="form-note">Giving is set up under <button type="button" className="link" onClick={() => church.go('give/staff')}>Give, then Church staff</button>. Add events on the <button type="button" className="link" onClick={() => church.go('calendar')}>Calendar</button>.</p>
+      <p className="form-note">Giving is set up under <button type="button" className="link" onClick={() => church.go('staff')}>Church staff</button>. Add events on the <button type="button" className="link" onClick={() => church.go('calendar')}>Calendar</button>.</p>
     </section>
     <Details info={info} save={save} />
     <Services info={info} save={save} />
