@@ -1,0 +1,3 @@
+# Your filled-in settings (team key, tunnel token) and the downloaded cloudflared stay on your computer.
+bridge.config
+bin/

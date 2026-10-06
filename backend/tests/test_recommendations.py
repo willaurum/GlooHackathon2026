@@ -75,7 +75,7 @@ class RecommendationTests(unittest.TestCase):
     def test_ollama_requests_structured_output_with_time_for_hpc(self):
         fake = provider(self.plan)
         recommendations.recommend('I welcome people.', self.ministries, [('ollama', 'gpt-oss:20b', {}, fake[3])])
-        self.assertEqual(fake[3].with_options.call_args.kwargs['timeout'], 75)
+        self.assertEqual(fake[3].with_options.call_args.kwargs['timeout'], 90)
         options = fake[3].chat.completions.create.call_args.kwargs
         self.assertEqual(options['response_format']['type'], 'json_schema')
         self.assertEqual(options['reasoning_effort'], 'low')

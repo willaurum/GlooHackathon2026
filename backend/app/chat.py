@@ -215,11 +215,22 @@ def ollama_base_url():
         return url if url.endswith('/v1') else url + '/v1'
 
 
+def provider_timeout(name):
+    """Seconds to wait for one model call. A 27B model on the team bridge is slow; Cloudflare gives up
+    on a proxied request after about 100 seconds, so stay under that."""
+    if name != 'ollama':
+        return 60
+    try:
+        return max(5.0, min(float(os.environ.get('OLLAMA_TIMEOUT', '90')), 95.0))
+    except ValueError:
+        return 90.0
+
+
 def make_clients():
     from openai import OpenAI
     return [(name, model, extra_body, OpenAI(api_key=key,
             base_url=ollama_base_url() if name == 'ollama' else PROVIDERS[name]['base_url'],
-            timeout=60, max_retries=1))
+            timeout=provider_timeout(name), max_retries=1 if name != 'ollama' else 0))
             for name, model, extra_body, key in provider_chain()]
 
 
@@ -495,7 +506,15 @@ def run(messages, session_id, clients=None):
         f"{page}: {', '.join(sections)}" for page, sections in SITE_SECTIONS.items()))}, *messages]
     actions = []
     for _ in range(MAX_STEPS):
-        response, provider = complete(clients, convo, session_id)
+        try:
+            response, provider = complete(clients, convo, session_id)
+        except Exception:
+            # Every provider failed (for example the team AI bridge is off): answer like demo mode
+            # instead of showing an error.
+            log.warning('every AI provider failed; answering with demo replies')
+            reply = demo_reply(messages[-1]['content'], demo_tools(session_id, actions), messages[:-1])
+            db.log_chat(session_id, 'assistant', {'content': reply, 'provider': 'demo', 'offline': True})
+            return {'reply': reply, 'configured': False, 'actions': actions, 'provider': 'demo', 'offline': True}
         message = response.choices[0].message
         if not message.tool_calls:
             reply = (message.content or '').strip() or GAVE_UP.format(**info)
