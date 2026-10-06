@@ -69,6 +69,15 @@ function readLocation() {
   return { ...where, route };
 }
 
+// The browser tab shows the church itself: its name as the title, and its letter badge (the same
+// sand-colored initial as beside the church name in the sidebar) as the icon.
+const xmlEscape = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+function churchIcon(name) {
+  const letter = xmlEscape(name.trim().charAt(0).toUpperCase() || '·');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#f3ecdd"/><text x="16" y="23" font-family="Georgia,serif" font-size="20" fill="#8f7a4f" text-anchor="middle">${letter}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
 const titleCase = slug => slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 export default function App() {
@@ -187,6 +196,13 @@ export default function App() {
   }, [scrollTarget]);
 
   const name = listing?.name || (demo ? DEMO_INFO.name : '');
+  useEffect(() => {
+    if (!name) return;
+    document.title = name;
+    let icon = document.querySelector('link[rel="icon"]');
+    if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
+    icon.href = churchIcon(name);
+  }, [name]);
   const ready = demo || apiReady === true;
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
