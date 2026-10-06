@@ -21,8 +21,22 @@ export default function GiveStaff({ slug, church, go, onPickChurch, onChanged })
 
   if (ready === false) return <div className="card give-pad"><h2>Church accounts are almost here.</h2><p>Staff sign-in, Stripe setup and trip applications open as soon as the updated giving service is deployed.</p></div>;
   if (!token) return <SignIn slug={slug} church={church} go={go} onPickChurch={onPickChurch} onSignedIn={t => { setStaffToken(slug, t, { verified: true }); }} />;
-  if (!staff) return <div className="card give-pad" role="status">Verifying your staff session…</div>;
+  if (!staff) return <Verifying slug={slug} />;
   return <Dashboard key={slug} slug={slug} go={go} onChanged={onChanged} />;
+}
+
+// Verification retries while the giving service is down; this gives staff a way out meanwhile.
+function Verifying({ slug }) {
+  const [busy, setBusy] = useState(false);
+  async function signOut() {
+    setBusy(true);
+    // Revoke on the server when it answers; if it can't be reached, at least forget the session here.
+    try { await signOutStaff(slug); } catch { setStaffToken(slug, ''); }
+  }
+  return <div className="card give-pad">
+    <p role="status">Verifying your staff session…</p>
+    <p className="form-note">Taking too long? <button type="button" className="link" disabled={busy} onClick={signOut}>{busy ? 'Signing out…' : 'Sign out'}</button></p>
+  </div>;
 }
 
 function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {

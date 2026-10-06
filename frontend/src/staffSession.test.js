@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { STAFF_SESSION_INVALID, api, setApiChurch } from './api.js';
 import { getStaffToken, getVerifiedStaffToken, setStaffToken } from './church.js';
 import { signOutStaff, staffApi, verifyStaffSession } from './giving.js';
 
@@ -66,6 +67,24 @@ test('server-issued tokens retain verified access during rotation; restored toke
   setStaffToken('hope-chapel', 'd'.repeat(32), { verified: true });
   setStaffToken('hope-chapel', '');
   assert.equal(getVerifiedStaffToken('hope-chapel'), '');
+});
+
+test('church API: only the explicit rejected-session code drops the token, not any 401', async () => {
+  const originalFetch = globalThis.fetch;
+  let reply;
+  try {
+    setApiChurch('hope-chapel');
+    setStaffToken('hope-chapel', 'a'.repeat(32));
+    globalThis.fetch = async url => url.endsWith('/api/health') ? Response.json({ churches: true }) : reply();
+    // A missing API key (Sermon Notes, the AI model setting) is a 401 that must keep valid staff signed in.
+    reply = () => Response.json({ detail: 'Missing or invalid API key' }, { status: 401 });
+    await assert.rejects(api('/ai/model', { method: 'POST' }), err => err.status === 401);
+    assert.equal(getStaffToken('hope-chapel'), 'a'.repeat(32));
+    // Sermon Notes rejecting a revoked session keeps its own message but carries the code.
+    reply = () => Response.json({ detail: 'Missing or invalid API key', code: STAFF_SESSION_INVALID }, { status: 401 });
+    await assert.rejects(api('/notes'), /Missing or invalid API key/);
+    assert.equal(getStaffToken('hope-chapel'), '');
+  } finally { globalThis.fetch = originalFetch; setApiChurch('grace-community'); storage.clear(); }
 });
 
 test('old giving services validate via the overview; outage keeps the token', async () => {

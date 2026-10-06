@@ -2,7 +2,7 @@ import { Container, ContainerProxy, getContainer } from '@cloudflare/containers'
 import { DurableObject } from 'cloudflare:workers';
 import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
-import { DEMO_SLUG, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, onBaseDomain, validSlug } from './churches';
+import { DEMO_SLUG, STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
 export { ContainerProxy };
@@ -146,9 +146,10 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 		const staff = await isStaff(request, env, church.slug);
 		if (staff !== true) {
 			const denied = await authorize(request, env);
-			if (denied) return staff === 'unavailable'
-				? json({ detail: 'The staff sign-in service is unavailable right now. Please try again.' }, 503)
-				: denied;
+			if (denied && staff === 'unavailable') return json({ detail: 'The staff sign-in service is unavailable right now. Please try again.' }, 503);
+			// A rejected staff session: say so, so the browser drops it (a missing API key alone never does).
+			if (denied?.status === 401 && sentStaffToken(request)) return json({ ...(await denied.json<Record<string, unknown>>()), code: STAFF_SESSION_INVALID }, 401);
+			if (denied) return denied;
 		}
 	}
 	if (path !== '/api/notes/upload') {

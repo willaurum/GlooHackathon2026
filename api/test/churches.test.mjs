@@ -2,7 +2,7 @@
 // (Node 22.18+ loads the TypeScript directly.)
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, onBaseDomain } from '../churches.ts';
+import { STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain } from '../churches.ts';
 
 // A stand-in for the giving Worker: two churches, one staff token each.
 const TOKENS = { ['a'.repeat(32)]: 'hope-chapel', ['b'.repeat(32)]: 'other-church' };
@@ -159,4 +159,19 @@ test('staff endpoints return 503 on service failure and 401 only for rejected cr
   const wrongChurch = await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'other-church' }) } }, 'hope-chapel');
   assert.equal(wrongChurch.status, 401);
   assert.equal(await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'hope-chapel' }) } }, 'hope-chapel'), null);
+});
+
+test('a rejected staff session is flagged so the browser drops it; no session sent, no flag', async () => {
+  const rejected = { GIVING: { fetch: async () => Response.json({}, { status: 401 }) } };
+  const withToken = await requireStaff(asStaff('s'.repeat(32)), rejected, 'hope-chapel');
+  assert.equal(withToken.status, 401);
+  assert.equal((await withToken.json()).code, STAFF_SESSION_INVALID);
+  const without = await requireStaff(new Request('https://api.test'), rejected, 'hope-chapel');
+  assert.equal(without.status, 401);
+  assert.equal((await without.json()).code, undefined);
+  // An outage is never reported as a rejected session.
+  const outage = await requireStaff(asStaff('s'.repeat(32)), {}, 'hope-chapel');
+  assert.equal((await outage.json()).code, undefined);
+  assert.equal(sentStaffToken(asStaff('short')), true);
+  assert.equal(sentStaffToken(new Request('https://api.test', { headers: { 'X-API-Key': 'k' } })), false);
 });

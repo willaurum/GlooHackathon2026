@@ -5,6 +5,8 @@ export const API_BASE = import.meta.env?.VITE_API_BASE ?? '';
 // The giving API is its own Worker (api-giving/); the page calls it cross-origin.
 const GIVING_API = import.meta.env?.VITE_GIVING_API_BASE ?? 'https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev';
 const KEY_STORAGE = 'pastor-notes-api-key';
+// Matches STAFF_SESSION_INVALID in api/churches.ts.
+export const STAFF_SESSION_INVALID = 'staff_session_invalid';
 
 // The API key is typed in by the user and kept for this browser tab only. It is never built into the bundle.
 export const getApiKey = () => sessionStorage.getItem(KEY_STORAGE) ?? '';
@@ -47,7 +49,9 @@ export async function api(path, options = {}) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      if (body.detail === 'Please sign in as church staff.' && sentToken && getStaffToken(slug) === sentToken) setStaffToken(slug, '');
+      // Only the API's explicit "this session was rejected" signal drops the token: a 401 for a missing
+      // API key (Sermon Notes, the AI model setting) must not sign valid staff out.
+      if (body.code === STAFF_SESSION_INVALID && sentToken && getStaffToken(slug) === sentToken) setStaffToken(slug, '');
       const error = new Error(typeof body.detail === 'string' ? body.detail : 'Please sign in as church staff.');
       error.status = 401;
       throw error;

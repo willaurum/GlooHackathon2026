@@ -87,13 +87,18 @@ export async function isStaff(request: Request, env: AppEnv, slug: string): Prom
 	return true;
 }
 
+/** On a 401, tells the browser its stored staff session was rejected and should be dropped. */
+export const STAFF_SESSION_INVALID = 'staff_session_invalid';
+
+/** Whether the caller presented a staff session at all, valid or not. */
+export const sentStaffToken = (request: Request) => /^Bearer /.test(request.headers.get('Authorization') ?? '');
+
 /** Staff-only endpoints deny access during an outage but preserve the caller's session. */
 export async function requireStaff(request: Request, env: AppEnv, slug: string): Promise<Response | null> {
 	const result = await isStaff(request, env, slug);
 	if (result === true) return null;
-	return Response.json({ detail: result === 'unavailable'
-		? 'The staff sign-in service is unavailable right now. Please try again.'
-		: 'Please sign in as church staff.' }, { status: result === 'unavailable' ? 503 : 401 });
+	if (result === 'unavailable') return Response.json({ detail: 'The staff sign-in service is unavailable right now. Please try again.' }, { status: 503 });
+	return Response.json({ detail: 'Please sign in as church staff.', ...(sentStaffToken(request) && { code: STAFF_SESSION_INVALID }) }, { status: 401 });
 }
 
 type Route = [string, RegExp];
