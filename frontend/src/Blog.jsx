@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
 
 export default function Blog() {
+  // Writing, deleting and summarizing posts is staff work; the Worker enforces it too.
+  const { staff } = useChurch();
   const [posts, setPosts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState('all');
@@ -48,7 +51,7 @@ export default function Blog() {
 
   async function handleNlpSuggest() {
     if (!content.trim() && !title.trim()) {
-      setFormError('Please enter a title or post content before running NLP categorization.');
+      setFormError('Please enter a title or post content before suggesting categories.');
       return;
     }
     setFormError('');
@@ -67,10 +70,10 @@ export default function Blog() {
           return merged;
         });
       } else {
-        setFormError('NLP did not detect specific categories for this text.');
+        setFormError('No categories were suggested for this text.');
       }
     } catch (err) {
-      setFormError(err.message || 'NLP categorization failed. Try again.');
+      setFormError(err.message || 'Could not suggest categories. Try again.');
     } finally {
       setIsNlpLoading(false);
     }
@@ -214,14 +217,14 @@ export default function Blog() {
           ))}
         </div>
 
-        <button
+        {staff && <button
           className="primary"
           onClick={() => setIsModalOpen(true)}
           style={{ gap: 8 }}
         >
           <Icon name="plus" size={18} />
           Write Blog Post
-        </button>
+        </button>}
       </div>
 
       {error && (
@@ -242,12 +245,12 @@ export default function Blog() {
           <p style={{ marginTop: 8 }}>
             {activeCategory !== 'all'
               ? `There are no posts tagged with "${activeCategory}".`
-              : 'Be the first to share an encouragement or church story!'}
+              : 'Check back soon for stories and updates from our church family.'}
           </p>
-          <button className="primary" style={{ marginTop: 20 }} onClick={() => setIsModalOpen(true)}>
+          {staff && <button className="primary" style={{ marginTop: 20 }} onClick={() => setIsModalOpen(true)}>
             <Icon name="plus" size={18} />
             Create First Post
-          </button>
+          </button>}
         </div>
       ) : (
         <div className="blog-posts-list" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -273,14 +276,14 @@ export default function Blog() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <small>{formatDate(post.created_at)}</small>
-                    <button
+                    {staff && <button
                       className="icon-btn"
                       style={{ width: 28, height: 28, color: 'var(--faint)' }}
                       onClick={() => handleDeletePost(post.id)}
                       title="Delete post"
                     >
                       <Icon name="trash" size={15} />
-                    </button>
+                    </button>}
                   </div>
                 </div>
 
@@ -296,8 +299,8 @@ export default function Blog() {
                   {post.content}
                 </div>
 
-                {/* AI Bullet Point Summary Section */}
-                <div
+                {/* Bullet summary: visitors see it once there is one; staff can generate it. */}
+                {(hasBullets || staff) && <div
                   className="ai-bullet-box"
                   style={{
                     marginTop: 20,
@@ -311,12 +314,11 @@ export default function Blog() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Icon name="sparkle" size={18} className="muted" />
                       <strong style={{ color: 'var(--ink)', fontSize: 14 }}>
-                        {hasBullets ? 'Key Takeaways (LLM Summary)' : 'AI Bullet Summary'}
+                        {hasBullets ? 'Key takeaways' : 'Bullet summary'}
                       </strong>
-                      {hasBullets && <span className="badge" style={{ fontSize: 11, background: '#fff' }}>Ollama / LLM</span>}
                     </div>
 
-                    <button
+                    {staff && <button
                       className="link"
                       disabled={isSummarizing}
                       onClick={() => handleSummarizePost(post.id)}
@@ -335,7 +337,7 @@ export default function Blog() {
                           <Icon name="sparkle" size={14} /> Summarize into Bullet Points
                         </>
                       )}
-                    </button>
+                    </button>}
                   </div>
 
                   {hasBullets && (
@@ -348,12 +350,12 @@ export default function Blog() {
                     </ul>
                   )}
 
-                  {!hasBullets && !isSummarizing && (
+                  {staff && !hasBullets && !isSummarizing && (
                     <p style={{ margin: 0, fontSize: 13.5, color: 'var(--muted)' }}>
-                      Click the button above to generate a quick bullet-point summary of this article using the local LLM.
+                      Generate a quick bullet-point summary of this post.
                     </p>
                   )}
-                </div>
+                </div>}
               </article>
             );
           })}
@@ -361,7 +363,7 @@ export default function Blog() {
       )}
 
       {/* Create Blog Post Modal */}
-      {isModalOpen && (
+      {staff && isModalOpen && (
         <div
           className="modal-backdrop"
           style={{
@@ -452,17 +454,17 @@ export default function Blog() {
                     disabled={isNlpLoading || (!title.trim() && !content.trim())}
                     onClick={handleNlpSuggest}
                     style={{ fontSize: 13, gap: 5 }}
-                    title="Analyze title and content using NLP to generate smart categories"
+                    title="Suggest categories from the title and content"
                   >
                     <Icon name="sparkle" size={14} />
-                    {isNlpLoading ? 'Analyzing with NLP...' : 'Auto-Suggest Categories (NLP)'}
+                    {isNlpLoading ? 'Suggesting...' : 'Suggest categories'}
                   </button>
                 </div>
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, minHeight: 32 }}>
                   {postCategories.length === 0 ? (
                     <small style={{ color: 'var(--faint)' }}>
-                      No categories added yet. Click &quot;Auto-Suggest Categories (NLP)&quot; or add your own below.
+                      No categories added yet. Click &quot;Suggest categories&quot; or add your own below.
                     </small>
                   ) : (
                     postCategories.map(cat => (
@@ -555,7 +557,7 @@ export default function Blog() {
                   style={{ cursor: 'pointer', width: 16, height: 16 }}
                 />
                 <label htmlFor="autoSummaryCheck" style={{ fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>
-                  Automatically generate AI bullet summary with LLM upon publishing
+                  Add a bullet summary when publishing
                 </label>
               </div>
 
