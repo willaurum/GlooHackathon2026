@@ -8,11 +8,11 @@ import GiveStaff from './GiveStaff.jsx';
 import { useChurch } from './ChurchContext.js';
 import { DEMO_CHURCH, churchApi, friendly, loadChurch, manageLinkFor, percent, startCheckout, tripDates } from './giving.js';
 
-const TABS = [['give', 'Give', 'heart'], ['give/trips', 'Mission trips', 'compass'], ['give/staff', 'Giving admin', 'lock']];
+const TABS = [['give', 'Give', 'heart'], ['give/trips', 'Mission trips', 'compass'], ['give/staff', 'Church staff', 'lock']];
 const HEADERS = {
   'give': ['Give with confidence.', 'Choose where your gift goes. Gifts are private: this page shows totals, never names.'],
   'give/trips': ['Go, or help send someone.', 'Mission trips and teams that need people and funding. Apply to go, or give toward a trip.'],
-  'give/staff': ['Giving administration.', 'Connect Stripe, manage funds and trips, review applications and see who gave.'],
+  'give/staff': ['For church staff.', 'Connect Stripe, manage funds and trips, review applications and see who gave.'],
   'give/manage': ['Your monthly gift.', 'See a monthly gift and cancel it any time, right here.'],
 };
 const MANAGE_PREFIX = 'give/manage/';

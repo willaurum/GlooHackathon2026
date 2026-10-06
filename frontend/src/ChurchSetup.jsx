@@ -5,7 +5,6 @@ import { useChurch } from './ChurchContext.js';
 import { churchApi, friendly, givingCapabilities, signOutStaff, staffApi } from './giving.js';
 import Icon from './Icon.jsx';
 import ChurchLink from './ChurchLink.jsx';
-import StaffAccounts from './StaffAccounts.jsx';
 import { PageHeader } from './Layout.jsx';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -14,7 +13,6 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 // Everything here is saved through PUT /api/church/content, the same import shape a site importer would use.
 export default function ChurchSetup() {
   const church = useChurch();
-  const [view, setView] = useState('site');
   const [signingOut, setSigningOut] = useState(false), [signOutError, setSignOutError] = useState('');
   async function signOut() {
     setSigningOut(true); setSignOutError('');
@@ -27,16 +25,11 @@ export default function ChurchSetup() {
     <StaffSignIn />
   </>;
   return <>
-    <PageHeader eyebrow="Church setup" title={'Set up ' + church.name + '.'} text="Manage site settings, staff accounts and your password."
+    <PageHeader eyebrow="Church setup" title={'Set up ' + church.name + '.'} text="Fill in what you can. Each part saves on its own, and visitors see it right away."
       action={<button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>} />
     {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
-    <div className="filters give-views" role="tablist" aria-label="Church administration">
-      {[['site', 'Site settings'], ['accounts', 'Staff accounts']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'selected' : ''} onClick={() => setView(id)}>{label}</button>)}
-    </div>
-    {view === 'accounts' ? <StaffAccounts key={church.slug} slug={church.slug} demo={church.demo} /> : <>
-      <ChurchLink />
-      {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. Site settings open as soon as the updated church service is deployed. Staff accounts are available in the tab above.</p></div>}
-    </>}
+    <ChurchLink />
+    {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Give, then Church staff.</p></div>}
   </>;
 }
 
@@ -56,14 +49,14 @@ export function StaffSignIn() {
     finally { setBusy(false); }
   }
   return <form className="card give-pad staff-signin" onSubmit={submit}>
-    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in works across the site.</p></div></div>
+    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Give, then Church staff.</p></div></div>
     {ready === false && <div className="banner demo" role="status"><Icon name="sparkle" /><span>Staff sign-in opens as soon as the updated service is deployed.</span></div>}
     {church.demo && <p className="form-note">This is the shared demo church, so anything you change here is visible to everyone.</p>}
     <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
     <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
-    <p className="form-note">Need an account? Ask your church Owner to add you in Church setup → Staff accounts.</p>
+    <p className="form-note">Need an account? Ask your church Owner to add you in Give → Church staff → Team.</p>
   </form>;
 }
 
@@ -97,7 +90,7 @@ function SetupForms() {
       <ul className="give-checklist">{steps.map(([label, ok, id]) => <li key={label} className={ok ? 'done' : ''}>
         <Icon name={ok ? 'check' : 'clock'} size={18} /><a href={'#' + id} onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); }}>{label}</a>
       </li>)}</ul>
-      <p className="form-note">Giving is set up under <button type="button" className="link" onClick={() => church.go('give/staff')}>Give, then Giving admin</button>. Add events on the <button type="button" className="link" onClick={() => church.go('calendar')}>Calendar</button>.</p>
+      <p className="form-note">Giving is set up under <button type="button" className="link" onClick={() => church.go('give/staff')}>Give, then Church staff</button>. Add events on the <button type="button" className="link" onClick={() => church.go('calendar')}>Calendar</button>.</p>
     </section>
     <Details info={info} save={save} />
     <Services info={info} save={save} />
