@@ -41,7 +41,7 @@ export default function About({ go }) {
       <div className="about-actions">
         <button className="primary" onClick={() => go('guests/plan')}>Plan your visit<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={() => go('about/beliefs')}>What we believe</button>
-        <button className="secondary" onClick={() => go('connect')}>Connect with us</button>
+        <button className="secondary" onClick={() => go('about/connect')}>Connect with us</button>
       </div>
     </section>
   </div>;

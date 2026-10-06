@@ -5,11 +5,12 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, ConfigDict
-from datetime import datetime
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from datetime import date, datetime
 from typing import Literal
 
-from . import ai, ai_client, chat, db, matching, pastor_notes, recommendations
+from . import ai, ai_client, blog_ai, chat, church_content, db, pastor_notes, recommendations
+from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
 
@@ -27,17 +28,39 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Belong API", lifespan=lifespan)
+# Every request runs against one church's database (X-Church); see church_scope.py.
+app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
+app.include_router(church_content.router)
+
+
+class AvailabilityWindow(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    day: Literal['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    start_time: str = Field(pattern=r'^([01][0-9]|2[0-3]):[0-5][0-9]$')
+    end_time: str = Field(pattern=r'^([01][0-9]|2[0-3]):[0-5][0-9]$')
+
+    @model_validator(mode='after')
+    def ordered(self):
+        if self.start_time >= self.end_time:
+            raise ValueError('End time must be after start time; use separate windows for different days.')
+        return self
+
+
+class ServingPreferences(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    availability: list[AvailabilityWindow] = Field(default_factory=list, max_length=21)
+    unavailable_requirements: list[Literal['background_check', 'onboarding', 'shadowing', 'audition', 'midweek_rehearsal', 'care_training', 'confidentiality']] = Field(default_factory=list, max_length=7)
+    days_and_times: str = Field(default='', max_length=500)
+    preferred_service: str = Field(default='', max_length=200)
+    frequency: Literal['one-time', 'weekly', 'monthly'] | None = None
+    earliest_start_date: date | None = None
 
 
 class MatchRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
-    name: str = Field(default='', max_length=100)
-    skills: list[Literal['Hospitality', 'Teaching', 'Technology', 'Creativity', 'Music', 'Organization', 'Listening', 'Encouragement']] = Field(default_factory=list, max_length=8)
-    style: Literal['Working with people', 'Behind the scenes', 'Hands-on service'] = 'Working with people'
-    day: Literal['Sunday mornings', 'Saturday mornings', 'Weekday evenings'] = 'Sunday mornings'
-    # In the person's own words. With an AI provider configured, the AI ranks from this.
     description: str = Field(default='', max_length=4000)
+    preferences: ServingPreferences = Field(default_factory=ServingPreferences)
 
 
 class ConnectionRequest(BaseModel):
@@ -59,18 +82,13 @@ def ministries():
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
-    ministries = db.list_ministries()
-    who = {'name': body.name or 'this member', 'style': body.style, 'day': body.day}
-    note = ''
-    if body.description:
-        try:
-            return {**who, **recommendations.recommend(body.description, ministries)}
-        except recommendations.NotConfigured:
-            pass  # no AI key: the rules below still work
-        except recommendations.Unavailable as error:
-            note = str(error)
-    ranked = matching.rank(ministries, body.skills, body.style, body.day)
-    return {**who, 'engine': 'rules', 'matches': ranked, **({'note': note} if note else {})}
+    try:
+        return recommendations.recommend(body.description, db.list_ministries(),
+                                         preferences=body.preferences.model_dump(mode='json'))
+    except recommendations.NotConfigured as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except recommendations.Unavailable as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @app.get('/api/connections')
@@ -143,6 +161,12 @@ def update_request(request_id: int, body: RequestStatus):
     if row is None:
         raise HTTPException(status_code=404, detail='Request not found')
     return row
+
+
+@app.delete('/api/requests/{request_id}', status_code=204)
+def remove_request(request_id: int):
+    if not db.remove_request(request_id):
+        raise HTTPException(status_code=404, detail='Request not found')
 
 
 class NewItem(BaseModel):
@@ -438,3 +462,103 @@ async def get_ai_status():
 def set_ai_model(body: ModelUpdateRequest):
     ai_client.set_default_model(body.model)
     return {"default_model": ai_client.get_default_model()}
+
+
+# --- Blog Endpoints ---
+
+
+class BlogPostCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1)
+    author: str = Field(default="Church Staff", max_length=100)
+    categories: list[str] = Field(default_factory=list)
+    auto_categorize: bool = False
+    auto_summarize: bool = False
+
+
+class CategorizeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(default="", max_length=300)
+    content: str = Field(min_length=1)
+
+
+class SummarizePostRequest(BaseModel):
+    model: str | None = None
+
+
+@app.get("/api/blog")
+def get_blog_posts(category: str | None = None):
+    return db.list_blog_posts(category=category)
+
+
+@app.get("/api/blog/categories")
+def get_blog_categories():
+    return db.list_blog_categories()
+
+
+@app.get("/api/blog/{post_id}")
+def get_single_blog_post(post_id: int):
+    post = db.get_blog_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Blog post not found")
+    return post
+
+
+@app.post("/api/blog/categorize")
+async def categorize_post_nlp(body: CategorizeRequest):
+    """Suggest categories for a post using NLP / LLM."""
+    categories = await blog_ai.categorize_blog_post(title=body.title, content=body.content)
+    return {"categories": categories}
+
+
+@app.post("/api/blog", status_code=201)
+async def create_new_blog_post(body: BlogPostCreate):
+    categories = body.categories
+    # Auto-generate categories using NLP if none provided or auto_categorize is True
+    if not categories or body.auto_categorize:
+        nlp_cats = await blog_ai.categorize_blog_post(title=body.title, content=body.content)
+        categories = list(dict.fromkeys(categories + nlp_cats))
+
+    bullet_summary = None
+    if body.auto_summarize:
+        try:
+            bullet_summary = await blog_ai.summarize_blog_bullets(title=body.title, content=body.content)
+        except Exception as exc:
+            log.warning("Auto-summarization failed on post creation: %s", exc)
+
+    post = db.create_blog_post(
+        title=body.title,
+        content=body.content,
+        author=body.author or "Church Staff",
+        categories=categories,
+        bullet_summary=bullet_summary,
+    )
+    return post
+
+
+@app.post("/api/blog/{post_id}/summarize")
+async def summarize_blog_post_endpoint(post_id: int, body: SummarizePostRequest | None = None):
+    post = db.get_blog_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Blog post not found")
+
+    target_model = body.model if body else None
+    try:
+        bullets = await blog_ai.summarize_blog_bullets(
+            title=post["title"],
+            content=post["content"],
+            model=target_model,
+        )
+        updated = db.update_blog_post_summary(post_id, bullets)
+        return updated
+    except Exception as exc:
+        log.exception("Blog summarization failed for post %s", post_id)
+        raise HTTPException(status_code=502, detail=f"LLM summarization failed: {exc}")
+
+
+@app.delete("/api/blog/{post_id}", status_code=204)
+def delete_blog_post_endpoint(post_id: int):
+    if not db.delete_blog_post(post_id):
+        raise HTTPException(status_code=404, detail="Blog post not found")
+

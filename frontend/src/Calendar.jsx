@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
 
 const CATEGORIES = [
   'All',
@@ -14,17 +15,20 @@ const CATEGORIES = [
 ];
 
 const CATEGORY_COLORS = {
-  'Worship': '#2b6248',
-  'Youth & Kids': '#7f6330',
-  'Discipleship': '#3a7a5c',
-  'Outreach': '#8a6d1f',
-  'Fellowship': '#1d4636',
-  'Hospitality': '#7a5c2e',
-  'Creative Arts': '#2f7d6b',
-  'Next Generation': '#5a6b2f',
+  'Worship': '#729564',
+  'Youth & Kids': '#b88963',
+  'Discipleship': '#9b8bbd',
+  'Outreach': '#b4a057',
+  'Fellowship': '#819fbd',
+  'Hospitality': '#b98da0',
+  'Creative Arts': '#5b9b8b',
+  'Next Generation': '#bd7b60',
 };
 
 export default function Calendar({ setError = () => {} }) {
+  const church = useChurch();
+  // Adding to the calendar is for staff, except on the shared demo church.
+  const canEdit = church.demo || church.staff;
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [aiStatus, setAiStatus] = useState(null);
@@ -410,9 +414,9 @@ export default function Calendar({ setError = () => {} }) {
               <>↻ Remake All Summaries</>
             )}
           </button>
-          <button className="primary" onClick={() => setShowAddModal(true)}>
+          {canEdit && <button className="primary" onClick={() => setShowAddModal(true)}>
             + Add New Event
-          </button>
+          </button>}
         </div>
       </div>
 

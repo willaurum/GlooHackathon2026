@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-l
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
+import { SetUpThis } from './ChurchStates.jsx';
 import countryBorders from './data/countryBorders.json';
 
 const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [12, 12], iconAnchor: [6, 6] });
@@ -81,6 +82,9 @@ export default function PrayerMap() {
   return <div className="prayer-map">
     {error && <div className="api-message" role="alert">{error}</div>}
     {loading && <p role="status">Loading prayer map data…</p>}
+    {!loading && !error && !regions.length && <SetUpThis icon="compass" title="No prayer map yet."
+      text="This church has not added the places it prays for yet."
+      staffText="The prayer map shows the places your missionaries serve. Adding regions from Church setup is coming next." />}
     <div className="map-legend">
       <span><span className="legend-dot news-dot" /> Real news — exact city</span>
       <span><span className="legend-dot region-dot" /> Missionary presence — whole country only, never an exact point</span>
@@ -88,8 +92,9 @@ export default function PrayerMap() {
     <div className="map-shell">
       <MapContainer center={[20, 40]} zoom={2} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          attribution="Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors"
+          maxNativeZoom={16}
         />
         <FitToBorders features={borderFeatures} />
         <GeoJSON
