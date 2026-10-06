@@ -42,7 +42,7 @@ class ProviderSelectionTests(unittest.TestCase):
 
     @patch.dict('os.environ', GLOO, clear=True)
     def test_setting_gloo_key_switches_everything_to_gloo(self):
-        self.assertEqual(chat.status()['providers'], ['gloo:gloo-anthropic-claude-haiku-4.5', 'ollama:qwen3.8:27b'])
+        self.assertEqual(chat.status()['providers'], ['gloo:gloo-qwen-3.7-flash', 'ollama:qwen3.8:27b'])
         target = ai_client.endpoint()
         self.assertEqual(target['provider'], 'gloo')
         self.assertEqual(target['base_url'], 'https://platform.ai.gloo.com/ai/v2/guarded')

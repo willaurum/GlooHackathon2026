@@ -87,6 +87,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			YTDLP_COOKIES: env.YTDLP_COOKIES ?? '',
 			// Chat runs in demo mode until one of these secrets is set, or the team AI bridge is (TEAM_AI_URL + TEAM_AI_KEY).
 			GLOO_API_KEY: env.GLOO_API_KEY ?? '',
+			// Optional. Which Gloo model to use; the backend's default (gloo-qwen-3.7-flash) applies when it is empty.
+			GLOO_MODEL: env.GLOO_MODEL ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
