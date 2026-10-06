@@ -2,7 +2,7 @@
 // (Node 22.18+ loads the TypeScript directly.)
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { access, churchHeaders, churchPath, findChurch, isStaff, onBaseDomain } from '../churches.ts';
+import { access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, onBaseDomain } from '../churches.ts';
 
 // A stand-in for the giving Worker: two churches, one staff token each.
 const TOKENS = { ['a'.repeat(32)]: 'hope-chapel', ['b'.repeat(32)]: 'other-church' };
@@ -75,9 +75,9 @@ test('who may call what', () => {
     assert.equal(access(m, p, false), 'public', m + ' ' + p);
     assert.equal(access(m, p, true), 'public', m + ' ' + p);
   }
-  // Staff work: open on the demo church (as before), staff on every other church.
+  // Staff work requires a session, including on the demo church.
   for (const [m, p] of [['GET', '/api/visits'], ['POST', '/api/visits/3/claim'], ['POST', '/api/visits/3/met'], ['GET', '/api/requests'], ['PATCH', '/api/requests/2'], ['GET', '/api/connections'], ['DELETE', '/api/connections/4'], ['DELETE', '/api/requests/5'], ['POST', '/api/events']]) {
-    assert.equal(access(m, p, true), 'public', m + ' ' + p);
+    assert.equal(access(m, p, true), 'staff', m + ' ' + p);
     assert.equal(access(m, p, false), 'staff', m + ' ' + p);
   }
   // Church setup is staff only, the demo church included.
@@ -107,4 +107,56 @@ test('church subdomains of BASE_DOMAIN are allowed origins', () => {
   assert.equal(onBaseDomain('https://evilbelong.example.org', 'belong.example.org'), false);
   assert.equal(onBaseDomain('https://grace.belong.example.org.evil.test', 'belong.example.org'), false);
   assert.equal(onBaseDomain('https://grace.belong.example.org', ''), false);
+});
+
+
+test('visitors can read posts and summaries but cannot publish, approve or regenerate them', () => {
+  for (const demo of [true, false]) {
+    for (const path of ['/api/blog', '/api/blog/categories', '/api/blog/12', '/api/events', '/api/events/12']) {
+      assert.equal(access('GET', path, demo), 'public', path);
+    }
+    for (const [method, path] of [
+      ['POST', '/api/blog'], ['POST', '/api/blog/categorize'], ['POST', '/api/blog/12/summarize'],
+      ['POST', '/api/blog/12/approve'], ['PATCH', '/api/blog/12'], ['PUT', '/api/blog/12'],
+      ['DELETE', '/api/blog/12'], ['POST', '/api/events/12/summarize'],
+      ['POST', '/api/events/summarize-all'], ['POST', '/api/regions/12/prayer-angles'],
+    ]) assert.equal(access(method, path, demo), 'staff', method + ' ' + path);
+    assert.equal(access('POST', '/api/ai/model', demo), 'key');
+    assert.equal(access('POST', '/api/ollama/model', demo), 'key');
+  }
+});
+
+test('revoked sessions lose access immediately and directory failures deny access', async () => {
+  let valid = true;
+  const service = { GIVING: { fetch: async () => valid
+    ? Response.json({ slug: 'revocation-test' })
+    : Response.json({ error: 'Signed out' }, { status: 401 }) } };
+  const request = asStaff('r'.repeat(32));
+  assert.equal(await isStaff(request, service, 'revocation-test'), true);
+  valid = false;
+  assert.equal(await isStaff(request, service, 'revocation-test'), false);
+  assert.equal(await isStaff(request, { GIVING: { fetch: async () => { throw new Error('Offline'); } } }, 'revocation-test'), 'unavailable');
+  assert.equal(await isStaff(request, {}, 'revocation-test'), 'unavailable');
+});
+
+
+test('staff endpoints return 503 on service failure and 401 only for rejected credentials', async () => {
+  const request = asStaff('s'.repeat(32));
+  for (const fetch of [
+    async () => { throw new Error('Offline'); },
+    async () => Response.json({ error: 'Unavailable' }, { status: 503 }),
+    async () => new Response('bad gateway', { status: 502 }),
+    async () => new Response('not json', { status: 200 }),
+  ]) {
+    const response = await requireStaff(request, { GIVING: { fetch } }, 'hope-chapel');
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).detail, /unavailable/);
+  }
+  assert.equal((await requireStaff(request, {}, 'hope-chapel')).status, 503);
+  assert.equal((await requireStaff(new Request('https://api.test'), {}, 'hope-chapel')).status, 401);
+  const rejected = await requireStaff(request, { GIVING: { fetch: async () => Response.json({}, { status: 401 }) } }, 'hope-chapel');
+  assert.equal(rejected.status, 401);
+  const wrongChurch = await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'other-church' }) } }, 'hope-chapel');
+  assert.equal(wrongChurch.status, 401);
+  assert.equal(await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'hope-chapel' }) } }, 'hope-chapel'), null);
 });

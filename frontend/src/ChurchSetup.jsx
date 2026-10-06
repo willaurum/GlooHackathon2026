@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { setStaffToken } from './church.js';
 import { useChurch } from './ChurchContext.js';
-import { churchApi, friendly, givingCapabilities, staffApi } from './giving.js';
+import { churchApi, friendly, givingCapabilities, signOutStaff, staffApi } from './giving.js';
 import Icon from './Icon.jsx';
 import ChurchLink from './ChurchLink.jsx';
 import { PageHeader } from './Layout.jsx';
@@ -13,13 +13,21 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 // Everything here is saved through PUT /api/church/content, the same import shape a site importer would use.
 export default function ChurchSetup() {
   const church = useChurch();
+  const [signingOut, setSigningOut] = useState(false), [signOutError, setSignOutError] = useState('');
+  async function signOut() {
+    setSigningOut(true); setSignOutError('');
+    try { await signOutStaff(church.slug); }
+    catch (err) { setSignOutError(friendly(err)); }
+    finally { setSigningOut(false); }
+  }
   if (!church.staff) return <>
     <PageHeader eyebrow="Church setup" title={'Sign in to set up ' + church.name + '.'} text="Church staff can fill in service times, the address, common questions and serving teams." />
     <StaffSignIn />
   </>;
   return <>
     <PageHeader eyebrow="Church setup" title={'Set up ' + church.name + '.'} text="Fill in what you can. Each part saves on its own, and visitors see it right away."
-      action={<button className="secondary" onClick={() => setStaffToken(church.slug, '')}>Sign out</button>} />
+      action={<button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>} />
+    {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
     <ChurchLink />
     {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Give, then Church staff.</p></div>}
   </>;
@@ -35,8 +43,9 @@ export function StaffSignIn() {
     try {
       const res = await churchApi(church.slug, '/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
       setPassword('');
-      setStaffToken(church.slug, res.token);
-    } catch (e2) { setErr(friendly(e2)); setBusy(false); }
+      setStaffToken(church.slug, res.token, { verified: true });
+    } catch (e2) { setErr(friendly(e2)); }
+    finally { setBusy(false); }
   }
   return <form className="card give-pad staff-signin" onSubmit={submit}>
     <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use the staff password your church chose when it signed up. It is the same password as Give, then Church staff.</p></div></div>

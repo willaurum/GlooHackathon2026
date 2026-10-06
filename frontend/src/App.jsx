@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, churchCapabilities, gapi, setApiChurch } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
-import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, shareLink } from './church.js';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import ChurchStart from './ChurchStart.jsx';
 import Give from './Give.jsx';
-import { churchApi, givingCapabilities } from './giving.js';
+import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
 import { ABOUT_DEMO_ONLY, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
@@ -127,6 +127,24 @@ export default function App() {
     })();
     return () => { live = false; };
   }, [slug, listingVersion]);
+  // Restored tokens require validation. Fresh login/password responses already verified the session.
+  const staffToken = getStaffToken(slug);
+  useEffect(() => {
+    let live = true, retry;
+    if (!staffToken || getVerifiedStaffToken(slug) === staffToken) return;
+    async function verify() {
+      try {
+        const valid = await verifyStaffSession(slug);
+        if (!live || getStaffToken(slug) !== staffToken) return;
+        setStaffToken(slug, valid ? staffToken : '', { verified: valid });
+      } catch (err) {
+        // A rejected token is cleared by staffApi; transient failures retry without discarding it.
+        if (live && getStaffToken(slug) === staffToken && err.status !== 401) retry = setTimeout(verify, 5000);
+      }
+    }
+    verify();
+    return () => { live = false; clearTimeout(retry); };
+  }, [slug, staffToken, staffVersion]);
   // Lock page scroll behind the full-screen chat on phones.
   useEffect(() => { document.body.classList.toggle('chat-open', chatOpen); }, [chatOpen]);
 
@@ -171,7 +189,7 @@ export default function App() {
 
   const name = listing?.name || (demo ? DEMO_INFO.name : '');
   const ready = demo || apiReady === true;
-  const staff = !!getStaffToken(slug);
+  const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
     // After staff rename the church in Church setup.
@@ -230,8 +248,8 @@ export default function App() {
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">
         <WorkspaceBar />
-        {/* Keyed by church, so switching churches reloads every page for the new one. */}
-        <main key={slug}>
+        {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
+        <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
           <footer className="site-footer">
             <b>belong.</b>

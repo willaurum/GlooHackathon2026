@@ -15,8 +15,8 @@ const HEADERS = {
 
 export default function Serve({ route, go, requestsVersion, onCount }) {
   const church = useChurch();
-  // Saved connections and chat requests carry names and contacts: staff only, except on the shared demo church.
-  const staffView = church.demo || church.staff;
+  // Saved connections and chat requests carry names and contacts: staff only, including on the demo church.
+  const staffView = church.staff;
   const [query, setQuery] = useState(''),
     [filter, setFilter] = useState(false),
     [detail, setDetail] = useState(null),
@@ -40,9 +40,12 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
     } catch (err) { setError('Could not load church data. ' + err.message); }
     finally { setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!staffView) { setSaved([]); setRequests([]); }
+    load();
+  }, [staffView]);
   // The chat widget filed a request; refresh the staff queue.
-  useEffect(() => { if (requestsVersion && staffView) api('/requests').then(setRequests).catch(() => {}); }, [requestsVersion]);
+  useEffect(() => { if (requestsVersion && staffView) api('/requests').then(setRequests).catch(() => {}); }, [requestsVersion, staffView]);
   const pending = requests.filter(r => r.status === 'pending');
   useEffect(() => { onCount(saved.length + pending.length); }, [saved.length, pending.length]);
   useEffect(() => {

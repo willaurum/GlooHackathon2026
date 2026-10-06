@@ -30,7 +30,7 @@ export default function ChurchStart() {
     setBusy(true);
     try {
       const res = await gapi('/api/churches', { method: 'POST', body: JSON.stringify({ name: f.name.trim(), city: f.city.trim(), currency: f.currency, password: f.password }) });
-      setStaffToken(res.slug, res.token);
+      setStaffToken(res.slug, res.token, { verified: true });
       choose(res.slug, 'setup');
     } catch (e2) {
       setErr(friendly(e2));

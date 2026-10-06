@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-l
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
 import { SetUpThis } from './ChurchStates.jsx';
 import countryBorders from './data/countryBorders.json';
 
@@ -19,6 +20,7 @@ function FitToBorders({ features }) {
 }
 
 export default function PrayerMap() {
+  const { staff } = useChurch();
   const [regions, setRegions] = useState([]);
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -137,9 +139,9 @@ export default function PrayerMap() {
             Sourced from: {latest.source_news_ids.map(id => newsById[id]?.headline).filter(Boolean).join(' · ')}
           </small>}
         </>}
-        <button className="primary" disabled={busy} onClick={generateAngle}>
+        {staff && <button className="primary" disabled={busy} onClick={generateAngle}>
           {busy ? 'Working…' : latest ? 'Generate another angle →' : 'Reveal this region’s story →'}
-        </button>
+        </button>}
       </section>}
     </div>
   </div>;
