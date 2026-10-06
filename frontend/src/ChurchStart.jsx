@@ -47,7 +47,7 @@ export default function ChurchStart() {
         {STEPS.map(([title, text], i) => <li key={title} className={i === 0 ? 'current' : ''}><span>{i + 1}</span><div><b>{title}</b><p>{text}</p></div></li>)}
       </ol>
       <form className="card give-pad" onSubmit={submit} noValidate>
-        <div className="form-title"><span className="icon color1"><Icon name="plus" size={22} /></span><div><h2>Add your church</h2><p>You can change any of this later.</p></div></div>
+        <div className="form-title"><span className="icon color1"><Icon name="plus" size={22} /></span><div><h2>Add your church</h2><p>Create your church and owner account.</p></div></div>
         {ready === false && <div className="banner demo" role="status"><Icon name="sparkle" /><span>Adding a church opens here as soon as the updated service is deployed.</span></div>}
         <label className="field">Church name<input value={f.name} maxLength={80} autoComplete="organization" placeholder="e.g. Hope Chapel" onChange={set('name')} /></label>
         <label className="field">Town or city <small>Optional</small><input value={f.city} maxLength={80} autoComplete="address-level2" placeholder="e.g. Austin, TX" onChange={set('city')} /></label>

@@ -32,7 +32,7 @@ function pauseCrypto() {
   nextPause = { enter, release };
   return { entered, resume };
 }
-async function fixture() {
+async function fixture(shared = false) {
   const db = new DatabaseSync(':memory:');
   const sql = { exec(query, ...params) {
     const statement = db.prepare(query);
@@ -43,7 +43,7 @@ async function fixture() {
     db.exec('BEGIN'); try { const result = fn(); db.exec('COMMIT'); return result; }
     catch (e) { db.exec('ROLLBACK'); throw e; }
   } } }, {});
-  const first = await worker.init('race-church', 'Fictional Race Church', '', 'usd', 'fixture password 1', 'First Owner', 'first@example.org');
+  const first = await worker.init('race-church', 'Fictional Race Church', '', 'usd', 'fixture password 1', shared ? '' : 'First Owner', shared ? '' : 'first@example.org');
   async function call(method, path, body, token) {
     const headers = { 'x-church-slug': 'race-church', 'content-type': 'application/json', 'cf-connecting-ip': realCrypto.randomUUID() };
     if (token) headers.authorization = 'Bearer ' + token;
@@ -79,5 +79,20 @@ test('a login verifying the old password cannot outlive password rotation', asyn
     pause.resume();
     assert.equal((await pending).status, 401);
     assert.equal((await call('POST', '/login', { email: 'first@example.org', password: 'fixture replacement 1' })).status, 200);
+  } finally { db.close(); }
+});
+
+test('shared sessions cannot renew by changing a password after account migration', async () => {
+  const { db, call, token } = await fixture(true);
+  try {
+    const pause = pauseCrypto();
+    const pending = call('POST', '/password', { current: 'fixture password 1', next: 'fixture replacement 1' }, token);
+    await pause.entered;
+    assert.equal((await call('POST', '/users', { name: 'First Owner', email: 'first@example.org', role: 'owner', password: 'fixture password 2' }, token)).status, 200);
+    pause.resume();
+    assert.equal((await pending).status, 403);
+    assert.equal((await call('POST', '/password', { current: 'fixture password 1', next: 'fixture replacement 1' }, token)).status, 403);
+    assert.equal((await call('POST', '/login', { password: 'fixture password 1' })).status, 401);
+    assert.equal((await call('GET', '/session', undefined, token)).status, 200);
   } finally { db.close(); }
 });

@@ -540,7 +540,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
       const user = this.#sql.exec('SELECT role, password_hash FROM staff_users WHERE id = ?', userId).toArray()[0];
       if (!user || (expectedHash !== undefined && user.password_hash !== expectedHash)) return '';
       role = user.role as StaffRole;
-    } else if (expectedHash !== undefined && this.#church()?.password_hash !== expectedHash) return '';
+    } else if (expectedHash !== undefined && (this.#church()?.password_hash !== expectedHash || this.#staffCount())) return '';
     const now = Date.now();
     this.#sql.exec('DELETE FROM sessions WHERE expires_at < ?', now);
     this.#sql.exec('INSERT INTO sessions (token_hash, expires_at, user_id, role) VALUES (?, ?, ?, ?)', tokenHash, now + SESSION_TTL, userId, role);
@@ -1046,10 +1046,12 @@ export class GivingDO extends DurableObject<GivingEnv> {
       return token ? json({ ok: true, token }) : json({ error: 'Please sign in again.' }, 401);
     }
     if (c.demo_locked) return json({ error: 'The demo church password cannot be changed here.' }, 403);
+    if (this.#staffCount()) return json({ error: 'This church uses staff accounts now. Sign in with your email to change your password.' }, 403);
     if (!(await verifyPassword(current, c.password_hash))) return json({ error: 'Your current password is not right.' }, 400);
     if (next.length < 10 || next.length > 200) return json({ error: 'Use at least 10 characters for the new password.' }, 400);
     const nextHash = await hashPassword(next);
     if (!(await this.#session(request))) return json({ error: 'Please sign in as church staff.' }, 401);
+    if (this.#staffCount()) return json({ error: 'This church uses staff accounts now. Sign in with your email to change your password.' }, 403);
     if (this.#church()?.password_hash !== c.password_hash) return json({ error: 'Your password changed during this request. Try again.' }, 400);
     this.#sql.exec('UPDATE church SET password_hash = ? WHERE id = 1', nextHash);
     this.#sql.exec("DELETE FROM sessions WHERE user_id = ''");
