@@ -1,10 +1,12 @@
-import { DEMO_CHURCH, getStaffToken, setStaffToken } from './church.js';
+import { DEMO_CHURCH, clearRejectedStaffToken, getStaffToken } from './church.js';
 
 // API origin; empty means same-origin /api (Vite proxy, nginx).
 export const API_BASE = import.meta.env?.VITE_API_BASE ?? '';
 // The giving API is its own Worker (api-giving/); the page calls it cross-origin.
 const GIVING_API = import.meta.env?.VITE_GIVING_API_BASE ?? 'https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev';
 const KEY_STORAGE = 'pastor-notes-api-key';
+// Matches STAFF_SESSION_INVALID in api/churches.ts.
+export const STAFF_SESSION_INVALID = 'staff_session_invalid';
 
 // The API key is typed in by the user and kept for this browser tab only. It is never built into the bundle.
 export const getApiKey = () => sessionStorage.getItem(KEY_STORAGE) ?? '';
@@ -21,8 +23,24 @@ export const apiUrl = (path, slug = church) => API_BASE + (slug === DEMO_CHURCH 
 let capabilities;
 // Whether the church API serves more than the demo church yet (it is deployed separately from the site).
 export function churchCapabilities() {
-  capabilities ||= fetch(API_BASE + '/api/health').then(r => r.json()).then(h => ({ churches: !!h.churches })).catch(() => ({ churches: false }));
+  // A failed check means "unavailable", not "demo church only": don't remember it, so the next call asks again.
+  capabilities ||= fetch(API_BASE + '/api/health')
+    .then(r => { if (!r.ok) throw new Error('health ' + r.status); return r.json(); })
+    .then(h => ({ churches: !!h.churches }), () => { capabilities = null; return { churches: false, unavailable: true }; });
   return capabilities;
+}
+
+/** Report whether a service has church accounts once it is known, checking again every 5s while it is
+ *  unreachable (rather than reporting "not yet"). Returns a cleanup for useEffect. */
+export function whenCapabilitiesKnown(check, onKnown) {
+  let retry, live = true;
+  const run = () => check().then(c => {
+    if (!live) return;
+    if (c.unavailable) retry = setTimeout(run, 5000);
+    else onKnown(c.churches);
+  });
+  run();
+  return () => { live = false; clearTimeout(retry); };
 }
 
 /** Headers for a church API call: the Sermon Notes key and, once the API supports it, the staff session. */
@@ -36,9 +54,12 @@ export async function apiHeaders(slug = church, extra = {}) {
 
 export async function api(path, options = {}) {
   const slug = church;
-  if (slug !== DEMO_CHURCH && !(await churchCapabilities()).churches) {
-    const error = new Error('This part of the site opens once the updated church service is deployed.');
-    error.status = 'not-ready';
+  const capabilities = slug === DEMO_CHURCH ? null : await churchCapabilities();
+  if (capabilities && !capabilities.churches) {
+    const error = new Error(capabilities.unavailable
+      ? 'The church service is unavailable right now. Please try again.'
+      : 'This part of the site opens once the updated church service is deployed.');
+    error.status = capabilities.unavailable ? 503 : 'not-ready';
     throw error;
   }
   const headers = await apiHeaders(slug, { 'Content-Type': 'application/json', ...options.headers });
@@ -47,7 +68,9 @@ export async function api(path, options = {}) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      if (body.detail === 'Please sign in as church staff.' && sentToken && getStaffToken(slug) === sentToken) setStaffToken(slug, '');
+      // Only the API's explicit "this session was rejected" signal drops the token: a 401 for a missing
+      // API key (Sermon Notes, the AI model setting) must not sign valid staff out.
+      if (body.code === STAFF_SESSION_INVALID) clearRejectedStaffToken(slug, sentToken);
       const error = new Error(typeof body.detail === 'string' ? body.detail : 'Please sign in as church staff.');
       error.status = 401;
       throw error;

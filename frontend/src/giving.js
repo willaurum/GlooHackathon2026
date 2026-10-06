@@ -1,5 +1,5 @@
 import { gapi } from './api.js';
-import { DEMO_CHURCH, getStaffToken, setStaffToken } from './church.js';
+import { DEMO_CHURCH, clearRejectedStaffToken, getStaffToken, noteStaffSignOut, setStaffToken } from './church.js';
 
 // The built-in demo church. Its page also works against an older giving API
 // that only has the single-church endpoints (/api/config, /api/checkout).
@@ -13,7 +13,7 @@ export async function staffApi(slug, path, options = {}) {
   try {
     return await churchApi(slug, '/admin' + path, { ...options, headers: { ...(options.headers || {}), Authorization: 'Bearer ' + token } });
   } catch (err) {
-    if (err.status === 401 && getStaffToken(slug) === token) setStaffToken(slug, '');
+    if (err.status === 401) clearRejectedStaffToken(slug, token);
     throw err;
   }
 }
@@ -32,18 +32,28 @@ export async function verifyStaffSession(slug) {
 // Revoke the server session before clearing this tab. Keep it on network failure so staff can retry.
 export async function signOutStaff(slug) {
   const token = getStaffToken(slug);
+  const settled = noteStaffSignOut(slug);
   try {
-    await staffApi(slug, '/logout', { method: 'POST' });
-  } catch (err) {
-    if (err.status !== 401) throw err;
-  }
-  if (getStaffToken(slug) === token) setStaffToken(slug, '');
+    try {
+      await staffApi(slug, '/logout', { method: 'POST' });
+    } catch (err) {
+      if (err.status !== 401) throw err;
+    }
+    if (getStaffToken(slug) === token) setStaffToken(slug, '');
+  } finally { settled(); }
+}
+
+/** Revoke a session this tab is not keeping (a password change that finished after sign-out). Best effort. */
+export async function revokeStaffToken(slug, token) {
+  try { await churchApi(slug, '/admin/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }); }
+  catch { /* it still expires on its own */ }
 }
 
 let capabilities;
 // Whether the giving API has church accounts yet (it is deployed separately from the site).
 export function givingCapabilities() {
-  capabilities ||= gapi('/api/health').then(h => ({ churches: !!h.churches })).catch(() => ({ churches: false }));
+  // A failed check means "unavailable", not "no church accounts": don't remember it, so the next call asks again.
+  capabilities ||= gapi('/api/health').then(h => ({ churches: !!h.churches }), () => { capabilities = null; return { churches: false, unavailable: true }; });
   return capabilities;
 }
 

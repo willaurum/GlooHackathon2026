@@ -21,12 +21,16 @@ export type Church = { slug: string; name: string; city: string; demo: boolean }
 
 export const validSlug = (slug: string) => SLUG_RE.test(slug);
 
-/** The church slug and the plain /api/... path, or null when the slug is malformed. */
+/** The church slug and the plain /api/... path, or null when the slug or path is malformed. */
 export function churchPath(pathname: string): { slug: string; path: string } | null {
+	// Access is decided on the path as written here, so it must be the path the container will run. The container
+	// decodes percent-escapes (/api/ai/%6dodel runs as /api/ai/model, /api/int%65rnal/... as internal) and redirects
+	// a trailing slash (/api/visits/ to /api/visits). No API path needs an escape, a trailing slash or an empty segment.
+	if (pathname.includes('%')) return null;
 	const m = /^\/api\/churches\/([^/]+)(\/.*)?$/.exec(pathname);
-	if (!m) return { slug: DEMO_SLUG, path: pathname };
-	if (!validSlug(m[1])) return null;
-	return { slug: m[1], path: '/api' + (m[2] && m[2] !== '/' ? m[2] : '/church') };
+	const target = !m ? { slug: DEMO_SLUG, path: pathname }
+		: validSlug(m[1]) ? { slug: m[1], path: '/api' + (m[2] && m[2] !== '/' ? m[2] : '/church') } : null;
+	return target && !/\/\/|\/$/.test(target.path) ? target : null;
 }
 
 // Small per-isolate caches so a page load does not ask the registry on every call.
@@ -87,13 +91,18 @@ export async function isStaff(request: Request, env: AppEnv, slug: string): Prom
 	return true;
 }
 
+/** On a 401, tells the browser its stored staff session was rejected and should be dropped. */
+export const STAFF_SESSION_INVALID = 'staff_session_invalid';
+
+/** Whether the caller presented a staff session at all, valid or not. */
+export const sentStaffToken = (request: Request) => /^Bearer /.test(request.headers.get('Authorization') ?? '');
+
 /** Staff-only endpoints deny access during an outage but preserve the caller's session. */
 export async function requireStaff(request: Request, env: AppEnv, slug: string): Promise<Response | null> {
 	const result = await isStaff(request, env, slug);
 	if (result === true) return null;
-	return Response.json({ detail: result === 'unavailable'
-		? 'The staff sign-in service is unavailable right now. Please try again.'
-		: 'Please sign in as church staff.' }, { status: result === 'unavailable' ? 503 : 401 });
+	if (result === 'unavailable') return Response.json({ detail: 'The staff sign-in service is unavailable right now. Please try again.' }, { status: 503 });
+	return Response.json({ detail: 'Please sign in as church staff.', ...(sentStaffToken(request) && { code: STAFF_SESSION_INVALID }) }, { status: 401 });
 }
 
 type Route = [string, RegExp];
@@ -111,15 +120,19 @@ const PUBLIC_ROUTES: Route[] = [
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
 ];
 
+// Staff-only ids match any segment, not just digits: the container also accepts forms like +1 or 01 for 1,
+// so a digits-only pattern would let those fall through to a weaker rule. A bad id is the container's 404.
+const ID = '[^/]+';
+
 // Staff work requires a church session, including on the demo church.
 const STAFF_WORK_ROUTES: Route[] = [
 	['GET', /^\/api\/(connections|requests|visits)$/],
-	['POST', /^\/api\/visits\/\d+\/(claim|met)$/],
+	['POST', new RegExp(`^/api/visits/${ID}/(claim|met)$`)],
 	['POST', /^\/api\/events$/],
-	['POST', /^\/api\/events\/\d+\/summarize$/],
+	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],
 	['POST', /^\/api\/events\/summarize-all$/],
-	['DELETE', /^\/api\/(connections|requests)\/\d+$/],
-	['PATCH', /^\/api\/requests\/\d+$/],
+	['DELETE', new RegExp(`^/api/(connections|requests)/${ID}$`)],
+	['PATCH', new RegExp(`^/api/requests/${ID}$`)],
 ];
 
 // Settings shared by every church (the AI model) require the operator API key.
@@ -130,7 +143,7 @@ const OPERATOR_ROUTES: Route[] = [['POST', /^\/api\/(ai|ollama)\/model$/]];
 const STAFF_ROUTES: Route[] = [
 	['GET', /^\/api\/church\/content$/],
 	['PUT', /^\/api\/church\/content$/],
-	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
+	['POST', new RegExp(`^/api/regions/${ID}/prayer-angles$`)],
 	// Blog routes match Ben's PR #52; drafting and approval workflows must filter drafts separately.
 	['POST', /^\/api\/blog(?:\/.*)?$/],
 	['PUT', /^\/api\/blog(?:\/.*)?$/],

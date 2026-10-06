@@ -148,8 +148,8 @@ The first request for a church creates its tables. Only the demo church is seede
 
 | Routes | Demo church | Any other church |
 |---|---|---|
-| Info, church, ministries, events, matches, chat, guest sign-up and "I am here", prayer map, verse | public | public |
-| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | that church staff | that church staff |
+| Info, church, ministries, events, matches, chat, guest sign-up and "I am here", viewing the prayer map, verse | public | public |
+| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries; generating prayer-map prompts (`POST /api/regions/<id>/prayer-angles`) | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
 | Sermon Notes and the chat log | `NOTES_API_KEY` or that church staff | `NOTES_API_KEY` or that church staff |
 | The shared AI model setting (`POST /api/ai/model`) | `NOTES_API_KEY` | `NOTES_API_KEY` |
@@ -243,7 +243,7 @@ Workers secrets cannot be read back once set, so Jaron keeps a copy of each key 
 - **Seeing what is set:** `npx wrangler secret list --name <worker>` shows the names (never the values).
 - **Replacing a key:** `openssl rand -base64 32 | tee ~/.secrets/<file> | npx wrangler secret put <NAME> --name <worker>`. Replacing `STRIPE_KEY_ENCRYPTION_KEY` means every church must paste its Stripe key again, so only do it if it leaked.
 
-The Serve, Guests, Calendar, Prayer map, verse and chat routes are public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key or that church staff session; screens with people and their contact details are staff only on every church except the demo church (see [Who may call what](#who-may-call-what)). Churches add no new secrets: the church API reaches the giving Worker through the `GIVING` service binding.
+Browsing Serve, Guests, Calendar, the Prayer map, the verse and chat is public, like the rest of a church website. Sermon Notes, uploads, the chat log and admin routes need a key or that church staff session; screens with people and their contact details, and generating AI summaries or prayer-map prompts, are staff only on every church, the demo church included (see [Who may call what](#who-may-call-what)). Churches add no new secrets: the church API reaches the giving Worker through the `GIVING` service binding.
 
 ## First-time guests
 

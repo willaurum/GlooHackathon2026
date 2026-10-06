@@ -2,7 +2,7 @@
 // (Node 22.18+ loads the TypeScript directly.)
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, onBaseDomain } from '../churches.ts';
+import { STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain } from '../churches.ts';
 
 // A stand-in for the giving Worker: two churches, one staff token each.
 const TOKENS = { ['a'.repeat(32)]: 'hope-chapel', ['b'.repeat(32)]: 'other-church' };
@@ -43,6 +43,32 @@ test('a bare /api path is the demo church; a prefix names the church', () => {
   assert.deepEqual(churchPath('/api/churches/hope-chapel'), { slug: 'hope-chapel', path: '/api/church' });
   assert.equal(churchPath('/api/churches/..%2Fmain/info'), null);
   assert.equal(churchPath('/api/churches/Bad_Slug/info'), null);
+});
+
+test('percent-encoded paths are refused, so a route cannot be checked as one thing and run as another', () => {
+  // The container decodes these to /api/ai/model, /api/visits, /api/church/content and /api/internal/...
+  for (const p of ['/api/ai/%6dodel', '/api/churches/hope-chapel/ai/%6Dodel', '/api/vi%73its', '/api/church/c%6fntent', '/api/int%65rnal/x', '/api/notes%2F1'])
+    assert.equal(churchPath(p), null, p);
+  assert.equal(access('POST', churchPath('/api/ai/model').path, false), 'key');
+});
+
+test('other spellings of an id stay staff only (the container reads +1, 01 and 1_0 as numbers)', () => {
+  for (const id of ['+1', '01', '1_0', ' 1', '1.0', 'abc']) {
+    for (const [m, p] of [['PATCH', `/api/requests/${id}`], ['DELETE', `/api/requests/${id}`], ['DELETE', `/api/connections/${id}`],
+      ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`], ['POST', `/api/regions/${id}/prayer-angles`]])
+      for (const demo of [true, false]) assert.equal(access(m, p, demo), 'staff', `${m} ${p}`);
+  }
+  // A guest's own visit token and "I'm here" stay public.
+  assert.equal(access('POST', '/api/visits/abcDEF_123/arrive', false), 'public');
+});
+
+test('trailing and doubled slashes are refused, so /api/visits/ cannot be read as an unknown route', () => {
+  // The container redirects these to the staff-only /api/visits, /api/requests and /api/church/content.
+  for (const p of ['/api/visits/', '/api/visits//', '/api/churches/hope-chapel/requests/', '/api/church/content/', '/api//visits', '/api/churches/hope-chapel//visits', '/api/'])
+    assert.equal(churchPath(p), null, p);
+  // A church's own address still works, with or without the slash.
+  assert.deepEqual(churchPath('/api/churches/hope-chapel/'), { slug: 'hope-chapel', path: '/api/church' });
+  assert.deepEqual(churchPath('/api/churches/hope-chapel'), { slug: 'hope-chapel', path: '/api/church' });
 });
 
 test('the registry decides which churches exist', async () => {
@@ -159,4 +185,19 @@ test('staff endpoints return 503 on service failure and 401 only for rejected cr
   const wrongChurch = await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'other-church' }) } }, 'hope-chapel');
   assert.equal(wrongChurch.status, 401);
   assert.equal(await requireStaff(request, { GIVING: { fetch: async () => Response.json({ slug: 'hope-chapel' }) } }, 'hope-chapel'), null);
+});
+
+test('a rejected staff session is flagged so the browser drops it; no session sent, no flag', async () => {
+  const rejected = { GIVING: { fetch: async () => Response.json({}, { status: 401 }) } };
+  const withToken = await requireStaff(asStaff('s'.repeat(32)), rejected, 'hope-chapel');
+  assert.equal(withToken.status, 401);
+  assert.equal((await withToken.json()).code, STAFF_SESSION_INVALID);
+  const without = await requireStaff(new Request('https://api.test'), rejected, 'hope-chapel');
+  assert.equal(without.status, 401);
+  assert.equal((await without.json()).code, undefined);
+  // An outage is never reported as a rejected session.
+  const outage = await requireStaff(asStaff('s'.repeat(32)), {}, 'hope-chapel');
+  assert.equal((await outage.json()).code, undefined);
+  assert.equal(sentStaffToken(asStaff('short')), true);
+  assert.equal(sentStaffToken(new Request('https://api.test', { headers: { 'X-API-Key': 'k' } })), false);
 });
