@@ -3,7 +3,7 @@ import { DEMO_SLUG, churchHeaders, type Church } from './churches';
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
 type Secrets = {
 	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
-	GLOO_API_KEY?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string;
+	GLOO_API_KEY?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
 	// Optional: the team AI bridge (scripts/team-ai-bridge), and which provider the chat tries first.
 	TEAM_AI_URL?: string; TEAM_AI_KEY?: string; TEAM_AI_MODEL?: string; AI_PROVIDER?: string;
 	YOUVERSION_APP_KEY?: string; YOUVERSION_BIBLE_ID?: string;

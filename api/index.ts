@@ -48,6 +48,8 @@ export class ChurchDB extends DurableObject<AppEnv> {
 const YOUTUBE_HOSTS = ['youtube.com', '*.youtube.com', 'youtu.be', '*.googlevideo.com', '*.ytimg.com', '*.googleapis.com'];
 // The website chat (backend/app/chat.py) calls these AI providers when a key is set.
 const AI_PROVIDER_HOSTS = ['platform.ai.gloo.com', 'api.openai.com', 'api.anthropic.com'];
+// POST /api/news/refresh pulls Prayer Map headlines from NewsData.io when NEWSDATA_API_KEY is set.
+const NEWS_HOSTS = ['newsdata.io'];
 
 /** The FastAPI backend (backend/Dockerfile). */
 export class ChurchAPI extends Container<AppEnv> {
@@ -57,7 +59,7 @@ export class ChurchAPI extends Container<AppEnv> {
 	// Outbound HTTPS goes through the Worker; start.sh makes the container trust its CA.
 	interceptHttps = true;
 	// allowedHosts gates everything, including outboundByHost, so the bridge hosts must be listed.
-	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS];
+	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS, ...NEWS_HOSTS];
 
 	// The container and the Worker's /ask share each church's database.
 	// Assigned (not declared as a class field) so the library's static setter registers it.
@@ -87,6 +89,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			GLOO_API_KEY: env.GLOO_API_KEY ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
+			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
+			NEWSDATA_API_KEY: env.NEWSDATA_API_KEY ?? '',
 			...teamAiEnvVars(env),
 		};
 	}
