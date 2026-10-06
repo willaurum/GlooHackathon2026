@@ -14,11 +14,12 @@ import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
 import Calendar from './Calendar.jsx';
+import Blog from './Blog.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -44,7 +45,8 @@ function readLocation() {
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
-  let route = where.route === 'give/start' ? 'start' : where.route;
+  // The blog moved under About; keep its first link (#/blog) working.
+  let route = where.route === 'give/start' ? 'start' : where.route === 'blog' ? 'about/blog' : where.route;
   if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
@@ -188,6 +190,10 @@ export default function App() {
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
     {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
+    {route === 'about/blog' && <div className="page">
+      <PageHeader eyebrow="Church Blog" title="Reflections & stories." text="Pastoral teaching, ministry updates, and stories from our church family." />
+      <Blog />
+    </div>}
     {section === 'notes' && <div className="page">
       <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
       <PastorNotes route={route} go={go} />
