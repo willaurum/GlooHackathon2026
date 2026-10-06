@@ -40,6 +40,12 @@ export async function signOutStaff(slug) {
   if (getStaffToken(slug) === token) setStaffToken(slug, '');
 }
 
+/** Revoke a session this tab is not keeping (a password change that finished after sign-out). Best effort. */
+export async function revokeStaffToken(slug, token) {
+  try { await churchApi(slug, '/admin/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }); }
+  catch { /* it still expires on its own */ }
+}
+
 let capabilities;
 // Whether the giving API has church accounts yet (it is deployed separately from the site).
 export function givingCapabilities() {

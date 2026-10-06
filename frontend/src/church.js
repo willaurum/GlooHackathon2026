@@ -92,15 +92,17 @@ export function clearRejectedStaffToken(slug, token) {
   if (token && !rotations.get(slug) && getStaffToken(slug) === token) setStaffToken(slug, '');
 }
 
-/** Run a request that returns a replacement token ({ token }) and store it. */
+/** Run a request that returns a replacement token ({ token }) and store it. `installed` is false when staff
+ *  signed out (or in again) while it ran: the replacement then belongs to nobody and the caller should revoke it. */
 export async function rotateStaffToken(slug, request) {
   const old = getStaffToken(slug);
   let rejected = false;
   rotations.set(slug, (rotations.get(slug) || 0) + 1);
   try {
     const res = await request();
+    if (getStaffToken(slug) !== old) return { ...res, installed: false };
     setStaffToken(slug, res.token, { verified: true });
-    return res;
+    return { ...res, installed: true };
   } catch (err) {
     rejected = err.status === 401;
     throw err;

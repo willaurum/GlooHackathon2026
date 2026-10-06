@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { STAFF_SESSION_INVALID, api, setApiChurch } from './api.js';
+import { STAFF_SESSION_INVALID, api, setApiChurch, whenCapabilitiesKnown } from './api.js';
 import { getStaffToken, getVerifiedStaffToken, rotateStaffToken, setStaffToken } from './church.js';
 import { givingCapabilities, signOutStaff, staffApi, verifyStaffSession } from './giving.js';
 
@@ -126,6 +126,29 @@ test('giving service down at startup: reported as unavailable, then rechecked on
     globalThis.fetch = async () => Response.json({ churches: true });
     assert.deepEqual(await givingCapabilities(), { churches: true });
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('signing out while a password change is in flight stays signed out', async () => {
+  setStaffToken('hope-chapel', 'a'.repeat(32), { verified: true });
+  let finishRotation;
+  const rotation = rotateStaffToken('hope-chapel', () => new Promise(resolve => { finishRotation = resolve; }));
+  setStaffToken('hope-chapel', ''); // Sign out clicked before the change answered.
+  finishRotation({ token: 'b'.repeat(32) });
+  const res = await rotation;
+  assert.equal(res.installed, false); // the caller revokes res.token
+  assert.equal(getStaffToken('hope-chapel'), '');
+  storage.clear();
+});
+
+test('whenCapabilitiesKnown keeps checking while a service is unreachable, then reports it', async () => {
+  const answers = [{ churches: false, unavailable: true }, { churches: true }];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = fn => { fn(); return 0; }; // skip the 5s wait
+  try {
+    const known = await new Promise(resolve => whenCapabilitiesKnown(async () => answers.shift(), resolve));
+    assert.equal(known, true);
+    assert.equal(answers.length, 0);
+  } finally { globalThis.setTimeout = originalSetTimeout; }
 });
 
 test('old giving services validate via the overview; outage keeps the token', async () => {

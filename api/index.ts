@@ -161,7 +161,8 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 	const container = getContainer(env.CHURCH_API, 'main');
 	const plain = new URL(url);
 	plain.pathname = path;
-	const forwarded = new Request(plain, { method: request.method, headers: churchHeaders(request.headers, church), body: request.body });
+	// A redirect from the container goes back to the browser, so its next request is authorized again here.
+	const forwarded = new Request(plain, { method: request.method, headers: churchHeaders(request.headers, church), body: request.body, redirect: 'manual' });
 	if (!church.demo && request.method === 'POST' && STARTS_NOTE.test(path)) {
 		await churchDb(env).rememberNotesChurch(church.slug).catch(() => {});
 	}

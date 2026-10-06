@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, churchCapabilities, gapi, setApiChurch } from './api.js';
+import { api, churchCapabilities, gapi, setApiChurch, whenCapabilitiesKnown } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
 import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
@@ -87,7 +87,7 @@ export default function App() {
       window.removeEventListener('belong-staff', staffChanged);
     };
   }, []);
-  useEffect(() => { churchCapabilities().then(c => setApiReady(c.churches)); }, []);
+  useEffect(() => whenCapabilitiesKnown(churchCapabilities, setApiReady), []);
   // The name and city come from the church registry (the giving service), then the church API.
   useEffect(() => {
     let live = true;

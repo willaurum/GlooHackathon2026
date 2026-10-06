@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { gapi } from './api.js';
+import { gapi, whenCapabilitiesKnown } from './api.js';
 import { setStaffToken } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { friendly, givingCapabilities } from './giving.js';
@@ -18,7 +18,7 @@ export default function ChurchStart() {
   const { choose } = useChurch();
   const [f, setF] = useState({ name: '', city: '', currency: 'usd', password: '', confirm: '' }),
     [busy, setBusy] = useState(false), [err, setErr] = useState(''), [ready, setReady] = useState(null);
-  useEffect(() => { givingCapabilities().then(c => setReady(c.churches)); }, []);
+  useEffect(() => whenCapabilitiesKnown(givingCapabilities, setReady), []);
   const set = k => e => setF(v => ({ ...v, [k]: e.target.value }));
 
   async function submit(e) {

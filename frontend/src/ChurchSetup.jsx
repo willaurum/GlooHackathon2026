@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from './api.js';
+import { api, whenCapabilitiesKnown } from './api.js';
 import { setStaffToken } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { churchApi, friendly, givingCapabilities, signOutStaff, staffApi } from './giving.js';
@@ -36,7 +36,7 @@ export default function ChurchSetup() {
 export function StaffSignIn() {
   const church = useChurch();
   const [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [ready, setReady] = useState(null);
-  useEffect(() => { givingCapabilities().then(c => setReady(c.churches)); }, []);
+  useEffect(() => whenCapabilitiesKnown(givingCapabilities, setReady), []);
   async function submit(e) {
     e.preventDefault();
     setErr(''); setBusy(true);

@@ -52,6 +52,15 @@ test('percent-encoded paths are refused, so a route cannot be checked as one thi
   assert.equal(access('POST', churchPath('/api/ai/model').path, false), 'key');
 });
 
+test('trailing and doubled slashes are refused, so /api/visits/ cannot be read as an unknown route', () => {
+  // The container redirects these to the staff-only /api/visits, /api/requests and /api/church/content.
+  for (const p of ['/api/visits/', '/api/visits//', '/api/churches/hope-chapel/requests/', '/api/church/content/', '/api//visits', '/api/churches/hope-chapel//visits', '/api/'])
+    assert.equal(churchPath(p), null, p);
+  // A church's own address still works, with or without the slash.
+  assert.deepEqual(churchPath('/api/churches/hope-chapel/'), { slug: 'hope-chapel', path: '/api/church' });
+  assert.deepEqual(churchPath('/api/churches/hope-chapel'), { slug: 'hope-chapel', path: '/api/church' });
+});
+
 test('the registry decides which churches exist', async () => {
   assert.equal((await findChurch(env, 'grace-community')).demo, true);
   assert.deepEqual(await findChurch(env, 'hope-chapel'), { slug: 'hope-chapel', name: 'Hope Chapel', city: 'Austin', demo: false });

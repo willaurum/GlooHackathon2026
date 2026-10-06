@@ -21,15 +21,16 @@ export type Church = { slug: string; name: string; city: string; demo: boolean }
 
 export const validSlug = (slug: string) => SLUG_RE.test(slug);
 
-/** The church slug and the plain /api/... path, or null when the slug is malformed. */
+/** The church slug and the plain /api/... path, or null when the slug or path is malformed. */
 export function churchPath(pathname: string): { slug: string; path: string } | null {
-	// The container decodes percent-escapes before routing, so /api/ai/%6dodel would be checked here as one
-	// route and run there as /api/ai/model (likewise /api/int%65rnal/...). No API path needs an escape.
+	// Access is decided on the path as written here, so it must be the path the container will run. The container
+	// decodes percent-escapes (/api/ai/%6dodel runs as /api/ai/model, /api/int%65rnal/... as internal) and redirects
+	// a trailing slash (/api/visits/ to /api/visits). No API path needs an escape, a trailing slash or an empty segment.
 	if (pathname.includes('%')) return null;
 	const m = /^\/api\/churches\/([^/]+)(\/.*)?$/.exec(pathname);
-	if (!m) return { slug: DEMO_SLUG, path: pathname };
-	if (!validSlug(m[1])) return null;
-	return { slug: m[1], path: '/api' + (m[2] && m[2] !== '/' ? m[2] : '/church') };
+	const target = !m ? { slug: DEMO_SLUG, path: pathname }
+		: validSlug(m[1]) ? { slug: m[1], path: '/api' + (m[2] && m[2] !== '/' ? m[2] : '/church') } : null;
+	return target && !/\/\/|\/$/.test(target.path) ? target : null;
 }
 
 // Small per-isolate caches so a page load does not ask the registry on every call.

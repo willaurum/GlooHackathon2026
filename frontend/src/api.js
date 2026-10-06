@@ -24,8 +24,23 @@ let capabilities;
 // Whether the church API serves more than the demo church yet (it is deployed separately from the site).
 export function churchCapabilities() {
   // A failed check means "unavailable", not "demo church only": don't remember it, so the next call asks again.
-  capabilities ||= fetch(API_BASE + '/api/health').then(r => r.json()).then(h => ({ churches: !!h.churches }), () => { capabilities = null; return { churches: false, unavailable: true }; });
+  capabilities ||= fetch(API_BASE + '/api/health')
+    .then(r => { if (!r.ok) throw new Error('health ' + r.status); return r.json(); })
+    .then(h => ({ churches: !!h.churches }), () => { capabilities = null; return { churches: false, unavailable: true }; });
   return capabilities;
+}
+
+/** Report whether a service has church accounts once it is known, checking again every 5s while it is
+ *  unreachable (rather than reporting "not yet"). Returns a cleanup for useEffect. */
+export function whenCapabilitiesKnown(check, onKnown) {
+  let retry, live = true;
+  const run = () => check().then(c => {
+    if (!live) return;
+    if (c.unavailable) retry = setTimeout(run, 5000);
+    else onKnown(c.churches);
+  });
+  run();
+  return () => { live = false; clearTimeout(retry); };
 }
 
 /** Headers for a church API call: the Sermon Notes key and, once the API supports it, the staff session. */
