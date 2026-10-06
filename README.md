@@ -287,13 +287,37 @@ The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) ta
 
 #### HPC Ollama for local development
 
-With the Liberty student VPN connected, keep an SSH tunnel open (replace `YOUR_USERNAME`):
+Everyone runs this on their own machine: the Liberty student VPN, the SSH tunnel, and docker compose. Nothing is shared between teammates and no fixed addresses are involved.
+
+With the VPN connected, keep an SSH tunnel open (replace `YOUR_USERNAME`):
 
 ```powershell
-ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:11434:arrietty.hpc.lan:11434 YOUR_USERNAME@totoro.university.liberty.edu
+ssh -N -o ExitOnForwardFailure=yes -L 0.0.0.0:11434:arrietty.hpc.lan:11434 YOUR_USERNAME@totoro.university.liberty.edu
 ```
 
-Then set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434` (or `http://127.0.0.1:11434` outside Docker) for the backend. No API key is needed, and the chat adds `/v1` if it is missing. Both Find a place and the chat use it. This tunnel only works locally, not from Cloudflare; for the deployed site, see the team AI bridge below.
+Then put this in `.env` beside `docker-compose.yml`:
+
+```
+AI_PROVIDER=ollama
+OLLAMA_MODEL=gpt-oss:20b
+```
+
+Leave `OLLAMA_BASE_URL` unset. Under docker compose it defaults to `http://host.docker.internal:11434/v1`, the tunnel on your own machine, and `AI_BASE_URL` and `AI_MODEL` follow it, so there is nothing else to set. Outside Docker the backend falls back to `http://127.0.0.1:11434`. No API key is needed, and the chat adds `/v1` if it is missing. Both Find a place and the chat use it.
+
+The bind address matters. `-L 0.0.0.0:11434` is what lets the container reach the tunnel; with the older `-L 127.0.0.1:11434` the tunnel accepts only loopback connections, and a container arrives over the Docker bridge instead. On Docker Desktop (macOS and Windows) loopback happens to work, because `host.docker.internal` is proxied through its VM, so `0.0.0.0` is the one spelling that works everywhere.
+
+On Linux, also let the Docker bridges reach the host, or the container's connection is dropped before it arrives. With `ufw` enabled (`DEFAULT_INPUT_POLICY="DROP"` is the Ubuntu default) the symptom is a timeout on `/api/ai/status` while the same URL works from a terminal on the host:
+
+```bash
+sudo ufw allow from 172.17.0.0/16 to any port 11434 proto tcp
+sudo ufw allow from 172.22.0.0/16 to any port 11434 proto tcp
+```
+
+Use the subnets rather than interface names: the compose bridge is named `br-<id>` and is renamed whenever the network is recreated. `docker network inspect <project>_default` prints the subnet in use if it differs.
+
+Check it with `GET /api/ai/status`: `connected: true` and the model list means the tunnel is reachable. `connected: false` with the tunnel running is the firewall or the bind address above. If the tunnel's own far end is down, `curl 127.0.0.1:11434/api/tags` on the host returns nothing at all rather than JSON.
+
+This tunnel only works locally, not from Cloudflare; for the deployed site, see the team AI bridge below.
 
 #### Team AI bridge (deployed site, team only)
 
@@ -313,20 +337,6 @@ Turning it on (once):
 **Switching to Gloo on Oct 7:** `npx wrangler secret put GLOO_API_KEY` in `api/`. Gloo then comes first for the chat, Find a place and calendar summaries, and the bridge stays as a backup whenever someone runs it. To retire the bridge, `npx wrangler secret delete TEAM_AI_KEY` and `TEAM_AI_URL`, then delete the tunnel.
 
 **Policy:** the bridge exposes the club's HPC model behind a key, for the hackathon only. Confirm with Ben before relying on it.
-
-#### Ollama on another machine (Tailscale or LAN)
-
-An Ollama on another machine, such as a desktop on the tailnet, needs only the provider and the endpoint:
-
-```
-AI_PROVIDER=ollama
-OLLAMA_BASE_URL=http://100.x.y.z:11434/v1
-OLLAMA_MODEL=qwen3.8:27b
-```
-
-Give the address, not a name: the container resolves through Docker, which does not know Tailscale MagicDNS or `.local`. Nothing else is needed, because `docker-compose.yml` falls `AI_BASE_URL` back to `OLLAMA_BASE_URL` and `AI_MODEL` back to `OLLAMA_MODEL`, and `ai_client` strips the trailing `/v1` for the calendar's native calls. `host.docker.internal` is for an Ollama on the Docker host and will not reach another machine.
-
-Check it with `GET /api/ai/status` (`connected: true`, with the model list) and `GET /api/chat/status` (`providers: ["ollama:<model>"]`). A 27B model answers in roughly 20-25 seconds, so a first calendar summary is slow rather than stuck.
 
 #### Tests
 
