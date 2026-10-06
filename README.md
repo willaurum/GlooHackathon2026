@@ -225,6 +225,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the version (default `3034`, Berean Standard Bible). |
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
 | `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. |
+| `TEAM_AI_URL`, `TEAM_AI_KEY` | `api/` | Optional, team only until the Gloo key arrives: the [team AI bridge](#team-ai-bridge-deployed-site-team-only) to the club's HPC model. Optional `TEAM_AI_MODEL` (default `qwen3.8:27b`). |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
 | `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
@@ -238,6 +239,7 @@ Workers secrets cannot be read back once set, so Jaron keeps a copy of each key 
 | `PLATFORM_ADMIN_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-platform-admin-key.txt` |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-stripe-key-encryption-key.txt` |
 | `YOUVERSION_APP_KEY` | `gloo-hackathon2026-api-pastor-notes` | `~/.secrets/youversion-app-key.txt` (app `belong-Gloo-Hackathon2026` on platform.youversion.com) |
+| `TEAM_AI_KEY` | `gloo-hackathon2026-api-pastor-notes` (once the bridge is turned on) | `~/.secrets/gloo-team-ai-key.txt` |
 
 - **Opening the platform list:** run `cat ~/.secrets/gloo-platform-admin-key.txt` on the dev server, open `<site>/#/platform` and paste the key. Share it with the team in person or through a password manager, never in chat or in a commit.
 - **Seeing what is set:** `npx wrangler secret list --name <worker>` shows the names (never the values).
@@ -291,7 +293,26 @@ With the Liberty student VPN connected, keep an SSH tunnel open (replace `YOUR_U
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:11434:arrietty.hpc.lan:11434 YOUR_USERNAME@totoro.university.liberty.edu
 ```
 
-Then set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434` (or `http://127.0.0.1:11434` outside Docker) for the backend. No API key is needed, and the chat adds `/v1` if it is missing. Both Find a place and the chat use it. This tunnel only works locally, not from Cloudflare.
+Then set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434` (or `http://127.0.0.1:11434` outside Docker) for the backend. No API key is needed, and the chat adds `/v1` if it is missing. Both Find a place and the chat use it. This tunnel only works locally, not from Cloudflare; for the deployed site, see the team AI bridge below.
+
+#### Team AI bridge (deployed site, team only)
+
+A stopgap until the Gloo AI key arrives on Oct 7. A teammate on the Liberty VPN runs `scripts/team-ai-bridge/` (one command; see [its README](scripts/team-ai-bridge/README.md)). It puts the HPC model behind a gatekeeper that requires the team key and connects that to a named Cloudflare Tunnel with a fixed hostname, `https://team-ai.jaronwilson.dev`. The container calls `http://team-ai/v1`; the Worker's `team-ai` outbound handler (`api/teamai.ts`) adds the key and forwards only the model list and chat completions. So the container never sees the key, nobody edits secrets when a different teammate runs the bridge, and several teammates can run it at once.
+
+- **Wiring:** with `TEAM_AI_URL` and `TEAM_AI_KEY` set, the container gets `AI_FALLBACK=ollama` and `OLLAMA_MODEL=qwen3.8:27b` (or `TEAM_AI_MODEL`). The chat and Find a place try `AI_PROVIDER` first (Gloo, skipped while it has no key), then the bridge. Calendar summaries use the first configured provider.
+- **Timeouts:** one model call waits up to 90 seconds (`OLLAMA_TIMEOUT`, capped at 95 because Cloudflare ends a proxied request after about 100).
+- **When the bridge is down:** the chat answers with the demo replies (`"offline": true` in the response), Find a place returns its "try again, or browse Ministries" message, and the calendar shows "AI Endpoint: Offline" (its summarize routes return 503). Nothing errors.
+- **Status:** `GET /api/ai/status` reports `provider`, `connected` (reachable right now, cached for 15 seconds), `default_model`, `team_bridge`, and the chat's provider chain.
+
+Turning it on (once):
+
+1. A Cloudflare Tunnel named `belong-team-ai` with the public hostname `team-ai.jaronwilson.dev` pointing at `http://127.0.0.1:8787`.
+2. In `api/`: `npx wrangler secret put TEAM_AI_URL` (value `https://team-ai.jaronwilson.dev`) and `cat ~/.secrets/gloo-team-ai-key.txt | npx wrangler secret put TEAM_AI_KEY`, then deploy `api/`.
+3. Send teammates the team key and the tunnel token privately (password manager or in person).
+
+**Switching to Gloo on Oct 7:** `npx wrangler secret put GLOO_API_KEY` in `api/`. Gloo then comes first for the chat, Find a place and calendar summaries, and the bridge stays as a backup whenever someone runs it. To retire the bridge, `npx wrangler secret delete TEAM_AI_KEY` and `TEAM_AI_URL`, then delete the tunnel.
+
+**Policy:** the bridge exposes the club's HPC model behind a key, for the hackathon only. Confirm with Ben before relying on it.
 
 #### Ollama on another machine (Tailscale or LAN)
 
@@ -310,8 +331,8 @@ Check it with `GET /api/ai/status` (`connected: true`, with the model list) and 
 #### Tests
 
 ```bash
-python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts backend.tests.test_churches
-node --test frontend/src/*.test.js api/test/churches.test.mjs
+python -m unittest backend.tests.test_chat backend.tests.test_eligibility backend.tests.test_recommendations backend.tests.test_shifts backend.tests.test_churches backend.tests.test_team_ai
+node --test frontend/src/*.test.js api/test/churches.test.mjs api/test/teamai.test.mjs
 ```
 
 Run the Python tests from the repo root with the backend requirements installed. They mock the database, so no church DB is needed.
@@ -437,7 +458,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 Church events and services, seeded from `backend/app/events.json`, with a form to add events.
 
 - `GET /api/events`, `GET /api/events/{event_id}`, `POST /api/events`.
-- `POST /api/events/{event_id}/summarize` and `POST /api/events/summarize-all`: optional AI summaries (`GET /api/ai/status` says whether a provider is configured).
+- `POST /api/events/{event_id}/summarize` and `POST /api/events/summarize-all`: optional AI summaries from the first configured provider (the team AI bridge until Gloo is set up). `GET /api/ai/status` says which provider and whether it is reachable; without one the calendar shows "AI Endpoint: Offline" and the summarize routes return 503.
 
 ## Prayer map
 
