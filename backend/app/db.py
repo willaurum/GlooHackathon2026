@@ -11,6 +11,7 @@ a church creates its tables; only the demo church is seeded with the JSON files.
 """
 
 import os
+import hashlib
 import json
 import logging
 import secrets
@@ -32,6 +33,7 @@ _client = httpx.Client(base_url="http://church-db" if _USE_LOCAL_SQLITE else CHU
 _sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+BLOG_SEEDED = "SELECT 1 FROM config WHERE key = 'blog_seeded'"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
 ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
@@ -331,7 +333,7 @@ def _create_tables(seed=True):
     )
     statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
         SELECT 1, 'Walking in Faith: Cultivating Joy in Seasons of Change', ?, 'Pastor Marcus Vance', ?, ?, {NOW}, {NOW}
-        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1)""", (post1_content, post1_cats, post1_bullets)))
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1) AND NOT EXISTS ({BLOG_SEEDED})""", (post1_content, post1_cats, post1_bullets)))
 
     post2_cats = json.dumps(["Local Outreach", "Volunteering", "Compassion Ministry"])
     post2_bullets = json.dumps([
@@ -349,7 +351,10 @@ def _create_tables(seed=True):
     )
     statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
         SELECT 2, 'The Heart of Service: How Everyday Acts Build Lasting Hope', ?, 'Elena Rostova, Outreach Director', ?, ?, {NOW}, {NOW}
-        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2)""", (post2_content, post2_cats, post2_bullets)))
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2) AND NOT EXISTS ({BLOG_SEEDED})""", (post2_content, post2_cats, post2_bullets)))
+    # The sample posts are seeded once. Without this marker every container start (deploys, and waking
+    # after sleepAfter) would bring back a sample post that staff had deleted.
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('blog_seeded', 'true')", ()))
 
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
@@ -358,7 +363,12 @@ def _create_tables(seed=True):
     if not seed:
         return
     if live_news:
-        replace_news(live_news)
+        # Only when the snapshot shipped with this build is new to this church: a container start must not
+        # undo a POST /api/news/refresh, and a deploy with a newer snapshot still takes effect.
+        stamp = hashlib.sha256(json.dumps(live_news, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+        applied = one("SELECT data FROM config WHERE key = 'news_snapshot'")
+        if not applied or _data(applied) != stamp:
+            replace_news(live_news, snapshot=stamp)
     # Backfill shift schedules and requirements into existing ministries without overwriting.
     seeds = {m['id']: m for m in ministries}
     updates = []
@@ -749,11 +759,15 @@ def _live_news():
     return json.loads(live_file.read_text(encoding='utf-8')) if live_file.exists() else []
 
 
-def replace_news(items):
-    """Replace every news row of the current church with `items`, in one transaction."""
+def replace_news(items, snapshot=None):
+    """Replace every news row of the current church with `items`, in one transaction. `snapshot` records
+    which shipped news_live.json this was, so startup does not apply the same snapshot again."""
+    marker = [("INSERT INTO config VALUES ('news_snapshot', ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+               (json.dumps(snapshot),))] if snapshot else []
     run(("DELETE FROM news_events", ()),
         *[("INSERT INTO news_events VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
-           (item['id'], json.dumps(item))) for item in items])
+           (item['id'], json.dumps(item))) for item in items],
+        *marker)
 
 
 def news_for_country(country_code):
