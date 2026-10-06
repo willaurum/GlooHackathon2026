@@ -70,10 +70,15 @@ export function saveChurch(slug) {
 
 // Staff sessions (from the giving service sign-in) last for this browser tab only.
 const staffKey = slug => 'belong-staff:' + slug;
+// Memory only: restored browser tokens must be checked again; fresh server-issued tokens need no second login.
+const verifiedTokens = new Map();
+export const getVerifiedStaffToken = slug => verifiedTokens.get(slug) || '';
 export function getStaffToken(slug) {
   try { return sessionStorage.getItem(staffKey(slug)) ?? ''; } catch { return ''; }
 }
-export function setStaffToken(slug, token) {
+export function setStaffToken(slug, token, { verified = false } = {}) {
+  verifiedTokens.delete(slug);
   try { token ? sessionStorage.setItem(staffKey(slug), token) : sessionStorage.removeItem(staffKey(slug)); } catch { /* private mode */ }
+  if (verified && token && getStaffToken(slug) === token) verifiedTokens.set(slug, token);
   globalThis.dispatchEvent?.(new Event('belong-staff'));
 }

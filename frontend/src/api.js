@@ -1,9 +1,9 @@
-import { DEMO_CHURCH, getStaffToken } from './church.js';
+import { DEMO_CHURCH, getStaffToken, setStaffToken } from './church.js';
 
 // API origin; empty means same-origin /api (Vite proxy, nginx).
-export const API_BASE = import.meta.env.VITE_API_BASE ?? '';
+export const API_BASE = import.meta.env?.VITE_API_BASE ?? '';
 // The giving API is its own Worker (api-giving/); the page calls it cross-origin.
-const GIVING_API = import.meta.env.VITE_GIVING_API_BASE ?? 'https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev';
+const GIVING_API = import.meta.env?.VITE_GIVING_API_BASE ?? 'https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev';
 const KEY_STORAGE = 'pastor-notes-api-key';
 
 // The API key is typed in by the user and kept for this browser tab only. It is never built into the bundle.
@@ -42,11 +42,13 @@ export async function api(path, options = {}) {
     throw error;
   }
   const headers = await apiHeaders(slug, { 'Content-Type': 'application/json', ...options.headers });
+  const sentToken = headers.Authorization?.replace(/^Bearer /, '') || '';
   const response = await fetch(apiUrl(path, slug), { ...options, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      const error = new Error(slug === DEMO_CHURCH && !getStaffToken(slug) ? 'Enter a valid API key on the Sermon Notes page.' : 'Sign in as church staff to see this.');
+      if (body.detail === 'Please sign in as church staff.' && sentToken && getStaffToken(slug) === sentToken) setStaffToken(slug, '');
+      const error = new Error(typeof body.detail === 'string' ? body.detail : 'Please sign in as church staff.');
       error.status = 401;
       throw error;
     }

@@ -17,11 +17,15 @@ export const SECTIONS = [
 
 const sectionOf = route => route.split('/')[0];
 
-// Demo identity shown in the corners of the workspace.
-export const USER = { initials: 'AL', name: 'Alex Lewis', role: 'Church leadership · Demo' };
+// Public visitors have no user account; staff sign in for the current church.
+function identity(staff) {
+  return staff ? { initials: 'ST', name: 'Church staff', role: 'Admin mode' }
+    : { initials: 'V', name: 'Visitor', role: 'Browsing without sign-in' };
+}
 
 export function Avatar() {
-  return <span className="avatar" role="img" aria-label={USER.name}>{USER.initials}</span>;
+  const user = identity(useChurch().staff);
+  return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
 }
 
 export function Brand({ onClick }) {
@@ -29,6 +33,7 @@ export function Brand({ onClick }) {
 }
 
 export function Sidebar({ route, go, onAsk, savedCount }) {
+  const user = identity(useChurch().staff);
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
     <ChurchName />
@@ -53,7 +58,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
     </div>
     <div className="profile">
       <Avatar />
-      <div><strong>{USER.name}</strong><small>{USER.role}</small></div>
+      <div><strong>{user.name}</strong><small>{user.role}</small></div>
     </div>
   </aside>;
 }

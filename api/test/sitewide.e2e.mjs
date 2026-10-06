@@ -84,7 +84,7 @@ check(r.status === 404, 'nor on the demo church');
 r = await call(API, 'GET', B + '/visits', undefined, b.token);
 check(r.status === 200 && r.data.waiting.length === 0, 'church B queue is empty');
 r = await call(API, 'GET', '/api/visits');
-check(r.status === 200, 'the demo church queue stays open (shared demo workspace)');
+check(r.status === 401, 'the demo church queue also requires staff');
 
 console.log('requests, connections, notes');
 r = await call(API, 'GET', A + '/requests');

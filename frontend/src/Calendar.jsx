@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from './api.js';
+import { api, getApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
 
 const CATEGORIES = [
@@ -27,8 +27,9 @@ const CATEGORY_COLORS = {
 
 export default function Calendar({ setError = () => {} }) {
   const church = useChurch();
-  // Adding to the calendar is for staff, except on the shared demo church.
-  const canEdit = church.demo || church.staff;
+  // Calendar writes and summary generation require staff, including on the demo church.
+  const canEdit = church.staff;
+  const canChooseModel = canEdit && !!getApiKey();
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [aiStatus, setAiStatus] = useState(null);
@@ -359,7 +360,7 @@ export default function Calendar({ setError = () => {} }) {
             <span>
               AI Endpoint: {aiStatus?.connected ? 'Connected' : 'Offline'}
             </span>
-            {aiStatus?.connected && aiStatus?.available_models && aiStatus.available_models.length > 0 ? (
+            {canChooseModel && aiStatus?.connected && aiStatus?.available_models && aiStatus.available_models.length > 0 ? (
               <select
                 className="model-select"
                 value={aiStatus.default_model}
@@ -381,7 +382,7 @@ export default function Calendar({ setError = () => {} }) {
             All summaries are generated dynamically via our connected <b>AI endpoint</b>, never pre-written.
           </p>
         </div>
-        <div className="calendar-banner-actions">
+        {canEdit && <div className="calendar-banner-actions">
           <button
             className="secondary summary-btn"
             disabled={summarizingId !== null || loading || !aiStatus?.connected || unsummarizedCount === 0}
@@ -417,7 +418,7 @@ export default function Calendar({ setError = () => {} }) {
           {canEdit && <button className="primary" onClick={() => setShowAddModal(true)}>
             + Add New Event
           </button>}
-        </div>
+        </div>}
       </div>
 
       {/* Main Layout: Split Calendar View & Event Cards */}
@@ -622,14 +623,14 @@ export default function Calendar({ setError = () => {} }) {
                           <span className="sparkle-icon">✧</span>
                           <strong>AI Summary</strong>
                         </div>
-                        <button
+                        {canEdit && <button
                           className="ai-refresh-btn"
                           disabled={isSummarizingThis || !aiStatus?.connected}
                           onClick={() => handleSummarize(event.id)}
                           title={!aiStatus?.connected ? 'AI endpoint offline' : event.ai_summary ? 'Regenerate AI summary' : 'Generate AI summary'}
                         >
                           {isSummarizingThis ? 'Generating…' : event.ai_summary ? '↻ Regenerate' : '✧ Generate AI Summary'}
-                        </button>
+                        </button>}
                       </div>
 
                       <div className="ai-summary-body">
@@ -692,7 +693,7 @@ export default function Calendar({ setError = () => {} }) {
       </div>
 
       {/* Add Event Modal */}
-      {showAddModal && (
+      {canEdit && showAddModal && (
         <div className="modal-backdrop" onClick={() => setShowAddModal(false)}>
           <div className="panel modal-content" onClick={e => e.stopPropagation()}>
             <button className="close" onClick={() => setShowAddModal(false)}>
