@@ -1,8 +1,8 @@
-# GlooHackathon2026: belong.
+# GlooHackathon2026: Tekton
 
 Liberty University's Gloo Hackathon team repository.
 
-belong. is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
@@ -12,7 +12,7 @@ belong. is the base church-site template for a future agentic templatizer. The t
 - **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and staff-managed Stripe setup.
 - **Prayer map**: world regions with news and prayer prompts.
 
-An **Ask Belong** chat assistant is available on every page.
+An **Ask Tekton** chat assistant is available on every page.
 
 ## What is deployed
 
@@ -72,9 +72,9 @@ is not implemented by these permission rules.
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
 | `frontend/src/PastorNotes.jsx`, `verses.js` | Sermon Notes, and the Bible reference parser and passage loader. |
-| `frontend/src/Platform.jsx`, `platformChurches.js` | `#/platform`, the platform team's list of every church (see [The platform list](#the-platform-list-for-the-team-building-belong)). |
+| `frontend/src/Platform.jsx`, `platformChurches.js` | `#/platform`, the platform team's list of every church (see [The platform list](#the-platform-list-for-the-team-building-tekton)). |
 | `frontend/src/Give.jsx`, `GiveChurchBar.jsx`, `GiveStaff.jsx`, `giving.js` | Giving, the giving church bar, the giving staff area, and the giving API client. |
-| `frontend/src/ChatWidget.jsx`, `chatFormat.js`, `chatHistory.js`, `chatNavigation.js` | Ask Belong. |
+| `frontend/src/ChatWidget.jsx`, `chatFormat.js`, `chatHistory.js`, `chatNavigation.js` | Ask Tekton. |
 | `frontend/src/styles.css` | Design tokens (`:root`) and all styles. |
 | `frontend/src/api.js` | API helpers. `VITE_API_BASE` is the church API; `VITE_GIVING_API_BASE` is the giving API. `api()` calls go to the current church. |
 | `frontend/src/data/` | Static data bundled into the site (`countryBorders.json` for the Prayer map). |
@@ -120,9 +120,9 @@ Grace Community is the fictional demo of the base template. Existing church site
 
 Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church name sits at the top of the sidebar (the phone top bar on phones), with **Staff sign in / Church setup** (`#/setup`) under it.
 
-**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-belong) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
+**Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-tekton) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
 
-### The platform list (for the team building belong.)
+### The platform list (for the team building Tekton)
 
 Churches never see each other, but the people building the site need to. `#/platform` is a hidden page (not in the navigation, not linked anywhere) that lists every church in the registry: name, city, the date it joined, its giving mode (demo, Stripe test or Stripe live), its number of funds and mission trips, its gift count and total, and whether giving setup is done (Stripe connected and a trip posted, the same checklist as the staff area). Each church has **Open site** (`#/c/<slug>/`), **Give page** and **Staff sign in** buttons, and a search box filters by name, city or link. Opening a church this way makes it this browser's church, like any church link.
 
@@ -190,7 +190,7 @@ The demo church staff password is the `ADMIN_KEY` var in `api-giving/wrangler.js
 
 ### Church content import (the target for a site importer)
 
-A church is one JSON document, read with `GET /api/church/content` and written with `PUT /api/church/content` (staff only, up to 512 KB). Church setup saves through it, and it is what a future importer (a church gives us its old website, we build its belong. site) should produce. Every section is optional; a section that is sent replaces that whole section, and the rest is left alone. Items without an `id` get one. It is exactly the demo seed files combined, so `church.json` + `{"ministries": ministries.json}` + `{"calendar": events.json}` is a valid import (a test checks this). The schema is in `backend/app/church_content.py`:
+A church is one JSON document, read with `GET /api/church/content` and written with `PUT /api/church/content` (staff only, up to 512 KB). Church setup saves through it, and it is what a future importer (a church gives us its old website, we build its Tekton site) should produce. Every section is optional; a section that is sent replaces that whole section, and the rest is left alone. Items without an `id` get one. It is exactly the demo seed files combined, so `church.json` + `{"ministries": ministries.json}` + `{"calendar": events.json}` is a valid import (a test checks this). The schema is in `backend/app/church_content.py`:
 
 ```jsonc
 {
@@ -303,9 +303,9 @@ Six fictional ministries, each with dated shifts, capacity, and onboarding requi
 
 Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. On the demo church this is a shared demo workspace without login; on every other church, Saved (connections and chat requests) is for signed-in staff.
 
-### Website chat (Ask Belong)
+### Website chat (Ask Tekton)
 
-The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
+The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
 
 - Set `GLOO_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) with `npx wrangler secret put` in `api/`; the Worker passes it into the container. Without a configured provider, the widget uses limited local demo replies for service times, events, groups, ministries, and requests, with a banner saying so. `GLOO_MODEL` defaults to `gloo-anthropic-claude-haiku-4.5`.
 - Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.

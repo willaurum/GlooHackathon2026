@@ -161,9 +161,7 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .nav-children button { display: flex; align-items: center; min-height: 38px; padding: 0 10px; border-radius: 8px; color: var(--muted); font-size: 14px; text-align: left; }
 .nav-children button:hover { color: var(--ink); background: var(--green-50); }
 .nav-children button.active { color: var(--green-800); font-weight: 700; }
-.ask-card { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: var(--r-lg); background: var(--green-50); border: 1px solid var(--green-100); color: var(--green-600); }
-.ask-card strong { color: var(--ink); font-size: 15px; }
-.ask-card p { font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.powered-by { margin-top: auto; padding: 16px 6px 0; font-size: 12px; text-align: left; }
 .profile { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 14px 6px 0; border-top: 1px solid var(--line); }
 .profile strong { display: block; font-size: 14px; color: var(--ink); }
 .profile small { display: block; font-size: 12px; margin-top: 2px; }
@@ -892,6 +890,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 /* ---------- Your church: the church this site is for (no picker; churches do not see each other) ---------- */
 .church-name { margin: 22px 0 16px; }
+/* The church sits at the top of the sidebar in place of the Tekton logo, without a box around it. */
+.sidebar .church-name { margin-top: 0; }
+.sidebar .church-name .church { border: 0; padding: 4px 6px; }
 .church-name .church-staff { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-top: 2px; font-size: 12px; font-weight: 600; }
 .church-name.compact { display: none; margin: 0; }
 .church-link { margin-bottom: 18px; }

@@ -41,14 +41,13 @@ export function Avatar() {
 }
 
 export function Brand({ onClick }) {
-  return <a className="brand" href="#/" onClick={e => { e.preventDefault(); onClick(); }}><b>b</b>belong<span>.</span></a>;
+  return <a className="brand" href="#/" onClick={e => { e.preventDefault(); onClick(); }}><b>t</b>tekton<span>.</span></a>;
 }
 
-export function Sidebar({ route, go, onAsk, savedCount }) {
+export function Sidebar({ route, go, savedCount }) {
   const { demo, staff } = useChurch();
   const user = identity(staff);
   return <aside className="sidebar">
-    <Brand onClick={() => go('')} />
     <ChurchName />
     <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
@@ -63,12 +62,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
         </div>}
       </div>)}
     </nav>
-    <div className="ask-card">
-      <Icon name="sparkle" size={22} />
-      <strong>Questions?</strong>
-      <p>Service times, groups, or a place to serve. Staff review every request.</p>
-      <button className="secondary wide" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
-    </div>
+    <small className="powered-by">Powered by Tekton</small>
     <div className="profile">
       <Avatar />
       <div><strong>{user.name}</strong><small>{user.role}</small></div>
@@ -81,7 +75,7 @@ export function TopBar({ go, onAsk }) {
     <Brand onClick={() => go('')} />
     <ChurchName compact />
     <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
-    <button className="icon-btn" aria-label="Ask Belong" onClick={onAsk}><Icon name="chat" /></button>
+    <button className="icon-btn" aria-label="Ask Tekton" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />
   </header>;
 }

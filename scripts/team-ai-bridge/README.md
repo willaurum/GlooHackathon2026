@@ -1,7 +1,7 @@
 # Team AI bridge
 
 **Team only, for the hackathon.** Until the Gloo AI key arrives (Oct 7), this lets the deployed
-belong. site use our club's HPC model (`qwen3.8:27b`) for the chat, Find a place and calendar
+Tekton site use our club's HPC model (`qwen3.8:27b`) for the chat, Find a place and calendar
 summaries. When nobody runs it, the site still works: the chat gives demo replies, Find a place
 says to try again or browse Ministries, and the calendar shows "AI Endpoint: Offline".
 

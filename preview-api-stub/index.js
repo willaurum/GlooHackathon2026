@@ -1,4 +1,4 @@
-// Preview API stub: an in-memory stand-in for the Belong FastAPI backends, so a
+// Preview API stub: an in-memory stand-in for the Tekton FastAPI backends, so a
 // static preview of any branch's frontend works without Postgres or an AI key.
 // State lives in module scope, so it resets whenever the isolate cold-starts.
 // That is fine for previews and keeps the stub free of bindings.

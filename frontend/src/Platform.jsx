@@ -6,7 +6,7 @@ import Icon from './Icon.jsx';
 import { PageHeader } from './Layout.jsx';
 import { MODE_LABELS, churchLink, filterChurches, getPlatformKey, setPlatformKey } from './platformChurches.js';
 
-// #/platform: every church, for the people building belong. Not in the navigation and not linked
+// #/platform: every church, for the people building Tekton. Not in the navigation and not linked
 // anywhere. The list comes from the giving Worker and needs its PLATFORM_ADMIN_KEY secret.
 export default function Platform() {
   const [key, setKey] = useState(getPlatformKey), [tries, setTries] = useState(0);
@@ -41,7 +41,7 @@ export default function Platform() {
   function tryKey(next) { setPlatformKey(next); setKey(next); setTries(t => t + 1); }
   function signOut() { setChurches([]); setErr(''); tryKey(''); }
 
-  const header = <PageHeader eyebrow="Platform" title="All churches." text="For the belong. team only. Churches never see each other, and this page is not linked anywhere."
+  const header = <PageHeader eyebrow="Platform" title="All churches." text="For the Tekton team only. Churches never see each other, and this page is not linked anywhere."
     action={state === 'list' ? <button className="secondary" onClick={signOut}>Sign out</button> : null} />;
 
   if (state === 'loading') return <>{header}<div className="card give-pad"><p role="status">Loading churches…</p></div></>;

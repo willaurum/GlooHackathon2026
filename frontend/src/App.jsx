@@ -242,7 +242,7 @@ export default function App() {
 
   return <ChurchContext.Provider value={church}>
     <div className="app">
-      <Sidebar route={route} go={go} onAsk={() => setChatOpen(true)} savedCount={savedCount} />
+      <Sidebar route={route} go={go} savedCount={savedCount} />
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">
         <WorkspaceBar />
@@ -250,9 +250,9 @@ export default function App() {
         <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
           <footer className="site-footer">
-            <b>belong.</b>
+            <b>tekton.</b>
             <span>{name || 'Your church'} · Helping people find their people.</span>
-            {demo ? <small>Demo site. Church details, people and contacts are fictional.</small> : <small>Made with belong.</small>}
+            {demo ? <small>Demo site. Church details, people and contacts are fictional.</small> : <small>Powered by Tekton</small>}
           </footer>
         </main>
       </div>

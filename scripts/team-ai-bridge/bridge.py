@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Team AI bridge: lets the deployed belong. backend use the club's HPC model (qwen3.8:27b).
+"""Team AI bridge: lets the deployed Tekton backend use the club's HPC model (qwen3.8:27b).
 
 TEAM ONLY, hackathon stopgap until the Gloo AI key arrives. Run it with start-bridge.sh (macOS,
 Linux) or start-bridge.ps1 (Windows); see README.md in this folder.
@@ -359,7 +359,7 @@ def stop(process):
 BANNER = """
 ==============================================================
   AI bridge is ON for the team.
-  belong. chat, Find a place and calendar summaries can now use
+  Tekton chat, Find a place and calendar summaries can now use
   the HPC model ({models}).
   Keep this window open. Press Ctrl+C to turn it off.
 ==============================================================
