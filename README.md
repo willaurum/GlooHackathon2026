@@ -317,6 +317,21 @@ The "Ask Belong" chat (the Ask tab on phones, bottom-right button on desktop) ta
 - Guardrails: the system prompt keeps the assistant to church and site topics and tells it to decline everything else, and obvious prompt-override attempts ("ignore previous instructions", "system prompt", "developer mode") get a fixed reply without calling the model. These reduce off-topic use; they are not a guarantee.
 - Replies may use **bold** and simple lists, rendered by `frontend/src/chatFormat.js` as React elements (never raw HTML).
 
+#### Two branches: laptops, or Cloudflare
+
+Nothing in this project depends on a machine that is neither a laptop nor Cloudflare. Two branches keep that honest:
+
+- **`jaron-frontend`** runs entirely on a laptop: docker compose brings up the frontend, the FastAPI backend and Postgres, and the AI is an Ollama reached from the container. Set `AI_PROVIDER=ollama` in `.env`; see the HPC tunnel section below, or point `OLLAMA_BASE_URL` at an Ollama on that same laptop.
+- **`jaron-cloudflare-frontend`** runs entirely on Cloudflare: Workers, the container, a Durable Object per church database, and Gloo AI over HTTPS. The only setup is one secret, run in `api/`:
+
+  ```
+  npx wrangler secret put GLOO_API_KEY
+  ```
+
+  Nothing else is needed. `AI_PROVIDER` is not passed into the container, so it takes its default of `gloo` from `backend/app/config.py`, and `platform.ai.gloo.com` is already in the container's `allowedHosts`. No laptop is in the path: no VPN, no SSH tunnel, no teammate running a bridge.
+
+Both branches build from the same source and differ in configuration, not behaviour. Keep the `jaron-` prefix on any new branch: `previews.yml` triggers on prefixes, so a name outside its patterns is a branch that silently never deploys.
+
 #### HPC Ollama for local development
 
 Everyone runs this on their own machine: the Liberty student VPN, the SSH tunnel, and docker compose. Nothing is shared between teammates and no fixed addresses are involved.
