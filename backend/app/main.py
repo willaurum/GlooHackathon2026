@@ -465,6 +465,10 @@ def set_ai_model(body: ModelUpdateRequest):
 # --- Blog Endpoints ---
 
 
+# A news link is a page on this site (serve/find, about/connect) or a full http(s) address.
+NEWS_LINK = r"^$|^https?://\S+$|^[a-z0-9][a-z0-9/_-]*$"
+
+
 class BlogPostCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=300)
@@ -473,6 +477,10 @@ class BlogPostCreate(BaseModel):
     categories: list[str] = Field(default_factory=list)
     auto_categorize: bool = False
     auto_summarize: bool = False
+    # 'update': a short post that points somewhere, never summarized. 'article': a longer read with key takeaways.
+    kind: Literal["update", "article"] = "article"
+    link_url: str = Field(default="", max_length=500, pattern=NEWS_LINK)
+    link_label: str = Field(default="", max_length=80)
 
 
 class CategorizeRequest(BaseModel):
@@ -486,8 +494,8 @@ class SummarizePostRequest(BaseModel):
 
 
 @app.get("/api/blog")
-def get_blog_posts(category: str | None = None):
-    return db.list_blog_posts(category=category)
+def get_blog_posts(category: str | None = None, kind: str | None = None):
+    return db.list_blog_posts(category=category, kind=kind)
 
 
 @app.get("/api/blog/categories")
@@ -519,7 +527,7 @@ async def create_new_blog_post(body: BlogPostCreate):
         categories = list(dict.fromkeys(categories + nlp_cats))
 
     bullet_summary = None
-    if body.auto_summarize:
+    if body.auto_summarize and body.kind == "article":
         try:
             bullet_summary = await blog_ai.summarize_blog_bullets(title=body.title, content=body.content)
         except Exception as exc:
@@ -531,6 +539,9 @@ async def create_new_blog_post(body: BlogPostCreate):
         author=body.author or "Church Staff",
         categories=categories,
         bullet_summary=bullet_summary,
+        kind=body.kind,
+        link_url=body.link_url,
+        link_label=body.link_label if body.link_url else "",
     )
     return post
 
@@ -540,6 +551,8 @@ async def summarize_blog_post_endpoint(post_id: int, body: SummarizePostRequest 
     post = db.get_blog_post(post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Blog post not found")
+    if post["kind"] != "article":
+        raise HTTPException(status_code=400, detail="Only articles have key takeaways")
 
     target_model = body.model if body else None
     try:

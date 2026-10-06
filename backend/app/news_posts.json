@@ -1,0 +1,50 @@
+[
+  {
+    "date": "2026-10-01",
+    "category": "Serve",
+    "title": "Serve Day is October 17",
+    "content": "Teams head out to local schools, the food pantry and elderly neighbors for the morning. All ages are welcome; meet in the main parking lot at 8:30am.",
+    "link_url": "serve",
+    "link_label": "See where help is needed"
+  },
+  {
+    "date": "2026-09-28",
+    "category": "Families",
+    "title": "Fall family picnic after church, October 25",
+    "content": "Food trucks, games and a bounce house on the church lawn after the 11:00am service. It is a great first event if you are new.",
+    "link_url": "calendar",
+    "link_label": "View the calendar"
+  },
+  {
+    "date": "2026-09-22",
+    "category": "Serve",
+    "title": "Welcome team training on October 11",
+    "content": "A 45-minute training for new greeters and guest services volunteers, right after the 11:00am service in the lobby.",
+    "link_url": "guests/welcome",
+    "link_label": "Meet the welcome team"
+  },
+  {
+    "date": "2026-09-15",
+    "category": "Worship",
+    "title": "Worship night returns November 6",
+    "content": "An evening of music and prayer led by the worship collective in the main auditorium. Bring a friend.",
+    "link_url": "calendar",
+    "link_label": "View the calendar"
+  },
+  {
+    "date": "2026-09-08",
+    "category": "Church life",
+    "title": "Discover Grace: your first step toward membership",
+    "content": "Offered the first Sunday of each month after the 11:00am service. Lunch and childcare are provided.",
+    "link_url": "about/connect",
+    "link_label": "Connect with us"
+  },
+  {
+    "date": "2026-08-30",
+    "category": "Families",
+    "title": "Kids ministry is looking for more helpers",
+    "content": "Sunday mornings run best with a full team. Training is provided and a background check is required.",
+    "link_url": "serve/find",
+    "link_label": "Find a place to serve"
+  }
+]
