@@ -9,7 +9,7 @@ import ChurchStart from './ChurchStart.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
+import { ABOUT_DEMO_ONLY, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -18,13 +18,27 @@ import Blog from './Blog.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
+import About from './About.jsx';
+import Beliefs from './Beliefs.jsx';
+import News from './News.jsx';
+import Directory from './Directory.jsx';
+import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
 const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
 
+// [eyebrow, title, intro] for each About page.
+const ABOUT_PAGES = {
+  about: ['About', 'Who we are.', 'The story, the people and the heart behind Grace Community Church.'],
+  'about/beliefs': ['About', 'What we believe.', 'The convictions that shape our teaching and our life together.'],
+  'about/news': ['About', 'What’s happening.', 'Announcements and stories from church life.'],
+  'about/directory': ['About', 'Who to contact.', 'Pastors, staff and ministry leaders, and how to reach them.'],
+  'about/connect': ['Connect', 'Let’s get you connected.', 'Whether you are new, curious or ready to jump in, here are a few ways to take the next step.'],
+  'about/blog': ['Church Blog', 'Reflections & stories.', 'Pastoral teaching, ministry updates, and stories from our church family.'],
+};
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 // Pages that work before the church API knows about new churches: giving has its own API.
 // #/platform (every church, for the platform team) is not tied to the church showing.
@@ -32,7 +46,9 @@ const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'start', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
-function withDefault(route) {
+// Other churches have no Our story, Beliefs, News, Directory or Connect content yet, so About opens the blog.
+function withDefault(route, demo = true) {
+  if (!demo && ABOUT_DEMO_ONLY.has(route)) return 'about/blog';
   const s = SECTIONS.find(x => x.route === route);
   return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
 }
@@ -47,7 +63,7 @@ function readLocation() {
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
   // The blog moved under About; keep its first link (#/blog) working.
   let route = where.route === 'give/start' ? 'start' : where.route === 'blog' ? 'about/blog' : where.route;
-  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route);
+  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
   if (where.source === 'link') saveChurch(where.slug);
@@ -134,7 +150,7 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
-    next = withDefault(next === 'give/start' ? 'start' : next);
+    next = withDefault(next === 'give/start' ? 'start' : next, demo);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
     setWhere(w => ({ ...w, route: next }));
@@ -190,9 +206,15 @@ export default function App() {
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
     {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
-    {route === 'about/blog' && <div className="page">
-      <PageHeader eyebrow="Church Blog" title="Reflections & stories." text="Pastoral teaching, ministry updates, and stories from our church family." />
-      <Blog />
+    {section === 'about' && <div className="page">
+      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]} text={ABOUT_PAGES[route]?.[2]} />
+      {demo && <SubNav tabs={aboutTabsFor(demo)} route={route} go={go} />}
+      {route === 'about/blog' && <Blog />}
+      {demo && route === 'about' && <About go={go} />}
+      {demo && route === 'about/beliefs' && <Beliefs />}
+      {demo && route === 'about/news' && <News go={go} />}
+      {demo && route === 'about/directory' && <Directory />}
+      {demo && route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
     </div>}
     {section === 'notes' && <div className="page">
       <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />

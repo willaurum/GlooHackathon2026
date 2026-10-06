@@ -65,6 +65,18 @@ export default function Home({ go, onAsk }) {
       </a>
     </div>
 
+    {/* The About pages hold the demo church's own text; other churches do not show these links yet. */}
+    {church.demo && <section className="know-us" aria-label="Get to know us">
+      <div className="eyebrow">Get to know us</div>
+      <div className="know-links">
+        <button className="secondary" onClick={() => go('about')}><Icon name="info" size={18} />Our story</button>
+        <button className="secondary" onClick={() => go('about/beliefs')}><Icon name="book" size={18} />What we believe</button>
+        <button className="secondary" onClick={() => go('about/news')}><Icon name="news" size={18} />News</button>
+        <button className="secondary" onClick={() => go('about/directory')}><Icon name="phone" size={18} />Contact directory</button>
+        <button className="primary" onClick={() => go('about/connect')}><Icon name="mail" size={18} />Connect with us</button>
+      </div>
+    </section>}
+
     {info?.services?.length > 0 && <section className="card week" id="home-service-times">
       <div className="week-head">
         <div><div className="eyebrow">Join us</div><h2>Service times</h2></div>

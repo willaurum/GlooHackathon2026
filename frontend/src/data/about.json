@@ -1,0 +1,33 @@
+{
+  "mission": "Helping people find their people: to know God, belong to a community, and serve the neighbors around us.",
+  "story": [
+    "Grace Community started in 1998 as a handful of families meeting in a Springfield living room. Today we gather on Maple Ridge Road for three services a week, with a kids ministry, student ministry and a network of small groups that meet all over town.",
+    "We have always believed a church works best when it feels small. However many people walk through the doors on Sunday, we want each one to be known by name, to have a table to sit at, and to have a place to use their gifts."
+  ],
+  "values": [
+    {
+      "icon": "heart",
+      "color": "color0",
+      "title": "Welcome first",
+      "text": "Come as you are. Nobody has to have it figured out to belong here."
+    },
+    {
+      "icon": "book",
+      "color": "color3",
+      "title": "Rooted in Scripture",
+      "text": "We teach the Bible plainly and trust it to speak for itself."
+    },
+    {
+      "icon": "users",
+      "color": "color1",
+      "title": "Life together",
+      "text": "Faith is not a solo project. We grow in groups, meals and long conversations."
+    },
+    {
+      "icon": "compass",
+      "color": "color4",
+      "title": "Sent to serve",
+      "text": "The mission reaches past our walls: our neighbors, our city and the world."
+    }
+  ]
+}

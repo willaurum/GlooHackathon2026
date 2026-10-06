@@ -12,8 +12,14 @@ export const SECTIONS = [
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
   // In the sidebar on desktop and behind the info button in the phone top bar, so the tab bar stays uncrowded.
-  { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about/blog', 'Blog']] },
+  { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect'], ['about/blog', 'Blog']] },
 ];
+
+// The About pages other than the blog hold Grace Community's own text, so only the demo church
+// shows them. Other churches see the blog until they have About content of their own.
+export const ABOUT_DEMO_ONLY = new Set(['about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect']);
+export const ABOUT_TABS = [['about', 'Our story', 'info'], ['about/beliefs', 'Beliefs', 'book'], ['about/news', 'News', 'news'], ['about/directory', 'Directory', 'phone'], ['about/connect', 'Connect', 'mail'], ['about/blog', 'Blog', 'document']];
+export const aboutTabsFor = demo => ABOUT_TABS.filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r));
 
 const sectionOf = route => route.split('/')[0];
 
@@ -33,7 +39,8 @@ export function Brand({ onClick }) {
 }
 
 export function Sidebar({ route, go, onAsk, savedCount }) {
-  const user = identity(useChurch().staff);
+  const { demo, staff } = useChurch();
+  const user = identity(staff);
   return <aside className="sidebar">
     <Brand onClick={() => go('')} />
     <ChurchName />
@@ -44,7 +51,7 @@ export function Sidebar({ route, go, onAsk, savedCount }) {
           <Icon name={s.icon} />{s.label}
         </button>
         {s.children && sectionOf(route) === s.route && <div className="nav-children">
-          {s.children.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
+          {s.children.filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r)).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
             {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
           </button>)}
         </div>}
