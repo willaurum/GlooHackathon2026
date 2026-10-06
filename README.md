@@ -244,7 +244,7 @@ node --test api/test/churches.test.mjs frontend/src/church.test.js
 node api/test/sitewide.e2e.mjs                        # both APIs running locally; see the comment at the top
 ```
 
-`api/test/sitewide.e2e.mjs` signs up two made-up churches and checks that staff-only routes need that church session, that one church cannot read or change another, and that requests with no church still go to Grace Community. It needs `api-giving` (`npx wrangler dev --port 8799`) and the church API reachable at `API` with its `GIVING` binding connected.
+`api/test/sitewide.e2e.mjs` initializes two made-up churches through localhost-only internal fixtures and checks that public signup stays disabled, staff-only routes need that church session, one church cannot read or change another, and requests with no church still go to Grace Community. Run `api-giving/test/local-worker.mjs` from `api-giving/`, set `GIVING=http://127.0.0.1:8803` and `FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches`, and provide the church API at `API` with its `GIVING` binding connected to the adapter.
 
 ## Keys and access
 

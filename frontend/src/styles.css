@@ -246,6 +246,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .team-detail p { font-size: 15px; margin-top: 10px; }
 .team-detail .contact { margin: 18px 0; }
 .matching { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 24px; align-items: start; }
+.matching > * { min-width: 0; }
 .match-form { padding: 24px; }
 .form-title { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
 .form-title p { font-size: 14px; margin-top: 2px; }
@@ -608,6 +609,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .hero-art { display: none; }
   .hero-actions > * { flex: 1 1 200px; }
   .features, .services, .grid, .matching, .give-grid, .pn-grid { grid-template-columns: 1fr; }
+  .matching { grid-template-columns: minmax(0, 1fr); }
+  .primary, .secondary, .ghost { white-space: normal; padding-top: 10px; padding-bottom: 10px; }
   .features { gap: 12px; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .stat { padding: 12px; }
@@ -642,6 +645,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 @media (max-width: 400px) {
   .preset-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tabbar button { font-size: 10px; }
+  .topbar { gap: 6px; }
+  .topbar .brand { font-size: 20px; }
+  .topbar .icon-btn { flex: none; width: 32px; height: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -939,6 +946,16 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .church-state { padding: 22px; }
   .platform-list { grid-template-columns: 1fr; }
   .platform-bar .search { max-width: none; }
+}
+
+@media (max-width: 400px) {
+  .church-name.compact .church { padding: 4px 0; }
+  .church-name.compact .church > span { display: none; }
+  .church-name.compact .church-staff { white-space: nowrap; }
+}
+
+@media (max-width: 600px) {
+  .give-staff .stats { grid-template-columns: 1fr; }
 }
 /* ---------- About, Beliefs, News, Directory, Connect ---------- */
 .about, .directory, .connect { display: flex; flex-direction: column; gap: 18px; }
