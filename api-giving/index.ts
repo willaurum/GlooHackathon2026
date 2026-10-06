@@ -532,11 +532,18 @@ export class GivingDO extends DurableObject<GivingEnv> {
   // ---------- Staff sessions ----------
 
   /** A session for a staff account, or (no userId) for the shared church password, which acts as owner. */
-  async #newSession(userId = '', role: StaffRole = 'owner'): Promise<string> {
+  async #newSession(userId = '', role: StaffRole = 'owner', expectedHash?: string): Promise<string> {
     const token = randomToken();
+    const tokenHash = await sha256(token);
+    // Crypto yields to other requests. Recheck credentials at the actual session insertion.
+    if (userId) {
+      const user = this.#sql.exec('SELECT role, password_hash FROM staff_users WHERE id = ?', userId).toArray()[0];
+      if (!user || (expectedHash !== undefined && user.password_hash !== expectedHash)) return '';
+      role = user.role as StaffRole;
+    } else if (expectedHash !== undefined && this.#church()?.password_hash !== expectedHash) return '';
     const now = Date.now();
     this.#sql.exec('DELETE FROM sessions WHERE expires_at < ?', now);
-    this.#sql.exec('INSERT INTO sessions (token_hash, expires_at, user_id, role) VALUES (?, ?, ?, ?)', await sha256(token), now + SESSION_TTL, userId, role);
+    this.#sql.exec('INSERT INTO sessions (token_hash, expires_at, user_id, role) VALUES (?, ?, ?, ?)', tokenHash, now + SESSION_TTL, userId, role);
     return token;
   }
 
@@ -945,7 +952,9 @@ export class GivingDO extends DurableObject<GivingEnv> {
       const user = this.#sql.exec('SELECT id, role, password_hash FROM staff_users WHERE email = ?', email).toArray()[0];
       if (!user || !(await verifyPassword(password, String(user.password_hash)))) return json({ error: 'That email or password is not right.' }, 401);
       const session: StaffSession = { userId: String(user.id), role: user.role as StaffRole };
-      return json({ token: await this.#newSession(session.userId, session.role), expiresIn: SESSION_TTL / 1000, me: this.#me(session) });
+      const token = await this.#newSession(session.userId, session.role, String(user.password_hash));
+      if (!token) return json({ error: 'That email or password is not right.' }, 401);
+      return json({ token, expiresIn: SESSION_TTL / 1000, me: this.#me(session) });
     }
     // The shared church password signs in as owner: always on the demo church (ADMIN_KEY, so the team never
     // loses it), and on other churches only until their first staff account exists.
@@ -954,7 +963,12 @@ export class GivingDO extends DurableObject<GivingEnv> {
     else if (c.password_hash && !this.#staffCount()) ok = await verifyPassword(password, c.password_hash);
     else if (c.password_hash) return json({ error: 'This church uses staff accounts now. Sign in with your email and password.' }, 401);
     if (!ok) return json({ error: 'That password is not right.' }, 401);
-    return json({ token: await this.#newSession(), expiresIn: SESSION_TTL / 1000, me: this.#me({ userId: '', role: 'owner' }) });
+    const token = await this.#newSession('', 'owner', c.demo_locked ? undefined : c.password_hash);
+    if (!token || (!c.demo_locked && this.#staffCount())) {
+      if (token) this.#sql.exec('DELETE FROM sessions WHERE token_hash = ?', await sha256(token));
+      return json({ error: 'This church uses updated credentials now. Sign in again.' }, 401);
+    }
+    return json({ token, expiresIn: SESSION_TTL / 1000, me: this.#me({ userId: '', role: 'owner' }) });
   }
 
   async #logout(request: Request): Promise<Response> {
@@ -1021,16 +1035,26 @@ export class GivingDO extends DurableObject<GivingEnv> {
       const user = this.#sql.exec('SELECT password_hash FROM staff_users WHERE id = ?', session.userId).toArray()[0];
       if (!user || !(await verifyPassword(current, String(user.password_hash)))) return json({ error: 'Your current password is not right.' }, 400);
       if (next.length < 10 || next.length > 200) return json({ error: 'Use at least 10 characters for the new password.' }, 400);
-      this.#sql.exec('UPDATE staff_users SET password_hash = ? WHERE id = ?', await hashPassword(next), session.userId);
+      const nextHash = await hashPassword(next);
+      const freshSession = await this.#session(request);
+      if (!freshSession) return json({ error: 'Please sign in as church staff.' }, 401);
+      const freshUser = this.#sql.exec('SELECT password_hash FROM staff_users WHERE id = ?', session.userId).toArray()[0];
+      if (!freshUser || freshUser.password_hash !== user.password_hash) return json({ error: 'Your password changed during this request. Try again.' }, 400);
+      this.#sql.exec('UPDATE staff_users SET password_hash = ? WHERE id = ?', nextHash, session.userId);
       this.#sql.exec('DELETE FROM sessions WHERE user_id = ?', session.userId);
-      return json({ ok: true, token: await this.#newSession(session.userId, session.role) });
+      const token = await this.#newSession(session.userId, freshSession.role, nextHash);
+      return token ? json({ ok: true, token }) : json({ error: 'Please sign in again.' }, 401);
     }
     if (c.demo_locked) return json({ error: 'The demo church password cannot be changed here.' }, 403);
     if (!(await verifyPassword(current, c.password_hash))) return json({ error: 'Your current password is not right.' }, 400);
     if (next.length < 10 || next.length > 200) return json({ error: 'Use at least 10 characters for the new password.' }, 400);
-    this.#sql.exec('UPDATE church SET password_hash = ? WHERE id = 1', await hashPassword(next));
+    const nextHash = await hashPassword(next);
+    if (!(await this.#session(request))) return json({ error: 'Please sign in as church staff.' }, 401);
+    if (this.#church()?.password_hash !== c.password_hash) return json({ error: 'Your password changed during this request. Try again.' }, 400);
+    this.#sql.exec('UPDATE church SET password_hash = ? WHERE id = 1', nextHash);
     this.#sql.exec("DELETE FROM sessions WHERE user_id = ''");
-    return json({ ok: true, token: await this.#newSession() });
+    const token = await this.#newSession('', 'owner', nextHash);
+    return token ? json({ ok: true, token }) : json({ error: 'Please sign in again.' }, 401);
   }
 
   // ---------- Staff accounts (owners add and remove; everyone signed in can see the list) ----------
@@ -1052,12 +1076,16 @@ export class GivingDO extends DurableObject<GivingEnv> {
     if (!EMAIL_RE.test(email)) return json({ error: 'Add a valid email; they sign in with it.' }, 400);
     if (!STAFF_ROLES.includes(role)) return json({ error: 'Choose Owner or Site admin.' }, 400);
     if (password.length < 10 || password.length > 200) return json({ error: 'Give them a temporary password of at least 10 characters.' }, 400);
+    const passwordHash = await hashPassword(password);
+    const freshSession = await this.#session(request);
+    if (!freshSession) return json({ error: 'Please sign in as church staff.' }, 401);
+    if (freshSession.role !== 'owner') return json({ error: 'Only an owner can add staff accounts.' }, 403);
     // The first account must be an owner, or nobody could manage accounts once the shared password stops working.
     if (!this.#staffCount() && role !== 'owner') return json({ error: 'The first staff account must be an owner. Add yourself first.' }, 400);
     if (this.#sql.exec('SELECT 1 FROM staff_users WHERE email = ?', email).toArray().length) return json({ error: 'Someone already has that email.' }, 409);
     const id = crypto.randomUUID();
-    this.#sql.exec('INSERT INTO staff_users (id, name, email, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, name, email, role, await hashPassword(password), new Date().toISOString());
-    return this.#listStaff(session);
+    this.#sql.exec('INSERT INTO staff_users (id, name, email, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, name, email, role, passwordHash, new Date().toISOString());
+    return this.#listStaff(freshSession);
   }
 
   #removeStaff(session: StaffSession, id: string): Response {

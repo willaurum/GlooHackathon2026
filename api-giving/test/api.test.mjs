@@ -8,9 +8,12 @@
 // Platform list: set PLATFORM_KEY to the PLATFORM_ADMIN_KEY in .dev.vars. Without it, the Worker is
 // expected to have no PLATFORM_ADMIN_KEY (the route is off). API_NO_PLATFORM can name a second
 // `wrangler dev` without the secret, so one run checks both.
+import { fileURLToPath } from 'node:url';
 const API = process.env.API || 'http://localhost:8799';
 const STRIPE = process.env.STRIPE || 'http://localhost:12111';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:5199';
+// Read the demo credential from configuration; never copy its value into new tests.
+const demoPassword = process.env.DEMO_PASSWORD || (await import('wrangler')).unstable_readConfig({ config: fileURLToPath(new URL('../wrangler.jsonc', import.meta.url)) }).vars.ADMIN_KEY;
 const KEY = 'sk_test_GOOD' + 'a'.repeat(24) + 'Z9x1';
 let failures = 0;
 const publicDumps = [];
@@ -68,7 +71,7 @@ check(r.status === 200 && r.data.token, 'login works');
 token = r.data.token;
 r = await call('GET', C + '/admin', undefined, token);
 check(r.status === 200 && r.data.funds.length === 3 && r.data.stripe.mode === 'demo', 'admin overview, 3 default funds, demo mode', r.data);
-r = await call('POST', '/api/churches/grace-community/admin/login', { password: 'gloo-donate-demo' });
+r = await call('POST', '/api/churches/grace-community/admin/login', { password: demoPassword });
 check(r.status === 200, 'demo church login with demo key');
 const demoToken = r.data.token;
 r = await call('POST', '/api/churches/grace-community/admin/stripe', { key: KEY }, demoToken);
@@ -532,9 +535,9 @@ r = await call('POST', L + '/admin/login', { email: 'first-' + suffix + '@exampl
 check(r.status === 200 && r.data.me.role === 'owner', 'the new owner signs in with email', r.data);
 
 // The demo church always keeps its ADMIN_KEY login, so the team never loses it.
-r = await call('POST', '/api/churches/grace-community/admin/login', { password: 'gloo-donate-demo' });
+r = await call('POST', '/api/churches/grace-community/admin/login', { password: demoPassword });
 check(r.status === 200 && r.data.me.role === 'owner', 'demo church ADMIN_KEY still signs in as owner', r.data);
-r = await call('POST', S + '/admin/login', { password: 'gloo-donate-demo' });
+r = await call('POST', S + '/admin/login', { password: demoPassword });
 check(r.status === 401, 'ADMIN_KEY does not open other churches', r.data);
 
 console.log('leak scan of every public response');

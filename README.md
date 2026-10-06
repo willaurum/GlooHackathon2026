@@ -41,7 +41,9 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 ## Visitors and church admin permissions
 
 Visitors browse without an account. Staff sign in at **Staff sign in / Church setup**
-(`#/setup`, or `#/c/<slug>/setup`) with the password chosen when that church signed up.
+(`#/setup`, or `#/c/<slug>/setup`) with their staff email and password.
+Owners have every staff permission and can add or remove staff accounts. Site admins have
+every staff permission except adding or removing accounts. Manage accounts in Give → Church staff → Team.
 There are no individual member accounts or member commenting permissions yet.
 
 Staff sessions apply only to their own church. Admin controls appear only after the
@@ -128,9 +130,24 @@ The page asks once for the platform key and keeps it in `sessionStorage` (this b
 
 To turn it on: deploy `api-giving/` (merge to `main`, or Actions > Deploy backend), then `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving` with a long random value (`openssl rand -base64 32`), and share it with the team only. To turn it off again, `npx wrangler secret delete PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`.
 
-### One registry, one staff login
+### One registry, individual staff accounts
 
 The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: sign-up (`POST /api/churches`), unique slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
+
+Sign-up accepts `ownerName` and `ownerEmail` to create the first Owner account using the
+chosen password. Owners add staff with a name, email, Owner or Site admin role, and a
+temporary password of at least 10 characters. Staff change their own password in Overview;
+only that account's other sessions are signed out. Removing an account revokes its sessions
+immediately. You cannot remove yourself or the last Owner, and the first account must be an Owner.
+
+For older churches with no accounts, leave email blank to use the shared church password
+as Owner. Once an account exists, new sign-ins require email and password. Existing shared
+sessions remain valid until sign-out or expiry. Grace Community always retains the demo
+Owner login with email blank; its password lives in `ADMIN_KEY` in `api-giving/wrangler.jsonc`.
+Deploy the giving API alongside the frontend when releasing staff accounts.
+
+Run `node --test api-giving/test/staff-races.test.mjs` with Node 22.13+ for deterministic
+account-removal and password-rotation concurrency checks using the real handlers and SQLite.
 
 ### How the church API knows the church
 
@@ -151,6 +168,8 @@ The first request for a church creates its tables. Only the demo church is seede
 | Info, church, ministries, events, matches, chat, guest sign-up and "I am here", viewing the prayer map, verse | public | public |
 | Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries; generating prayer-map prompts (`POST /api/regions/<id>/prayer-angles`) | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
+| Staff accounts: `GET /api/churches/<slug>/admin/users` | that church staff | that church staff |
+| Add or remove staff: `POST /api/churches/<slug>/admin/users`, `DELETE /api/churches/<slug>/admin/users/<id>` | Owner only | Owner only |
 | Sermon Notes and the chat log | `NOTES_API_KEY` or that church staff | `NOTES_API_KEY` or that church staff |
 | The shared AI model setting (`POST /api/ai/model`) | `NOTES_API_KEY` | `NOTES_API_KEY` |
 
