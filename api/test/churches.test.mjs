@@ -45,6 +45,13 @@ test('a bare /api path is the demo church; a prefix names the church', () => {
   assert.equal(churchPath('/api/churches/Bad_Slug/info'), null);
 });
 
+test('percent-encoded paths are refused, so a route cannot be checked as one thing and run as another', () => {
+  // The container decodes these to /api/ai/model, /api/visits, /api/church/content and /api/internal/...
+  for (const p of ['/api/ai/%6dodel', '/api/churches/hope-chapel/ai/%6Dodel', '/api/vi%73its', '/api/church/c%6fntent', '/api/int%65rnal/x', '/api/notes%2F1'])
+    assert.equal(churchPath(p), null, p);
+  assert.equal(access('POST', churchPath('/api/ai/model').path, false), 'key');
+});
+
 test('the registry decides which churches exist', async () => {
   assert.equal((await findChurch(env, 'grace-community')).demo, true);
   assert.deepEqual(await findChurch(env, 'hope-chapel'), { slug: 'hope-chapel', name: 'Hope Chapel', city: 'Austin', demo: false });

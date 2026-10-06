@@ -62,10 +62,8 @@ function SetupForms() {
   const church = useChurch();
   const [content, setContent] = useState(null), [err, setErr] = useState('');
   useEffect(() => {
-    api('/church/content').then(setContent).catch(e => {
-      if (e.status === 401) setStaffToken(church.slug, '');
-      else setErr(friendly(e));
-    });
+    // A rejected session is cleared by api() itself, and only if no newer sign-in replaced it.
+    api('/church/content').then(setContent).catch(e => { if (e.status !== 401) setErr(friendly(e)); });
   }, []);
   // Saves one part of the church and returns the whole saved church.
   async function save(part) {

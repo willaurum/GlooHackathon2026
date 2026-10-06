@@ -23,6 +23,9 @@ export const validSlug = (slug: string) => SLUG_RE.test(slug);
 
 /** The church slug and the plain /api/... path, or null when the slug is malformed. */
 export function churchPath(pathname: string): { slug: string; path: string } | null {
+	// The container decodes percent-escapes before routing, so /api/ai/%6dodel would be checked here as one
+	// route and run there as /api/ai/model (likewise /api/int%65rnal/...). No API path needs an escape.
+	if (pathname.includes('%')) return null;
 	const m = /^\/api\/churches\/([^/]+)(\/.*)?$/.exec(pathname);
 	if (!m) return { slug: DEMO_SLUG, path: pathname };
 	if (!validSlug(m[1])) return null;

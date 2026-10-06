@@ -1,5 +1,5 @@
 import { gapi } from './api.js';
-import { DEMO_CHURCH, getStaffToken, setStaffToken } from './church.js';
+import { DEMO_CHURCH, clearRejectedStaffToken, getStaffToken, setStaffToken } from './church.js';
 
 // The built-in demo church. Its page also works against an older giving API
 // that only has the single-church endpoints (/api/config, /api/checkout).
@@ -13,7 +13,7 @@ export async function staffApi(slug, path, options = {}) {
   try {
     return await churchApi(slug, '/admin' + path, { ...options, headers: { ...(options.headers || {}), Authorization: 'Bearer ' + token } });
   } catch (err) {
-    if (err.status === 401 && getStaffToken(slug) === token) setStaffToken(slug, '');
+    if (err.status === 401) clearRejectedStaffToken(slug, token);
     throw err;
   }
 }
@@ -43,7 +43,8 @@ export async function signOutStaff(slug) {
 let capabilities;
 // Whether the giving API has church accounts yet (it is deployed separately from the site).
 export function givingCapabilities() {
-  capabilities ||= gapi('/api/health').then(h => ({ churches: !!h.churches })).catch(() => ({ churches: false }));
+  // A failed check means "unavailable", not "no church accounts": don't remember it, so the next call asks again.
+  capabilities ||= gapi('/api/health').then(h => ({ churches: !!h.churches }), () => { capabilities = null; return { churches: false, unavailable: true }; });
   return capabilities;
 }
 

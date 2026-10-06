@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { STAFF_SESSION_INVALID, api, setApiChurch } from './api.js';
-import { getStaffToken, getVerifiedStaffToken, setStaffToken } from './church.js';
-import { signOutStaff, staffApi, verifyStaffSession } from './giving.js';
+import { getStaffToken, getVerifiedStaffToken, rotateStaffToken, setStaffToken } from './church.js';
+import { givingCapabilities, signOutStaff, staffApi, verifyStaffSession } from './giving.js';
 
 const storage = new Map();
 globalThis.sessionStorage = {
@@ -85,6 +85,47 @@ test('church API: only the explicit rejected-session code drops the token, not a
     await assert.rejects(api('/notes'), /Missing or invalid API key/);
     assert.equal(getStaffToken('hope-chapel'), '');
   } finally { globalThis.fetch = originalFetch; setApiChurch('grace-community'); storage.clear(); }
+});
+
+test('during a password change, a rejection of the old token does not sign staff out', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    setStaffToken('hope-chapel', 'a'.repeat(32), { verified: true });
+    let finishRotation;
+    const pending = new Promise(resolve => { finishRotation = resolve; });
+    // The server has already revoked the old token, but the new one has not reached us yet.
+    const rotation = rotateStaffToken('hope-chapel', () => pending);
+    globalThis.fetch = async () => Response.json({ error: 'Signed out' }, { status: 401 });
+    await assert.rejects(staffApi('hope-chapel', '/session'), /Signed out/);
+    assert.equal(getStaffToken('hope-chapel'), 'a'.repeat(32));
+    finishRotation({ token: 'b'.repeat(32) });
+    await rotation;
+    assert.equal(getVerifiedStaffToken('hope-chapel'), 'b'.repeat(32));
+    // After the change, a rejection of the new token signs out as usual.
+    await assert.rejects(staffApi('hope-chapel', '/session'));
+    assert.equal(getStaffToken('hope-chapel'), '');
+  } finally { globalThis.fetch = originalFetch; storage.clear(); }
+});
+
+test('a password change refused for a dead session signs out; a wrong current password does not', async () => {
+  setStaffToken('hope-chapel', 'a'.repeat(32));
+  const wrongPassword = Object.assign(new Error('Your current password is not right.'), { status: 400 });
+  await assert.rejects(rotateStaffToken('hope-chapel', async () => { throw wrongPassword; }));
+  assert.equal(getStaffToken('hope-chapel'), 'a'.repeat(32));
+  const revoked = Object.assign(new Error('Signed out'), { status: 401 });
+  await assert.rejects(rotateStaffToken('hope-chapel', async () => { throw revoked; }));
+  assert.equal(getStaffToken('hope-chapel'), '');
+  storage.clear();
+});
+
+test('giving service down at startup: reported as unavailable, then rechecked once it is back', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new TypeError('Offline'); };
+    assert.deepEqual(await givingCapabilities(), { churches: false, unavailable: true });
+    globalThis.fetch = async () => Response.json({ churches: true });
+    assert.deepEqual(await givingCapabilities(), { churches: true });
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('old giving services validate via the overview; outage keeps the token', async () => {

@@ -1,4 +1,4 @@
-import { DEMO_CHURCH, getStaffToken, setStaffToken } from './church.js';
+import { DEMO_CHURCH, clearRejectedStaffToken, getStaffToken } from './church.js';
 
 // API origin; empty means same-origin /api (Vite proxy, nginx).
 export const API_BASE = import.meta.env?.VITE_API_BASE ?? '';
@@ -23,7 +23,8 @@ export const apiUrl = (path, slug = church) => API_BASE + (slug === DEMO_CHURCH 
 let capabilities;
 // Whether the church API serves more than the demo church yet (it is deployed separately from the site).
 export function churchCapabilities() {
-  capabilities ||= fetch(API_BASE + '/api/health').then(r => r.json()).then(h => ({ churches: !!h.churches })).catch(() => ({ churches: false }));
+  // A failed check means "unavailable", not "demo church only": don't remember it, so the next call asks again.
+  capabilities ||= fetch(API_BASE + '/api/health').then(r => r.json()).then(h => ({ churches: !!h.churches }), () => { capabilities = null; return { churches: false, unavailable: true }; });
   return capabilities;
 }
 
@@ -38,9 +39,12 @@ export async function apiHeaders(slug = church, extra = {}) {
 
 export async function api(path, options = {}) {
   const slug = church;
-  if (slug !== DEMO_CHURCH && !(await churchCapabilities()).churches) {
-    const error = new Error('This part of the site opens once the updated church service is deployed.');
-    error.status = 'not-ready';
+  const capabilities = slug === DEMO_CHURCH ? null : await churchCapabilities();
+  if (capabilities && !capabilities.churches) {
+    const error = new Error(capabilities.unavailable
+      ? 'The church service is unavailable right now. Please try again.'
+      : 'This part of the site opens once the updated church service is deployed.');
+    error.status = capabilities.unavailable ? 503 : 'not-ready';
     throw error;
   }
   const headers = await apiHeaders(slug, { 'Content-Type': 'application/json', ...options.headers });
@@ -51,7 +55,7 @@ export async function api(path, options = {}) {
     if (response.status === 401) {
       // Only the API's explicit "this session was rejected" signal drops the token: a 401 for a missing
       // API key (Sermon Notes, the AI model setting) must not sign valid staff out.
-      if (body.code === STAFF_SESSION_INVALID && sentToken && getStaffToken(slug) === sentToken) setStaffToken(slug, '');
+      if (body.code === STAFF_SESSION_INVALID) clearRejectedStaffToken(slug, sentToken);
       const error = new Error(typeof body.detail === 'string' ? body.detail : 'Please sign in as church staff.');
       error.status = 401;
       throw error;

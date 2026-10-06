@@ -82,3 +82,32 @@ export function setStaffToken(slug, token, { verified = false } = {}) {
   if (verified && token && getStaffToken(slug) === token) verifiedTokens.set(slug, token);
   globalThis.dispatchEvent?.(new Event('belong-staff'));
 }
+
+// A password change revokes the old token on the server before the new one reaches us. Other requests
+// rejected in between must not sign staff out (and remount the page), so rejections wait for it.
+const rotations = new Map();
+
+/** Forget a token the server rejected, unless it was already replaced or is being replaced right now. */
+export function clearRejectedStaffToken(slug, token) {
+  if (token && !rotations.get(slug) && getStaffToken(slug) === token) setStaffToken(slug, '');
+}
+
+/** Run a request that returns a replacement token ({ token }) and store it. */
+export async function rotateStaffToken(slug, request) {
+  const old = getStaffToken(slug);
+  let rejected = false;
+  rotations.set(slug, (rotations.get(slug) || 0) + 1);
+  try {
+    const res = await request();
+    setStaffToken(slug, res.token, { verified: true });
+    return res;
+  } catch (err) {
+    rejected = err.status === 401;
+    throw err;
+  } finally {
+    const left = rotations.get(slug) - 1;
+    left ? rotations.set(slug, left) : rotations.delete(slug);
+    // The change itself was refused because the session is gone: now it really is signed out.
+    if (rejected) clearRejectedStaffToken(slug, old);
+  }
+}

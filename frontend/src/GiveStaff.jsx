@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
 import { fmt } from './api.js';
-import { shareLink } from './church.js';
+import { rotateStaffToken, shareLink } from './church.js';
 import Icon from './Icon.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
 import { churchApi, friendly, getStaffToken, givingCapabilities, percent, setStaffToken, signOutStaff, staffApi, tripDates } from './giving.js';
@@ -17,7 +17,14 @@ export default function GiveStaff({ slug, church, go, onPickChurch, onChanged })
     window.addEventListener('belong-staff', sync);
     return () => window.removeEventListener('belong-staff', sync);
   }, [slug]);
-  useEffect(() => { givingCapabilities().then(c => setReady(c.churches)); }, []);
+  // If the giving service is down, keep checking rather than claiming church accounts aren't here yet;
+  // meanwhile a signed-in user still sees "Verifying" and its Sign out.
+  useEffect(() => {
+    let retry;
+    const check = () => givingCapabilities().then(c => { if (c.unavailable) retry = setTimeout(check, 5000); else setReady(c.churches); });
+    check();
+    return () => clearTimeout(retry);
+  }, []);
 
   if (ready === false) return <div className="card give-pad"><h2>Church accounts are almost here.</h2><p>Staff sign-in, Stripe setup and trip applications open as soon as the updated giving service is deployed.</p></div>;
   if (!token) return <SignIn slug={slug} church={church} go={go} onPickChurch={onPickChurch} onSignedIn={t => { setStaffToken(slug, t, { verified: true }); }} />;
@@ -205,8 +212,7 @@ function ChurchSettings({ slug, church, update, fail }) {
   async function changePassword(e) {
     e.preventDefault(); setMsg(''); setErr('');
     try {
-      const res = await staffApi(slug, '/password', { method: 'POST', body: JSON.stringify(pw) });
-      setStaffToken(slug, res.token, { verified: true });
+      await rotateStaffToken(slug, () => staffApi(slug, '/password', { method: 'POST', body: JSON.stringify(pw) }));
       setPw({ current: '', next: '' });
       setMsg('Password changed. Other staff sessions were signed out.');
     } catch (e2) { if (e2.status === 401) fail(e2); else setErr(friendly(e2)); }
