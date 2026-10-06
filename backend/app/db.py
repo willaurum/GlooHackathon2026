@@ -366,13 +366,16 @@ def _create_tables(seed=True):
         SELECT 2, 'The Heart of Service: How Everyday Acts Build Lasting Hope', ?, 'Elena Rostova, Outreach Director', ?, ?, {NOW}, {NOW}
         WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2)""", (post2_content, post2_cats, post2_bullets)))
 
-    # Short updates for News, each pointing to the page that acts on it.
+    # More News posts: mostly short updates that point somewhere, plus articles with key takeaways.
     for post in json.loads(Path(__file__).with_name('news_posts.json').read_text(encoding='utf-8')):
         posted = post['date'] + 'T12:00:00Z'
-        statements.append(("""INSERT INTO blog_posts (title, content, author, categories, kind, link_url, link_label, created_at, updated_at)
-            SELECT ?, ?, 'Church Staff', ?, 'update', ?, ?, ?, ?
+        categories = post.get('categories') or [post['category']]
+        statements.append(("""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?)""",
-            (post['title'], post['content'], json.dumps([post['category']]), post['link_url'], post['link_label'], posted, posted, post['title'])))
+            (post['title'], post['content'], post.get('author', 'Church Staff'), json.dumps(categories),
+             json.dumps(post.get('bullet_summary', [])), post.get('kind', 'update'),
+             post.get('link_url', ''), post.get('link_label', ''), posted, posted, post['title'])))
 
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "

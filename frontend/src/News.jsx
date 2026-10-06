@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
+import samples from './data/newsSamples.json';
 
 // News holds two kinds of post: short updates that point somewhere (a page on this site or
 // another website), and longer articles with key takeaways, where a link is optional.
@@ -13,6 +14,19 @@ const PAGES = [['serve', 'Serve'], ['serve/find', 'Find a place to serve'], ['ca
 const isWebLink = url => /^https?:\/\//.test(url);
 // An article longer than this opens with its takeaways and a "Read the full article" button.
 const LONG = 420;
+
+// A post from before News had kinds is an article.
+const normalize = p => ({ ...p, kind: p.kind === 'update' ? 'update' : 'article', categories: p.categories || [], bullet_summary: p.bullet_summary || [] });
+
+// Branch previews share the live church API, which only deploys from main. Until it has News
+// (its posts carry no kind), the demo church shows the sample posts it will seed, so a preview
+// has updates to look at. Remove this and data/newsSamples.json once the API is deployed.
+const SAMPLES = samples.map((s, i) => normalize({
+  ...s, id: `sample-${i}`, sample: true, kind: s.kind || 'update', author: s.author || 'Church Staff',
+  categories: s.categories || [s.category], created_at: s.date + 'T12:00:00Z',
+}));
+const withSamples = (posts, demo) => !demo || posts.some(p => 'kind' in p) ? posts.map(normalize)
+  : [...posts.map(normalize), ...SAMPLES.filter(s => !posts.some(p => p.title === s.title))].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
 const dateLabel = iso => {
   const d = new Date(iso);
@@ -28,7 +42,7 @@ function PostLink({ post, go }) {
 
 export default function News({ go }) {
   // Writing, deleting and summarizing posts is staff work; the Worker enforces it too.
-  const { staff } = useChurch();
+  const { staff, demo } = useChurch();
   const [posts, setPosts] = useState(null), [error, setError] = useState('');
   const [kind, setKind] = useState('all'), [category, setCategory] = useState('');
   const [events, setEvents] = useState([]);
@@ -36,14 +50,14 @@ export default function News({ go }) {
 
   function load() {
     setError('');
-    api('/blog').then(setPosts).catch(e => { setPosts([]); setError(e.message || 'Could not load the news.'); });
+    api('/blog').then(ps => setPosts(withSamples(ps, demo))).catch(e => { setPosts([]); setError(e.message || 'Could not load the news.'); });
   }
   useEffect(load, []);
   useEffect(() => { api('/church').then(c => setEvents(c.events || [])).catch(() => {}); }, []);
 
   const shown = (posts || []).filter(p => (kind === 'all' || p.kind === kind)
     && (!category || p.categories.some(c => c.toLowerCase() === category.toLowerCase())));
-  const replace = post => setPosts(ps => ps.map(p => p.id === post.id ? post : p));
+  const replace = post => setPosts(ps => ps.map(p => p.id === post.id ? normalize(post) : p));
 
   async function remove(post) {
     if (!window.confirm(`Delete "${post.title}"?`)) return;
@@ -79,7 +93,7 @@ export default function News({ go }) {
       <button className="secondary wide" onClick={() => go('calendar')}><Icon name="calendar" size={18} />Full calendar</button>
       <button className="secondary wide" onClick={() => go('prayer')}><Icon name="compass" size={18} />News from around the world</button>
     </aside>
-    {staff && writing && <Composer onClose={() => setWriting(false)} onPublished={post => { setPosts(ps => [post, ...(ps || [])]); setWriting(false); }} />}
+    {staff && writing && <Composer onClose={() => setWriting(false)} onPublished={() => { setWriting(false); load(); }} />}
   </div>;
 }
 
@@ -88,7 +102,7 @@ function Meta({ post, staff, onCategory, onDelete, label }) {
     {label && <span className="news-kind">{label}</span>}
     {post.categories.map(c => <button key={c} className="badge" title={`Show only ${c}`} onClick={() => onCategory(c)}>{c}</button>)}
     <small>{dateLabel(post.created_at)}</small>
-    {staff && <button className="icon-btn news-delete" title="Delete post" aria-label={`Delete ${post.title}`} onClick={() => onDelete(post)}><Icon name="trash" size={16} /></button>}
+    {staff && !post.sample && <button className="icon-btn news-delete" title="Delete post" aria-label={`Delete ${post.title}`} onClick={() => onDelete(post)}><Icon name="trash" size={16} /></button>}
   </div>;
 }
 
@@ -120,7 +134,7 @@ function Article({ post, go, staff, onChange, ...rest }) {
     {(takeaways.length > 0 || staff) && <div className="takeaways">
       <div className="takeaways-head">
         <strong><Icon name="sparkle" size={16} />Key takeaways</strong>
-        {staff && <button className="link" disabled={summarizing} onClick={summarize}>
+        {staff && !post.sample && <button className="link" disabled={summarizing} onClick={summarize}>
           <Icon name={takeaways.length ? 'refresh' : 'sparkle'} size={14} />
           {summarizing ? 'Writing…' : takeaways.length ? 'Rewrite' : 'Write key takeaways'}
         </button>}
