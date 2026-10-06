@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, churchCapabilities, gapi, setApiChurch } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
-import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, shareLink } from './church.js';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import ChurchStart from './ChurchStart.jsx';
 import Give from './Give.jsx';
-import { churchApi, givingCapabilities } from './giving.js';
+import { churchApi, givingCapabilities, staffApi } from './giving.js';
 import Home from './Home.jsx';
 import { PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
@@ -63,7 +63,8 @@ export default function App() {
     [apiReady, setApiReady] = useState(null),
     [listing, setListing] = useState(null),
     [listingVersion, setListingVersion] = useState(0),
-    [staffVersion, setStaffVersion] = useState(0);
+    [staffVersion, setStaffVersion] = useState(0),
+    [verifiedStaff, setVerifiedStaff] = useState(null);
   const { slug, source, route } = where;
   const demo = slug === DEMO_CHURCH;
   // Every api() call from here down is for this church.
@@ -109,6 +110,19 @@ export default function App() {
     })();
     return () => { live = false; };
   }, [slug, listingVersion]);
+  // A stored token is not proof of admin access: validate it for this church before showing controls.
+  const staffToken = getStaffToken(slug);
+  useEffect(() => {
+    let live = true;
+    setVerifiedStaff(null);
+    if (!staffToken) return;
+    staffApi(slug, '/session').then(session => {
+      if (!live) return;
+      if (session.slug === slug) setVerifiedStaff({ slug, token: staffToken });
+      else setStaffToken(slug, '');
+    }).catch(() => { /* Keep public browsing available if sign-in cannot be verified. */ });
+    return () => { live = false; };
+  }, [slug, staffToken, staffVersion]);
   // Lock page scroll behind the full-screen chat on phones.
   useEffect(() => { document.body.classList.toggle('chat-open', chatOpen); }, [chatOpen]);
 
@@ -153,7 +167,7 @@ export default function App() {
 
   const name = listing?.name || (demo ? DEMO_INFO.name : '');
   const ready = demo || apiReady === true;
-  const staff = !!getStaffToken(slug);
+  const staff = verifiedStaff?.slug === slug && verifiedStaff?.token === staffToken;
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
     // After staff rename the church in Church setup.
@@ -202,8 +216,8 @@ export default function App() {
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">
         <WorkspaceBar />
-        {/* Keyed by church, so switching churches reloads every page for the new one. */}
-        <main key={slug}>
+        {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
+        <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
           <footer className="site-footer">
             <b>belong.</b>

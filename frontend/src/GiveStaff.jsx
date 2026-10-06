@@ -3,7 +3,7 @@ import { fmt } from './api.js';
 import { shareLink } from './church.js';
 import Icon from './Icon.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
-import { churchApi, friendly, getStaffToken, givingCapabilities, percent, setStaffToken, staffApi, tripDates } from './giving.js';
+import { churchApi, friendly, getStaffToken, givingCapabilities, percent, setStaffToken, signOutStaff, staffApi, tripDates } from './giving.js';
 
 const VIEWS = [['overview', 'Overview'], ['funds', 'Funds & trips'], ['applications', 'Applications'], ['gifts', 'Gifts']];
 
@@ -47,8 +47,8 @@ function Dashboard({ slug, go, onChanged, onSignedOut }) {
   useEffect(() => { staffApi(slug, '').then(setData).catch(fail); }, [slug]);
   function update(next) { setData(next); onChanged(); }
   async function signOut() {
-    await staffApi(slug, '/logout', { method: 'POST' }).catch(() => {});
-    onSignedOut();
+    try { await signOutStaff(slug); onSignedOut(); }
+    catch (err) { fail(err); }
   }
   if (err) return <div className="card give-pad give-error" role="alert"><h2>Could not load the staff area.</h2><p>{err}</p></div>;
   if (!data) return <div className="card give-pad"><p role="status">Loading your church…</p></div>;

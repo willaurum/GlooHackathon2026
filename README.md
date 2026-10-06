@@ -38,6 +38,24 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 - Before opening a PR, merge the latest `jaron-frontend` into your branch so conflicts are fixed on your side. `App.jsx`, `Layout.jsx` and `styles.css` change often.
 - `jaron-frontend` goes to `main` once it is production ready. A push to `main` deploys the frontend and the APIs.
 
+## Visitors and church admin permissions
+
+Visitors browse without an account. Staff sign in at **Staff sign in / Church setup**
+(`#/setup`, or `#/c/<slug>/setup`) with the password chosen when that church signed up.
+There are no individual member accounts or member commenting permissions yet.
+
+Staff sessions apply only to their own church. Admin controls appear only after the
+session is validated. Calendar creation and summary generation, request review, saved
+connections, the welcome queue, prayer prompt generation and church setup require staff
+on every church, including Grace Community. Public event and summary reads remain open.
+The shared AI model setting requires the operator API key, even on the demo church.
+Sign out revokes the session on the server; expired or revoked sessions lose admin access.
+
+Blog reads and staff-only write/categorize/summarize/delete/approve route permissions are
+prepared for Ben's PR #52. That feature has not been merged into this branch: its UI must
+hide editing controls for visitors when integrated. A separate draft/approval workflow
+is not implemented by these permission rules.
+
 ## Repo layout
 
 | Path | What's in it |
@@ -128,10 +146,10 @@ The first request for a church creates its tables. Only the demo church is seede
 | Routes | Demo church | Any other church |
 |---|---|---|
 | Info, church, ministries, events, matches, chat, guest sign-up and "I am here", prayer map, verse | public | public |
-| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | public, as before (shared demo workspace) | that church staff |
+| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
 | Sermon Notes and the chat log | `NOTES_API_KEY` or that church staff | `NOTES_API_KEY` or that church staff |
-| The shared AI model setting (`POST /api/ai/model`) | public, as before | `NOTES_API_KEY` |
+| The shared AI model setting (`POST /api/ai/model`) | `NOTES_API_KEY` | `NOTES_API_KEY` |
 
 The demo church staff password is the `ADMIN_KEY` var in `api-giving/wrangler.jsonc`.
 

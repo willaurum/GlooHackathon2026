@@ -9,12 +9,24 @@ export { DEMO_CHURCH, getStaffToken, setStaffToken };
 export const churchApi = (slug, path = '', options = {}) => gapi('/api/churches/' + encodeURIComponent(slug) + path, options);
 
 export async function staffApi(slug, path, options = {}) {
+  const token = getStaffToken(slug);
   try {
-    return await churchApi(slug, '/admin' + path, { ...options, headers: { ...(options.headers || {}), Authorization: 'Bearer ' + getStaffToken(slug) } });
+    return await churchApi(slug, '/admin' + path, { ...options, headers: { ...(options.headers || {}), Authorization: 'Bearer ' + token } });
   } catch (err) {
-    if (err.status === 401) setStaffToken(slug, '');
+    if (err.status === 401 && getStaffToken(slug) === token) setStaffToken(slug, '');
     throw err;
   }
+}
+
+// Revoke the server session before clearing this tab. Keep it on network failure so staff can retry.
+export async function signOutStaff(slug) {
+  const token = getStaffToken(slug);
+  try {
+    await staffApi(slug, '/logout', { method: 'POST' });
+  } catch (err) {
+    if (err.status !== 401) throw err;
+  }
+  if (getStaffToken(slug) === token) setStaffToken(slug, '');
 }
 
 let capabilities;

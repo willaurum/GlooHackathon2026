@@ -16,7 +16,6 @@ const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const DEMO: Church = { slug: DEMO_SLUG, name: 'Grace Community', city: 'Springfield', demo: true };
 const FOUND_TTL = 60_000;
 const MISSING_TTL = 15_000;
-const STAFF_TTL = 60_000;
 
 export type Church = { slug: string; name: string; city: string; demo: boolean };
 
@@ -32,7 +31,6 @@ export function churchPath(pathname: string): { slug: string; path: string } | n
 
 // Small per-isolate caches so a page load does not ask the registry on every call.
 const directory = new Map<string, { until: number; church: Church | null }>();
-const sessions = new Map<string, number>();
 
 /** The church, null when no church has that slug, or 'unavailable' when the registry cannot be asked. */
 export async function findChurch(env: AppEnv, slug: string): Promise<Church | null | 'unavailable'> {
@@ -70,17 +68,10 @@ export async function findChurch(env: AppEnv, slug: string): Promise<Church | nu
 /** Forget a cached listing, after staff rename their church. */
 export const forgetChurch = (slug: string) => directory.delete(slug);
 
-async function sha256(value: string): Promise<string> {
-	const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
-	return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 /** True when the request carries a valid staff session for this church (Authorization: Bearer <token>). */
 export async function isStaff(request: Request, env: AppEnv, slug: string): Promise<boolean> {
 	const auth = request.headers.get('Authorization') ?? '';
 	if (!/^Bearer [A-Za-z0-9_-]{20,100}$/.test(auth) || !env.GIVING) return false;
-	const key = slug + ':' + (await sha256(auth));
-	if ((sessions.get(key) ?? 0) > Date.now()) return true;
 	try {
 		let response = await env.GIVING.fetch(`https://giving.internal/api/churches/${slug}/admin/session`, { headers: { Authorization: auth } });
 		// An older giving service has no session route; its staff overview needs the same login.
@@ -91,8 +82,6 @@ export async function isStaff(request: Request, env: AppEnv, slug: string): Prom
 	} catch {
 		return false;
 	}
-	if (sessions.size > 500) sessions.clear();
-	sessions.set(key, Date.now() + STAFF_TTL);
 	return true;
 }
 
@@ -104,17 +93,15 @@ const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/(health|church|info|ministries|events|chat\/status|ai\/status|ollama\/status|regions|news)$/],
 	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
 	['GET', /^\/api\/verse$/],
+	['GET', /^\/api\/blog(?:\/(categories|\d+))?$/],
 	['GET', /^\/api\/events\/\d+$/],
 	['GET', /^\/api\/regions\/\d+\/prayer-angles$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
-	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
 ];
 
-// Staff work: the welcome team queue, chat requests, saved connections and adding to the calendar.
-// The demo church leaves these open, because it is a shared demo workspace with no login. Every
-// other church needs its own staff session, since these show guests' names and contact details.
-const DEMO_OPEN_ROUTES: Route[] = [
+// Staff work requires a church session, including on the demo church.
+const STAFF_WORK_ROUTES: Route[] = [
 	['GET', /^\/api\/(connections|requests|visits)$/],
 	['POST', /^\/api\/visits\/\d+\/(claim|met)$/],
 	['POST', /^\/api\/events$/],
@@ -124,12 +111,21 @@ const DEMO_OPEN_ROUTES: Route[] = [
 	['PATCH', /^\/api\/requests\/\d+$/],
 ];
 
-// Settings shared by every church (the AI model). Open on the demo church as before; otherwise the API key.
+// Settings shared by every church (the AI model) require the operator API key.
 const OPERATOR_ROUTES: Route[] = [['POST', /^\/api\/(ai|ollama)\/model$/]];
 
 // Church setup and content import: that church's staff, on every church. (The demo church's staff
 // password is ADMIN_KEY in api-giving.)
-const STAFF_ROUTES: Route[] = [['GET', /^\/api\/church\/content$/], ['PUT', /^\/api\/church\/content$/]];
+const STAFF_ROUTES: Route[] = [
+	['GET', /^\/api\/church\/content$/],
+	['PUT', /^\/api\/church\/content$/],
+	['POST', /^\/api\/regions\/\d+\/prayer-angles$/],
+	// Blog routes match Ben's PR #52; drafting and approval workflows must filter drafts separately.
+	['POST', /^\/api\/blog(?:\/.*)?$/],
+	['PUT', /^\/api\/blog(?:\/.*)?$/],
+	['PATCH', /^\/api\/blog(?:\/.*)?$/],
+	['DELETE', /^\/api\/blog(?:\/.*)?$/],
+];
 
 export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
 
@@ -137,8 +133,8 @@ export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
 export function access(method: string, path: string, demo: boolean): Access {
 	if (matches(STAFF_ROUTES, method, path)) return 'staff';
 	if (matches(PUBLIC_ROUTES, method, path)) return 'public';
-	if (matches(DEMO_OPEN_ROUTES, method, path)) return demo ? 'public' : 'staff';
-	if (matches(OPERATOR_ROUTES, method, path)) return demo ? 'public' : 'key';
+	if (matches(STAFF_WORK_ROUTES, method, path)) return 'staff';
+	if (matches(OPERATOR_ROUTES, method, path)) return 'key';
 	return 'key-or-staff';
 }
 

@@ -75,9 +75,9 @@ test('who may call what', () => {
     assert.equal(access(m, p, false), 'public', m + ' ' + p);
     assert.equal(access(m, p, true), 'public', m + ' ' + p);
   }
-  // Staff work: open on the demo church (as before), staff on every other church.
+  // Staff work requires a session, including on the demo church.
   for (const [m, p] of [['GET', '/api/visits'], ['POST', '/api/visits/3/claim'], ['POST', '/api/visits/3/met'], ['GET', '/api/requests'], ['PATCH', '/api/requests/2'], ['GET', '/api/connections'], ['DELETE', '/api/connections/4'], ['DELETE', '/api/requests/5'], ['POST', '/api/events']]) {
-    assert.equal(access(m, p, true), 'public', m + ' ' + p);
+    assert.equal(access(m, p, true), 'staff', m + ' ' + p);
     assert.equal(access(m, p, false), 'staff', m + ' ' + p);
   }
   // Church setup is staff only, the demo church included.
@@ -107,4 +107,34 @@ test('church subdomains of BASE_DOMAIN are allowed origins', () => {
   assert.equal(onBaseDomain('https://evilbelong.example.org', 'belong.example.org'), false);
   assert.equal(onBaseDomain('https://grace.belong.example.org.evil.test', 'belong.example.org'), false);
   assert.equal(onBaseDomain('https://grace.belong.example.org', ''), false);
+});
+
+
+test('visitors can read posts and summaries but cannot publish, approve or regenerate them', () => {
+  for (const demo of [true, false]) {
+    for (const path of ['/api/blog', '/api/blog/categories', '/api/blog/12', '/api/events', '/api/events/12']) {
+      assert.equal(access('GET', path, demo), 'public', path);
+    }
+    for (const [method, path] of [
+      ['POST', '/api/blog'], ['POST', '/api/blog/categorize'], ['POST', '/api/blog/12/summarize'],
+      ['POST', '/api/blog/12/approve'], ['PATCH', '/api/blog/12'], ['PUT', '/api/blog/12'],
+      ['DELETE', '/api/blog/12'], ['POST', '/api/events/12/summarize'],
+      ['POST', '/api/events/summarize-all'], ['POST', '/api/regions/12/prayer-angles'],
+    ]) assert.equal(access(method, path, demo), 'staff', method + ' ' + path);
+    assert.equal(access('POST', '/api/ai/model', demo), 'key');
+    assert.equal(access('POST', '/api/ollama/model', demo), 'key');
+  }
+});
+
+test('revoked sessions lose access immediately and directory failures deny access', async () => {
+  let valid = true;
+  const service = { GIVING: { fetch: async () => valid
+    ? Response.json({ slug: 'revocation-test' })
+    : Response.json({ error: 'Signed out' }, { status: 401 }) } };
+  const request = asStaff('r'.repeat(32));
+  assert.equal(await isStaff(request, service, 'revocation-test'), true);
+  valid = false;
+  assert.equal(await isStaff(request, service, 'revocation-test'), false);
+  assert.equal(await isStaff(request, { GIVING: { fetch: async () => { throw new Error('Offline'); } } }, 'revocation-test'), false);
+  assert.equal(await isStaff(request, {}, 'revocation-test'), false);
 });
