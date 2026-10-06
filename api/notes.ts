@@ -22,6 +22,9 @@ type Answer = { found: boolean; answer: string; citations: Citation[] };
 
 export const ASR_MODEL = '@cf/openai/whisper-large-v3-turbo';
 export const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
+// Sermon-note answers go to Gloo, like the chat. Keep in step with backend/app/chat.py.
+const GLOO_BASE_URL = 'https://platform.ai.gloo.com/ai/v2/guarded';
+const GLOO_DEFAULT_MODEL = 'gloo-qwen-3.7-flash';
 // cls pooling must match between ingest (/embed bridge) and questions.
 const POOLING = 'cls';
 const NOT_FOUND = 'Not found in this note.';
@@ -345,8 +348,10 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string, s
 	return reply(checked, label);
 }
 
-function pickEngine(env: AppEnv, requested: unknown): 'extractive' | 'gemini' | 'workers-ai' {
+function pickEngine(env: AppEnv, requested: unknown): 'extractive' | 'gloo' | 'gemini' | 'workers-ai' {
 	if (requested === 'extractive') return 'extractive';
+	// Gloo answers the questions; only transcription stays on Workers AI (whisper).
+	if (env.GLOO_API_KEY) return 'gloo';
 	if (env.GEMINI_API_KEY) return 'gemini';
 	if (env.NOTES_ANSWER_ENGINE === 'workers-ai') return 'workers-ai';
 	return 'extractive';
@@ -369,9 +374,27 @@ function parseModelJson(reply: unknown): unknown {
 	return start >= 0 && end > start ? JSON.parse(reply.slice(start, end + 1)) : null;
 }
 
-async function askModel(env: AppEnv, engine: 'gemini' | 'workers-ai', church: string, question: string, passages: Scored[]): Promise<[unknown, string]> {
+async function askModel(env: AppEnv, engine: 'gloo' | 'gemini' | 'workers-ai', church: string, question: string, passages: Scored[]): Promise<[unknown, string]> {
 	const system = SYSTEM_PROMPT.replace('{church}', church);
 	const user = passages.map((c, i) => `[C${i + 1}] (${timestamp(c.start)}) ${c.text}`).join('\n\n') + `\n\nQuestion: ${question}`;
+	if (engine === 'gloo') {
+		// Same endpoint and model the chat uses (backend/app/chat.py), over OpenAI chat completions.
+		const model = env.GLOO_MODEL || GLOO_DEFAULT_MODEL;
+		const response = await fetch(`${GLOO_BASE_URL}/chat/completions`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GLOO_API_KEY}` },
+			body: JSON.stringify({
+				auto_routing: false,
+				model,
+				messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+				temperature: 0,
+				max_tokens: 600,
+			}),
+		});
+		if (!response.ok) throw new Error(`gloo ${response.status}: ${(await response.text()).slice(0, 300)}`);
+		const out = await response.json<any>();
+		return [parseModelJson(out.choices?.[0]?.message?.content ?? ''), `gloo:${model}`];
+	}
 	if (engine === 'gemini') {
 		const model = env.GEMINI_MODEL;
 		const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
