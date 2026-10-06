@@ -12,7 +12,9 @@ a church creates its tables; only the demo church is seeded with the JSON files.
 
 import os
 import json
+import logging
 import secrets
+import sqlite3
 import threading
 import contextvars
 from contextlib import contextmanager
@@ -20,9 +22,14 @@ from pathlib import Path
 
 import httpx
 
+log = logging.getLogger(__name__)
+
 CHURCH_DB_URL = os.environ.get("CHURCH_DB_URL", "http://church-db")
 
-_client = httpx.Client(base_url=CHURCH_DB_URL, timeout=30)
+_USE_LOCAL_SQLITE = CHURCH_DB_URL.startswith("sqlite")
+
+_client = httpx.Client(base_url="http://church-db" if _USE_LOCAL_SQLITE else CHURCH_DB_URL, timeout=30)
+_sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
@@ -38,6 +45,30 @@ _church = contextvars.ContextVar('church', default=(DEMO_CHURCH, '', ''))
 _ready = set()
 _initializing = set()
 _init_lock = threading.RLock()
+
+
+def _get_sqlite_conn(slug: str = DEMO_CHURCH):
+    global _sqlite_conns
+    if slug not in _sqlite_conns:
+        db_dir = Path(os.environ.get("SQLITE_DB_DIR", "/app" if Path("/app").exists() else "."))
+        db_file = db_dir / f"church_{slug}.db" if slug != DEMO_CHURCH else db_dir / "church.db"
+        conn = sqlite3.connect(db_file, check_same_thread=False)
+        conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
+        _sqlite_conns[slug] = conn
+    return _sqlite_conns[slug]
+
+
+def _run_local_sqlite(slug, *statements):
+    conn = _get_sqlite_conn(slug)
+    results = []
+    with conn:
+        for sql, params in statements:
+            p = [int(x) if isinstance(x, bool) else x for x in params]
+            cursor = conn.execute(sql, p)
+            rows = cursor.fetchall() if cursor.description else []
+            rows_written = cursor.rowcount if cursor.rowcount > 0 else 0
+            results.append({'rows': rows, 'rowsWritten': rows_written})
+    return results
 
 
 def current_church():
@@ -71,6 +102,12 @@ def run(*statements):
     slug = current_church()
     if slug not in _ready:
         _ensure_ready(slug)
+
+    # Local SQLite only when asked for explicitly (docker-compose sets CHURCH_DB_URL=sqlite).
+    # A church-db failure must surface as an error, never as a silent switch to a local file.
+    if _USE_LOCAL_SQLITE:
+        return _run_local_sqlite(slug, *statements)
+
     batch = [{'sql': sql, 'params': [int(p) if isinstance(p, bool) else p for p in params]}
              for sql, params in statements]
     response = _client.post('/sql', json={'batch': batch}, headers={'X-Church': slug})
@@ -88,7 +125,15 @@ def one(sql, params=()):
 
 
 def close():
+    global _sqlite_conns
     _client.close()
+    for conn in _sqlite_conns.values():
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _sqlite_conns.clear()
+
 
 
 def _data(row):
@@ -228,6 +273,16 @@ def _create_tables(seed=True):
             data TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
+        (f"""CREATE TABLE IF NOT EXISTS blog_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            author TEXT NOT NULL DEFAULT 'Church Staff',
+            categories TEXT NOT NULL DEFAULT '[]',
+            bullet_summary TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT {NOW},
+            updated_at TEXT NOT NULL DEFAULT {NOW}
+        )""", ()),
         ("INSERT OR IGNORE INTO config VALUES ('church', ?)", (json.dumps(DEFAULT_CONFIG),)),
         # A restart interrupts any job that was running; let it be retried.
         ("UPDATE notes SET status = 'failed', error = 'interrupted' WHERE status = 'processing'", ()),
@@ -253,6 +308,46 @@ def _create_tables(seed=True):
     if news_file.exists():
         for item in json.loads(news_file.read_text(encoding='utf-8')):
             statements.append(("INSERT OR IGNORE INTO news_events VALUES (?, ?)", (item['id'], json.dumps(item))))
+
+    # Seed 2 initial blog posts
+    post1_cats = json.dumps(["Faith & Discipleship", "Community", "Spiritual Growth"])
+    post1_bullets = json.dumps([
+        "Life transitions can test our sense of security, but enduring joy is found in God's steadfast presence rather than changing circumstances.",
+        "Honest prayer and small group fellowship provide essential community anchors during seasons of uncertainty.",
+        "Practicing daily gratitude and meditating on Scripture helps cultivate peace and mutual grace across the church family."
+    ])
+    post1_content = (
+        "Life has a way of shifting our footing when we least expect it. Whether transitioning to a new career, "
+        "welcoming a child, or grieving a difficult loss, changes can test our sense of security and clarity. In these seasons, "
+        "we are invited to remember that our hope is not anchored in our shifting circumstances, but in the steadfast love and faithfulness of Christ.\n\n"
+        "True spiritual joy is not the absence of difficulty; it is the presence of God in the midst of it. When we engage in honest prayer and open our "
+        "lives to Christian community, we discover that we never have to walk uncharted seasons alone. Our church small groups and weekly fellowship remind "
+        "us that we are part of a family bound together by grace.\n\n"
+        "As we step into this upcoming season together, let us practice daily gratitude, remain rooted in Scripture, and extend grace generously to ourselves "
+        "and those around us. In every season of change, God is quietly at work molding us into who He made us to be."
+    )
+    statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
+        SELECT 1, 'Walking in Faith: Cultivating Joy in Seasons of Change', ?, 'Pastor Marcus Vance', ?, ?, {NOW}, {NOW}
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1)""", (post1_content, post1_cats, post1_bullets)))
+
+    post2_cats = json.dumps(["Local Outreach", "Volunteering", "Compassion Ministry"])
+    post2_bullets = json.dumps([
+        "God's kingdom is revealed most powerfully through everyday, faithful acts of kindness and practical care.",
+        "Serving local families with food distribution and mentoring shows neighbors they are valued and loved.",
+        "Volunteering shifts our focus outward, fostering personal spiritual renewal while meeting real community needs."
+    ])
+    post2_content = (
+        "It is easy to imagine that making a difference in the world requires grand gestures or extraordinary platforms. Yet throughout the Gospels, "
+        "Jesus consistently revealed the kingdom of God through simple, faithful acts: sharing a meal, washing feet, listening with compassion, and meeting immediate physical needs.\n\n"
+        "Here at Grace Community, our local outreach ministries and community food drives are built on this same conviction. When volunteers show up on a Saturday morning "
+        "to pack grocery hampers or mentor a neighborhood child, we are offering more than practical aid; we are communicating to our neighbors that they are seen, valued, and loved by God.\n\n"
+        "Stepping out to serve also transforms our own hearts. It moves our attention from our personal anxieties to the needs of others, expanding our vision of what God is doing "
+        "across our city. We encourage everyone, whether you have an hour a month or a day a week, to find a place to connect and serve."
+    )
+    statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
+        SELECT 2, 'The Heart of Service: How Everyday Acts Build Lasting Hope', ?, 'Elena Rostova, Outreach Director', ?, ?, {NOW}, {NOW}
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2)""", (post2_content, post2_cats, post2_bullets)))
+
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
@@ -667,3 +762,91 @@ def save_angle(region_id, angle, summary, prayer_points, source_news_ids):
         row['prayer_points'] = json.loads(row['prayer_points'])
         row['source_news_ids'] = json.loads(row['source_news_ids'])
     return row
+
+
+# --- Blog posts ---
+
+BLOG_COLUMNS = "id, title, content, author, categories, bullet_summary, created_at, updated_at"
+
+
+def _format_blog_post(row):
+    if not row:
+        return None
+    categories = row.get("categories")
+    if isinstance(categories, str):
+        try:
+            categories = json.loads(categories)
+        except Exception:
+            categories = [categories] if categories else []
+    elif not isinstance(categories, list):
+        categories = []
+
+    bullet_summary = row.get("bullet_summary")
+    if isinstance(bullet_summary, str):
+        try:
+            parsed = json.loads(bullet_summary)
+            if isinstance(parsed, list):
+                bullet_summary = parsed
+            else:
+                bullet_summary = [s.strip() for s in bullet_summary.split("\n") if s.strip()]
+        except Exception:
+            bullet_summary = [s.strip() for s in bullet_summary.split("\n") if s.strip()]
+    elif not isinstance(bullet_summary, list):
+        bullet_summary = []
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "content": row["content"],
+        "author": row.get("author") or "Church Staff",
+        "categories": categories,
+        "bullet_summary": bullet_summary,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def list_blog_posts(category: str | None = None):
+    rows = query(f"SELECT {BLOG_COLUMNS} FROM blog_posts ORDER BY id DESC")
+    posts = [_format_blog_post(r) for r in rows]
+    if category and category.strip():
+        cat_lower = category.strip().lower()
+        posts = [p for p in posts if any(cat_lower == c.lower() for c in p["categories"])]
+    return posts
+
+
+def get_blog_post(post_id: int):
+    row = one(f"SELECT {BLOG_COLUMNS} FROM blog_posts WHERE id = ?", (post_id,))
+    return _format_blog_post(row)
+
+
+def create_blog_post(title: str, content: str, author: str, categories: list[str], bullet_summary: list[str] | None = None):
+    cats_json = json.dumps(categories if isinstance(categories, list) else [])
+    summary_json = json.dumps(bullet_summary if isinstance(bullet_summary, list) else [])
+    row = one(f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, {NOW}, {NOW})
+        RETURNING {BLOG_COLUMNS}""", (title.strip(), content.strip(), author.strip() or "Church Staff", cats_json, summary_json))
+    return _format_blog_post(row)
+
+
+def update_blog_post_summary(post_id: int, bullet_summary: list[str]):
+    summary_json = json.dumps(bullet_summary if isinstance(bullet_summary, list) else [])
+    row = one(f"""UPDATE blog_posts SET bullet_summary = ?, updated_at = {NOW}
+        WHERE id = ?
+        RETURNING {BLOG_COLUMNS}""", (summary_json, post_id))
+    return _format_blog_post(row)
+
+
+def delete_blog_post(post_id: int):
+    return run(("DELETE FROM blog_posts WHERE id = ?", (post_id,)))[0]['rowsWritten'] > 0
+
+
+def list_blog_categories():
+    posts = list_blog_posts()
+    unique_cats = set()
+    for p in posts:
+        for cat in p.get("categories", []):
+            if cat.strip():
+                unique_cats.add(cat.strip())
+    return sorted(unique_cats)
+
