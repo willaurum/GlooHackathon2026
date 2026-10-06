@@ -250,9 +250,9 @@ export default function App() {
         <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
           <footer className="site-footer">
-            <b>tekton.</b>
             <span>{name || 'Your church'} · Helping people find their people.</span>
-            {demo ? <small>Demo site. Church details, people and contacts are fictional.</small> : <small>Powered by Tekton</small>}
+            {demo && <small>Demo site. Church details, people and contacts are fictional.</small>}
+            <small className="powered-by">Powered by Tekton</small>
           </footer>
         </main>
       </div>

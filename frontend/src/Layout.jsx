@@ -40,10 +40,6 @@ export function Avatar() {
   return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
 }
 
-export function Brand({ onClick }) {
-  return <a className="brand" href="#/" onClick={e => { e.preventDefault(); onClick(); }}><b>t</b>tekton<span>.</span></a>;
-}
-
 export function Sidebar({ route, go, savedCount }) {
   const { demo, staff } = useChurch();
   const user = identity(staff);
@@ -62,7 +58,6 @@ export function Sidebar({ route, go, savedCount }) {
         </div>}
       </div>)}
     </nav>
-    <small className="powered-by">Powered by Tekton</small>
     <div className="profile">
       <Avatar />
       <div><strong>{user.name}</strong><small>{user.role}</small></div>
@@ -72,7 +67,6 @@ export function Sidebar({ route, go, savedCount }) {
 
 export function TopBar({ go, onAsk }) {
   return <header className="topbar">
-    <Brand onClick={() => go('')} />
     <ChurchName compact />
     <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Tekton" onClick={onAsk}><Icon name="chat" /></button>
