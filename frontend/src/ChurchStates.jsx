@@ -4,7 +4,7 @@ import Icon from './Icon.jsx';
 
 const SECTION_NAMES = { '': 'This page', guests: 'Plan your visit', serve: 'Serving', notes: 'Sermon Notes', calendar: 'The calendar', prayer: 'The prayer map', setup: 'Church setup' };
 
-// A church that signed up before the church API was updated: giving works, the rest waits for the deploy.
+// Giving works while the church API waits for deployment.
 export function ChurchNotReady({ section }) {
   const { name, go } = useChurch();
   return <div className="page">
@@ -12,7 +12,7 @@ export function ChurchNotReady({ section }) {
       <span className="icon color1"><Icon name="sparkle" size={24} /></span>
       <div className="eyebrow">{name}</div>
       <h1>{SECTION_NAMES[section] ?? 'This page'} is almost ready.</h1>
-      <p>{name} is signed up, and online giving already works. Visits, serving, sermons, the calendar and the chat open here as soon as the updated church service is deployed. Nothing for you to do.</p>
+      <p>Online giving already works for {name}. Visits, serving, sermons, the calendar and the chat open here as soon as the updated church service is deployed. Nothing for you to do.</p>
       <div className="hero-actions">
         <button className="primary" onClick={() => go('give')}><Icon name="heart" size={18} />Go to giving</button>
       </div>
@@ -21,15 +21,14 @@ export function ChurchNotReady({ section }) {
 }
 
 export function ChurchMissing() {
-  const { choose, go } = useChurch();
+  const { choose } = useChurch();
   return <div className="page">
     <section className="card church-state" role="alert">
       <span className="icon color0"><Icon name="search" size={24} /></span>
       <h1>We could not find that church.</h1>
-      <p>The link may be old, or the church may have changed its address. Ask your church for its current link. You can also look around the demo church, or add your own church.</p>
+      <p>The link may be old, or the church may have changed its address. Ask your church for its current link. You can also look around the demo church.</p>
       <div className="hero-actions">
         <button className="primary" onClick={() => choose(DEMO_CHURCH)}>See the demo church</button>
-        <button className="secondary" onClick={() => go('start')}><Icon name="plus" size={18} />Add your church</button>
       </div>
     </section>
   </div>;

@@ -35,26 +35,28 @@ export default function ChurchSetup() {
 
 export function StaffSignIn() {
   const church = useChurch();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [ready, setReady] = useState(null);
   useEffect(() => whenCapabilitiesKnown(givingCapabilities, setReady), []);
   async function submit(e) {
     e.preventDefault();
     setErr(''); setBusy(true);
     try {
-      const res = await churchApi(church.slug, '/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
+      const res = await churchApi(church.slug, '/admin/login', { method: 'POST', body: JSON.stringify({ password, ...(email.trim() ? { email: email.trim() } : {}) }) });
       setPassword('');
       setStaffToken(church.slug, res.token, { verified: true });
     } catch (e2) { setErr(friendly(e2)); }
     finally { setBusy(false); }
   }
   return <form className="card give-pad staff-signin" onSubmit={submit}>
-    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use the staff password your church chose when it signed up. It is the same password as Give, then Church staff.</p></div></div>
+    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Give, then Church staff.</p></div></div>
     {ready === false && <div className="banner demo" role="status"><Icon name="sparkle" /><span>Staff sign-in opens as soon as the updated service is deployed.</span></div>}
     {church.demo && <p className="form-note">This is the shared demo church, so anything you change here is visible to everyone.</p>}
+    <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
     <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
-    <p className="form-note">Not signed up yet? <button type="button" className="link" onClick={() => church.go('start')}>Add your church<Icon name="arrow" size={16} /></button></p>
+    <p className="form-note">Need an account? Ask your church Owner to add you in Give → Church staff → Team.</p>
   </form>;
 }
 
