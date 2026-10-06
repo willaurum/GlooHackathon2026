@@ -32,13 +32,15 @@ export async function verifyStaffSession(slug) {
 // Revoke the server session before clearing this tab. Keep it on network failure so staff can retry.
 export async function signOutStaff(slug) {
   const token = getStaffToken(slug);
-  noteStaffSignOut(slug);
+  const settled = noteStaffSignOut(slug);
   try {
-    await staffApi(slug, '/logout', { method: 'POST' });
-  } catch (err) {
-    if (err.status !== 401) throw err;
-  }
-  if (getStaffToken(slug) === token) setStaffToken(slug, '');
+    try {
+      await staffApi(slug, '/logout', { method: 'POST' });
+    } catch (err) {
+      if (err.status !== 401) throw err;
+    }
+    if (getStaffToken(slug) === token) setStaffToken(slug, '');
+  } finally { settled(); }
 }
 
 /** Revoke a session this tab is not keeping (a password change that finished after sign-out). Best effort. */

@@ -156,6 +156,25 @@ test('sign-out wins even when the password change answers first', async () => {
   } finally { globalThis.fetch = originalFetch; storage.clear(); }
 });
 
+test('a password change submitted while sign-out is still waiting does not sign back in', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    setStaffToken('hope-chapel', 'a'.repeat(32), { verified: true });
+    let finishLogout;
+    globalThis.fetch = () => new Promise(resolve => { finishLogout = () => resolve(Response.json({ ok: true })); });
+    const signOut = signOutStaff('hope-chapel'); // clicked first
+    const rotation = rotateStaffToken('hope-chapel', async () => ({ token: 'b'.repeat(32) })); // then a password change
+    assert.equal((await rotation).installed, false);
+    finishLogout();
+    await signOut;
+    assert.equal(getStaffToken('hope-chapel'), '');
+    // Once sign-out has settled, a fresh sign-in and password change work normally again.
+    setStaffToken('hope-chapel', 'c'.repeat(32), { verified: true });
+    assert.equal((await rotateStaffToken('hope-chapel', async () => ({ token: 'd'.repeat(32) }))).installed, true);
+    assert.equal(getStaffToken('hope-chapel'), 'd'.repeat(32));
+  } finally { globalThis.fetch = originalFetch; storage.clear(); }
+});
+
 test('whenCapabilitiesKnown keeps checking while a service is unreachable, then reports it', async () => {
   const answers = [{ churches: false, unavailable: true }, { churches: true }];
   const originalSetTimeout = globalThis.setTimeout;
