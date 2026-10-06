@@ -864,7 +864,25 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .map-shell{height:480px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);position:relative}.map-shell .leaflet-tile-pane{filter:saturate(.55) sepia(.12) hue-rotate(-6deg) brightness(1.03)}
 .news-pin{background:var(--danger);border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px #00000040}
 @keyframes pulseGlow{0%,100%{opacity:.4}50%{opacity:.72}}
-.region-glow{animation:pulseGlow 4s ease-in-out infinite;filter:blur(5px)}
+.region-glow{animation:pulseGlow 4s ease-in-out infinite;filter:blur(5px);cursor:pointer;transition:fill-opacity .2s}.region-glow:hover{fill-opacity:.65}.region-glow.selected{animation:none;filter:none}
+/* Country beacons: the center of a country, never a team's real location. */
+@keyframes beaconPulse{0%{transform:scale(.6);opacity:.8}100%{transform:scale(2.8);opacity:0}}
+.beacon{cursor:pointer}.beacon>span{position:absolute}
+.beacon-ring{inset:0;border-radius:50%;background:var(--green-600);animation:beaconPulse 2.4s ease-out infinite}.beacon-ring.delay{animation-delay:1.2s}
+.beacon-core{inset:3px;border-radius:50%;background:var(--green-700);border:2px solid #fff;box-shadow:0 1px 4px #00000040;transition:transform .15s}
+.beacon:hover .beacon-core,.beacon.selected .beacon-core{transform:scale(1.25)}
+.beacon-label{left:24px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#fff;color:var(--green-700);font:700 12px var(--font);padding:3px 8px;border-radius:12px;box-shadow:0 1px 4px #00000026}
+.beacon.selected .beacon-label{background:var(--green-700);color:#fff}.beacon.selected .beacon-ring{background:var(--green-700)}
+@media (prefers-reduced-motion: reduce){.beacon-ring{animation:none;opacity:0}}
+/* Region details: testimony and news side by side, then prayer points. */
+.source-columns{display:grid;grid-template-columns:1fr 1fr;margin-top:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.source-block{padding:16px 20px 18px 0}.source-block+.source-block{padding:16px 0 18px 20px;border-left:1px solid var(--line)}.source-block p{font-size:15px}
+.source-label{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;color:var(--muted);margin-bottom:8px}
+.source-block article+article{margin-top:12px}.source-block b{display:block;font-size:14px;color:var(--ink)}.source-block small{font-size:12px}
+.prayer-points{padding-top:16px}.prayer-points>b{display:block;font-size:14px;color:var(--ink)}.prayer-points ul{margin:10px 0 0;padding-left:18px;line-height:1.7;color:var(--text);font-size:15px;list-style:disc}.prayer-points .primary{margin-top:16px}
+.prayer-points .angle-pill{margin:0 0 0 10px;vertical-align:middle}
+@media(max-width:600px){.source-columns{grid-template-columns:1fr}.source-block,.source-block+.source-block{padding:14px 0;border-left:0}.source-block+.source-block{border-top:1px solid var(--line)}}
+
 .prayer-card{position:relative;padding:28px;margin-top:20px}.prayer-card h2{margin-top:12px}
 .angle-pill{display:inline-block;font-size:9px;letter-spacing:.6px;text-transform:uppercase;background:var(--green-100);color:var(--green-700);border-radius:20px;padding:5px 11px;margin-top:14px;font-weight:700}
 .situational-summary{margin-top:12px}

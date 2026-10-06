@@ -49,6 +49,7 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}}
       AI_MODEL: ${AI_MODEL:-${OLLAMA_MODEL:-qwen3.8:27b}}
       AI_API_KEY: ${AI_API_KEY:-}
+      NEWSDATA_API_KEY: ${NEWSDATA_API_KEY:-}
     # Local dev only: reload on code changes (start.sh, the production entrypoint, does not).
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:

@@ -304,8 +304,11 @@ def _create_tables(seed=True):
     if regions_file.exists():
         for region in json.loads(regions_file.read_text(encoding='utf-8')):
             statements.append(("INSERT OR IGNORE INTO regions VALUES (?, ?)", (region['id'], json.dumps(region))))
+    # Real headlines (news_live.json, from scripts/fetch_news.py) replace the news after this batch;
+    # the fictional news.json is only the fallback when there is no live snapshot.
+    live_news = _live_news()
     news_file = Path(__file__).with_name('news.json')
-    if news_file.exists():
+    if news_file.exists() and not live_news:
         for item in json.loads(news_file.read_text(encoding='utf-8')):
             statements.append(("INSERT OR IGNORE INTO news_events VALUES (?, ?)", (item['id'], json.dumps(item))))
 
@@ -354,6 +357,8 @@ def _create_tables(seed=True):
     run(*(s for s in statements if seed or not s[0].lstrip().upper().startswith('INSERT')))
     if not seed:
         return
+    if live_news:
+        replace_news(live_news)
     # Backfill shift schedules and requirements into existing ministries without overwriting.
     seeds = {m['id']: m for m in ministries}
     updates = []
@@ -737,6 +742,18 @@ def get_region(region_id):
 
 def list_news():
     return [_data(row) for row in query("SELECT data FROM news_events ORDER BY id")]
+
+
+def _live_news():
+    live_file = Path(__file__).with_name('news_live.json')
+    return json.loads(live_file.read_text(encoding='utf-8')) if live_file.exists() else []
+
+
+def replace_news(items):
+    """Replace every news row of the current church with `items`, in one transaction."""
+    run(("DELETE FROM news_events", ()),
+        *[("INSERT INTO news_events VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+           (item['id'], json.dumps(item))) for item in items])
 
 
 def news_for_country(country_code):

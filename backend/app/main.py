@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai, ai_client, blog_ai, chat, church_content, db, pastor_notes, recommendations
+from . import ai, ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations, summarize
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -325,6 +326,19 @@ def regions():
 @app.get('/api/news', response_model=list[NewsEventOut])
 def news():
     return db.list_news()
+
+
+@app.post('/api/news/refresh')
+def refresh_news():
+    """Pull live headlines from NewsData.io, summarize them, and replace this church's news."""
+    if not os.environ.get('NEWSDATA_API_KEY', '').strip():
+        raise HTTPException(status_code=503, detail='NEWSDATA_API_KEY is not set; the news is unchanged.')
+    items = newsdata.fetch_news()
+    if not items:
+        raise HTTPException(status_code=502, detail='NewsData returned no articles; the news is unchanged.')
+    providers = summarize.add_summaries(items)
+    db.replace_news(items)
+    return {'articles': len(items), 'summaries_by': providers or 'fallback'}
 
 
 @app.get('/api/regions/{region_id}/prayer-angles', response_model=list[PrayerAngleOut])
