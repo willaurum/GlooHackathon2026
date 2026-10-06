@@ -9,7 +9,7 @@ export const SECTIONS = [
   { route: 'serve', label: 'Serve', icon: 'users', children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book' },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
-  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Church staff']] },
+  { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips'], ['give/staff', 'Giving admin']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
   // In the sidebar on desktop and behind the info button in the phone top bar, so the tab bar stays uncrowded.
   { route: 'about', label: 'About', icon: 'info', tab: false, children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect'], ['about/blog', 'Blog']] },

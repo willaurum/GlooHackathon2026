@@ -41,7 +41,7 @@ const ABOUT_PAGES = {
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 // Pages that work before the church API knows about new churches: giving has its own API.
 // #/platform (every church, for the platform team) is not tied to the church showing.
-const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'platform']);
+const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'setup', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
@@ -61,7 +61,7 @@ function readLocation() {
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
   // The blog moved under About; keep its first link (#/blog) working.
-  let route = ['start', 'give/start'].includes(where.route) ? 'give/staff' : where.route === 'blog' ? 'about/blog' : where.route;
+  let route = ['start', 'give/start'].includes(where.route) ? 'setup' : where.route === 'blog' ? 'about/blog' : where.route;
   if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
@@ -149,7 +149,7 @@ export default function App() {
 
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
-    next = withDefault(['start', 'give/start'].includes(next) ? 'give/staff' : next, demo);
+    next = withDefault(['start', 'give/start'].includes(next) ? 'setup' : next, demo);
     // Drops any /give?session_id=… left over from a checkout return.
     if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
     setWhere(w => ({ ...w, route: next }));

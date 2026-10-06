@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
 import { fmt, whenCapabilitiesKnown } from './api.js';
-import { rotateStaffToken, shareLink } from './church.js';
+import { shareLink } from './church.js';
 import Icon from './Icon.jsx';
-import GiveChurchBar from './GiveChurchBar.jsx';
-import { churchApi, friendly, getStaffToken, givingCapabilities, percent, revokeStaffToken, setStaffToken, signOutStaff, staffApi, tripDates } from './giving.js';
+import { friendly, getStaffToken, givingCapabilities, percent, setStaffToken, signOutStaff, staffApi, tripDates } from './giving.js';
 
-const VIEWS = [['overview', 'Overview'], ['funds', 'Funds & trips'], ['applications', 'Applications'], ['gifts', 'Gifts'], ['team', 'Team']];
+const VIEWS = [['overview', 'Overview'], ['funds', 'Funds & trips'], ['applications', 'Applications'], ['gifts', 'Gifts']];
 
 export default function GiveStaff({ slug, church, go, onPickChurch, onChanged }) {
   const { staff } = useChurch();
@@ -21,7 +20,7 @@ export default function GiveStaff({ slug, church, go, onPickChurch, onChanged })
   useEffect(() => whenCapabilitiesKnown(givingCapabilities, setReady), []);
 
   if (ready === false) return <div className="card give-pad"><h2>Church accounts are almost here.</h2><p>Staff sign-in, Stripe setup and trip applications open as soon as the updated giving service is deployed.</p></div>;
-  if (!token) return <SignIn slug={slug} church={church} go={go} onPickChurch={onPickChurch} onSignedIn={t => { setStaffToken(slug, t, { verified: true }); }} />;
+  if (!token) return <div className="card give-pad"><h2>Giving administration</h2><p>Sign in to manage giving for your church.</p><button className="primary" onClick={() => go('setup')}>Staff sign in</button></div>;
   if (!staff) return <Verifying slug={slug} />;
   return <Dashboard key={slug} slug={slug} go={go} onChanged={onChanged} />;
 }
@@ -39,32 +38,6 @@ function Verifying({ slug }) {
   return <div className="card give-pad">
     <p role="status">Verifying your staff session…</p>
     <p className="form-note">Taking too long? <button type="button" className="link" disabled={busy} onClick={signOut}>{busy ? 'Signing out…' : 'Sign out'}</button></p>
-  </div>;
-}
-
-function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('');
-  async function submit(e) {
-    e.preventDefault();
-    setErr('');
-    setBusy(true);
-    try {
-      const res = await churchApi(slug, '/admin/login', { method: 'POST', body: JSON.stringify({ password, ...(email.trim() ? { email: email.trim() } : {}) }) });
-      setPassword('');
-      onSignedIn(res.token);
-    } catch (e2) { setErr(friendly(e2)); setBusy(false); }
-  }
-  return <div className="give-signin">
-    <GiveChurchBar church={church} slug={slug} onPick={onPickChurch} label="Staff sign-in for" />
-    <form className="card give-pad" onSubmit={submit}>
-      <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password.</p></div></div>
-      <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
-      <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
-      {err && <div className="banner error" role="alert">{err}</div>}
-      <button className="primary wide" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
-      <p className="form-note">Need an account? Ask your church Owner to add you.</p>
-    </form>
   </div>;
 }
 
@@ -97,7 +70,6 @@ function Dashboard({ slug, go, onChanged }) {
     {view === 'funds' && <Funds slug={slug} data={data} update={update} fail={fail} />}
     {view === 'applications' && <Applications slug={slug} fail={fail} onChanged={() => staffApi(slug, '').then(update).catch(() => {})} />}
     {view === 'gifts' && <Gifts slug={slug} fail={fail} />}
-    {view === 'team' && <Team slug={slug} />}
   </div>;
 }
 
@@ -131,7 +103,7 @@ function Overview({ slug, data, update, go, fail, setView }) {
           <div className="give-link"><code>{link}</code><button className="secondary" onClick={copy}>{copied ? 'Copied' : 'Copy link'}</button></div>
           <button className="link give-view" onClick={() => go('give')}>View it as a donor<Icon name="arrow" size={16} /></button>
         </div>
-        <ChurchSettings slug={slug} church={church} me={data.me} update={update} fail={fail} />
+        <ChurchSettings slug={slug} church={church} update={update} fail={fail} />
       </div>
       <StripeCard slug={slug} stripe={stripe} update={update} fail={fail} go={go} />
     </div>
@@ -200,22 +172,12 @@ function StripeCard({ slug, stripe, update, fail, go }) {
   </div>;
 }
 
-function ChurchSettings({ slug, church, me, update, fail }) {
-  const [f, setF] = useState({ name: church.name, city: church.city }), [pw, setPw] = useState({ current: '', next: '' }), [msg, setMsg] = useState(''), [err, setErr] = useState('');
+function ChurchSettings({ slug, church, update, fail }) {
+  const [f, setF] = useState({ name: church.name, city: church.city }), [msg, setMsg] = useState(''), [err, setErr] = useState('');
   async function save(e) {
     e.preventDefault(); setMsg(''); setErr('');
     try { update(await staffApi(slug, '/settings', { method: 'PUT', body: JSON.stringify(f) })); setMsg('Saved.'); }
     catch (e2) { if (e2.status === 401) fail(e2); else setErr(friendly(e2)); }
-  }
-  async function changePassword(e) {
-    e.preventDefault(); setMsg(''); setErr('');
-    try {
-      const res = await rotateStaffToken(slug, () => staffApi(slug, '/password', { method: 'POST', body: JSON.stringify(pw) }));
-      // Signed out while the change was in flight: don't leave the new session behind.
-      if (!res.installed) return revokeStaffToken(slug, res.token);
-      setPw({ current: '', next: '' });
-      setMsg('Password changed. Your other sessions were signed out.');
-    } catch (e2) { if (e2.status === 401) fail(e2); else setErr(friendly(e2)); }
   }
   return <div className="card give-pad">
     <h3>Church details</h3>
@@ -226,65 +188,8 @@ function ChurchSettings({ slug, church, me, update, fail }) {
       </div>
       <button className="secondary">Save details</button>
     </form>
-    {(!church.demo || (me && !me.shared)) && <form onSubmit={changePassword} className="give-password">
-      <div className="form-row">
-        <label className="field">Current password<input type="password" autoComplete="current-password" value={pw.current} onChange={e => setPw({ ...pw, current: e.target.value })} /></label>
-        <label className="field">New password<input type="password" autoComplete="new-password" value={pw.next} onChange={e => setPw({ ...pw, next: e.target.value })} /></label>
-      </div>
-      <button className="secondary" disabled={!pw.current || pw.next.length < 10}>Change password</button>
-    </form>}
     {msg && <p className="form-note" role="status">{msg}</p>}
     {err && <div className="banner error" role="alert">{err}</div>}
-  </div>;
-}
-
-function Team({ slug }) {
-  const empty = { name: '', email: '', role: 'site_admin', password: '' };
-  const [data, setData] = useState(null), [f, setF] = useState(empty), [busy, setBusy] = useState(false), [err, setErr] = useState('');
-  useEffect(() => {
-    let live = true;
-    staffApi(slug, '/users').then(d => { if (live) { setData(d); if (!d.users.length) setF(v => ({ ...v, role: 'owner' })); } }).catch(e => { if (live) setErr(friendly(e)); });
-    return () => { live = false; };
-  }, [slug]);
-  const set = key => e => setF(v => ({ ...v, [key]: e.target.value }));
-  async function add(e) {
-    e.preventDefault(); setBusy(true); setErr('');
-    try {
-      setData(await staffApi(slug, '/users', { method: 'POST', body: JSON.stringify(f) }));
-      setF(empty);
-    } catch (e2) { setErr(friendly(e2)); }
-    finally { setBusy(false); }
-  }
-  async function remove(user) {
-    if (!window.confirm(`Remove ${user.name}? Their sessions will be signed out immediately.`)) return;
-    setBusy(true); setErr('');
-    try { setData(await staffApi(slug, '/users/' + encodeURIComponent(user.id), { method: 'DELETE' })); }
-    catch (e) { setErr(friendly(e)); }
-    finally { setBusy(false); }
-  }
-  return <div className="give-col">
-    {err && <div className="banner error" role="alert">{err}</div>}
-    {!data ? <div className="card give-pad"><p role="status">{err ? 'Could not load the team.' : 'Loading the team…'}</p></div> : <>
-      <section className="card give-pad">
-        <h3>Team</h3><p>Owners and site admins have all staff permissions. Owners can also add and remove staff accounts.</p>
-        {data.me.shared && !data.users.length && <p className="form-note">Create your Owner account first using the form below. Then sign out and sign in with your email and new password. You can then add Site admins.</p>}
-        {data.me.shared && !!data.users.length && <p className="form-note">You are using the shared password. Sign in with your own staff email and password next time.</p>}
-        {!data.users.length && <p>No staff accounts yet.</p>}
-        {data.users.map(user => <div className="give-fund-row" key={user.id}>
-          <div className="give-fund-row-main"><strong>{user.name}{user.you ? ' (you)' : ''}</strong><small>{user.email} · {user.role === 'owner' ? 'Owner' : 'Site admin'}</small></div>
-          {data.canManage && <button className="ghost" disabled={busy || user.you} onClick={() => remove(user)}>Remove</button>}
-        </div>)}
-      </section>
-      {data.canManage && <form className="card give-pad" onSubmit={add}>
-        <h3>Add staff</h3>
-        <label className="field">Name<input required minLength={2} maxLength={80} value={f.name} autoComplete="name" onChange={set('name')} /></label>
-        <label className="field">Email<input required type="email" maxLength={200} value={f.email} autoComplete="off" onChange={set('email')} /></label>
-        <label className="field">Role<select value={f.role} onChange={set('role')} disabled={!data.users.length}><option value="owner">Owner</option><option value="site_admin">Site admin</option></select></label>
-        <label className="field">Temporary password <small>10 or more characters</small><input required type="password" minLength={10} maxLength={200} value={f.password} autoComplete="new-password" onChange={set('password')} /></label>
-        <p className="form-note">Share the temporary password privately. Staff can change their own password in Overview.</p>
-        <button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Add staff'}</button>
-      </form>}
-    </>}
   </div>;
 }
 

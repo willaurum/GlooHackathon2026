@@ -43,7 +43,7 @@ Previews proxy `/api` and `/giving-api` to the **live** APIs above, so a preview
 Visitors browse without an account. Staff sign in at **Staff sign in / Church setup**
 (`#/setup`, or `#/c/<slug>/setup`) with their staff email and password.
 Owners have every staff permission and can add or remove staff accounts. Site admins have
-every staff permission except adding or removing accounts. Manage accounts in Give → Church staff → Team.
+every staff permission except adding or removing accounts. Manage accounts in Church setup → Staff accounts.
 There are no individual member accounts or member commenting permissions yet.
 
 Staff sessions apply only to their own church. Admin controls appear only after the
@@ -65,7 +65,7 @@ is not implemented by these permission rules.
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Retired `#/start` and `#/give/start` links open Church staff sign-in. A section with sub-pages opens its first sub-page. |
+| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/give/staff`, `#/prayer/map`, `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Retired `#/start` and `#/give/start` links open Church setup / Staff sign in. A section with sub-pages opens its first sub-page. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
 | `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
 | `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
@@ -132,14 +132,14 @@ To turn it on: deploy `api-giving/` (merge to `main`, or Actions > Deploy backen
 
 ### One registry, individual staff accounts
 
-The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: existing church slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Church staff, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
+The giving Worker (`api-giving/`) is the church registry and the staff sign-in for the whole site: existing church slugs, staff passwords (hashed) and 12-hour sessions. Nothing is duplicated in the church API. A staff session from Church setup or from Give, then Giving admin, is the same session and works on every page of that church, for that church only. It lasts for the browser tab.
 
 Owner ("admin admin") and Site admin accounts are independent of church creation.
-Sign in to the existing church as Owner, then open Give → Church staff → Team.
+Sign in to the existing church as Owner, then open Church setup → Staff accounts.
 If there are no accounts, use the configured shared Owner password with email blank and
 create the first Owner account there. Then sign in with that account to add Site admins.
 Owners add staff with a name, email, Owner or Site admin role, and a
-temporary password of at least 10 characters. Staff change their own password in Overview;
+temporary password of at least 10 characters. Staff change their own password in Church setup → Staff accounts;
 only that account's other sessions are signed out. Removing an account revokes its sessions
 immediately. You cannot remove yourself or the last Owner, and the first account must be an Owner.
 
@@ -446,7 +446,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 
 **For a church:**
 
-1. **Sign in to the existing church** (`#/give/staff`): use your staff email and password. For the initial Owner account, use the configured shared Owner login with email blank, then create your Owner account under Team. Owners can add Site admins; no church signup is offered.
+1. **Sign in to the existing church** (`#/setup`): use your staff email and password. For the initial Owner account, use the configured shared Owner login with email blank, then create your Owner account under Staff accounts. Owners can add Site admins; no church signup is offered.
 2. **Connect Stripe** in the staff area (`#/give/staff`) by pasting a Stripe secret key once. Use a test key first, then a restricted live key with write access to Products, Prices, Checkout Sessions, Webhook Endpoints, Customer portal and Subscriptions. The Worker checks the key with Stripe, stores it encrypted with `STRIPE_KEY_ENCRYPTION_KEY` (never returned to any client; staff only see a hint like `sk_test_…Ab12`), and creates:
    - one Product per fund and per mission trip, with preset Prices found again by `lookup_key` (plus monthly Prices for Tithes);
    - one webhook endpoint per church, so gifts are recorded even when the donor closes the tab, monthly tithes renew, and canceled monthly gifts are marked;
@@ -454,7 +454,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
 
    Running setup again ("Re-run Stripe setup") reuses everything, so nothing is duplicated. It also adds any missing webhook events to an existing endpoint. A new fund or trip gets its own Product and Prices right away.
 3. **Mission trips**: staff create trips with dates, location, goal, team spots and an open/closed switch for applications. People apply (name, email, phone, message) or give toward a specific trip. Staff accept, waitlist or decline, and add private notes. The public page only shows "3 of 12 spots filled".
-4. **Staff area**: setup checklist, funds and trips, applications, a private gift list with CSV download, church details and password change.
+4. **Giving admin**: setup checklist, funds and trips, applications, a private gift list with CSV download and church details. Site-wide staff accounts and password changes live under Church setup → Staff accounts, reached through the top-left Staff sign in button.
 
 Staff sign in with their own email and password (stored hashed). Sign-in gives a 12-hour session token, stored only as a hash; attempts are rate limited per IP, and changing the password signs out other sessions. There is no password reset yet.
 
