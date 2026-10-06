@@ -55,8 +55,16 @@ export default function News({ go }) {
   useEffect(load, []);
   useEffect(() => { api('/church').then(c => setEvents(c.events || [])).catch(() => {}); }, []);
 
-  const shown = (posts || []).filter(p => (kind === 'all' || p.kind === kind)
-    && (!category || p.categories.some(c => c.toLowerCase() === category.toLowerCase())));
+  const ofKind = (posts || []).filter(p => kind === 'all' || p.kind === kind);
+  // Tags in use for the kind showing, most used first, for the tag box's suggestions.
+  const counts = {};
+  ofKind.forEach(p => p.categories.forEach(c => { counts[c] = (counts[c] || 0) + 1; }));
+  const tags = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  // An exact tag (picked from the list or clicked on a post) matches only that tag; while typing,
+  // any tag containing the text matches, so the list narrows as you go.
+  const q = category.trim().toLowerCase();
+  const exact = tags.some(t => t.toLowerCase() === q);
+  const shown = ofKind.filter(p => !q || p.categories.some(c => exact ? c.toLowerCase() === q : c.toLowerCase().includes(q)));
   const replace = post => setPosts(ps => ps.map(p => p.id === post.id ? normalize(post) : p));
 
   async function remove(post) {
@@ -73,9 +81,17 @@ export default function News({ go }) {
         <div className="chips" role="group" aria-label="Show">
           {KINDS.map(([k, label]) => <button key={k} className={kind === k ? 'active' : ''} aria-pressed={kind === k} onClick={() => setKind(k)}>{label}</button>)}
         </div>
-        {staff && <button className="primary" onClick={() => setWriting(true)}><Icon name="plus" size={18} />Write a post</button>}
+        <div className="news-tools">
+          <div className="search news-tag">
+            <Icon name="tag" size={18} />
+            <input value={category} list="news-tags" placeholder="Filter by tag" aria-label="Filter by tag" maxLength={40}
+              onChange={e => setCategory(e.target.value)} onKeyDown={e => e.key === 'Escape' && setCategory('')} />
+            <datalist id="news-tags">{tags.map(t => <option key={t} value={t}>{counts[t] === 1 ? '1 post' : `${counts[t]} posts`}</option>)}</datalist>
+            {category && <button className="news-tag-clear" aria-label="Clear the tag filter" onClick={() => setCategory('')}><Icon name="x" size={16} /></button>}
+          </div>
+          {staff && <button className="primary" onClick={() => setWriting(true)}><Icon name="plus" size={18} />Write a post</button>}
+        </div>
       </div>
-      {category && <p className="news-filter">Showing <span className="badge">{category}</span><button className="link" onClick={() => setCategory('')}><Icon name="x" size={14} />Clear</button></p>}
       {error && <div className="banner error" role="alert"><span>{error}</span><button className="ghost" onClick={load}><Icon name="refresh" size={16} />Retry</button></div>}
       <div className="news-list">
         {posts === null && <div className="card empty"><p>Loading the news…</p></div>}
