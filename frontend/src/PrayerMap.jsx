@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, GeoJSON, Marker, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, Tooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
+import { SetUpThis } from './ChurchStates.jsx';
 import countryBorders from './data/countryBorders.json';
 
-const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [9, 9], iconAnchor: [4.5, 4.5] });
+const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [12, 12], iconAnchor: [6, 6] });
+const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// A pulsing beacon in the middle of a country (never a team's real location) that opens its story.
 function beaconIcon(country, selected) {
   return L.divIcon({
     className: 'beacon' + (selected ? ' selected' : ''),
-    html: `<span class="beacon-ring"></span><span class="beacon-ring delay"></span><span class="beacon-core"></span><span class="beacon-label">${country}</span>`,
+    html: `<span class="beacon-ring"></span><span class="beacon-ring delay"></span><span class="beacon-core"></span><span class="beacon-label">${escapeHtml(country)}</span>`,
     iconSize: [18, 18],
     iconAnchor: [9, 9],
   });
@@ -27,6 +31,7 @@ function FitToBorders({ features }) {
 }
 
 export default function PrayerMap() {
+  const { staff } = useChurch();
   const [regions, setRegions] = useState([]);
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -62,16 +67,11 @@ export default function PrayerMap() {
     () => countryBorders.features.filter(f => regionByCode[f.properties.country_code]),
     [regionByCode]
   );
-
   const selectedCode = selected?.country_code;
   const beacons = useMemo(
     () => borderFeatures.map(f => {
       const region = regionByCode[f.properties.country_code];
-      return {
-        region,
-        center: L.geoJSON(f).getBounds().getCenter(),
-        icon: beaconIcon(region.country, region.country_code === selectedCode),
-      };
+      return { region, center: L.geoJSON(f).getBounds().getCenter(), icon: beaconIcon(region.country, region.country_code === selectedCode) };
     }),
     [borderFeatures, regionByCode, selectedCode]
   );
@@ -111,9 +111,12 @@ export default function PrayerMap() {
   return <div className="prayer-map">
     {error && <div className="api-message" role="alert">{error}</div>}
     {loading && <p role="status">Loading prayer map data…</p>}
+    {!loading && !error && !regions.length && <SetUpThis icon="compass" title="No prayer map yet."
+      text="This church has not added the places it prays for yet."
+      staffText="The prayer map shows the places your missionaries serve. Adding regions from Church setup is coming next." />}
     <div className="map-legend">
-      <span><span className="legend-dot region-dot" /> Missionary testimony · click to open</span>
-      <span><span className="legend-dot news-dot" /> News story</span>
+      <span><span className="legend-dot news-dot" /> Real news: exact city</span>
+      <span><span className="legend-dot region-dot" /> Missionary presence: whole country only, never an exact point. Click to open.</span>
     </div>
     <div className="map-shell">
       <MapContainer center={[20, 40]} zoom={2} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
@@ -128,7 +131,7 @@ export default function PrayerMap() {
           data={{ type: 'FeatureCollection', features: borderFeatures }}
           style={feature => feature.properties.country_code === selectedCode
             ? { className: 'region-glow selected', color: '#2d6349', weight: 1.5, fillColor: '#5f8f6b', fillOpacity: 0.6 }
-            : { className: 'region-glow', color: 'transparent', weight: 0, fillColor: '#5f8f6b', fillOpacity: 0.4 }}
+            : { className: 'region-glow', color: 'transparent', weight: 0, fillColor: '#5f8f6b', fillOpacity: 0.45 }}
           onEachFeature={(feature, layer) => {
             layer.on('click', () => selectCountry(feature.properties.country_code));
           }}
@@ -137,20 +140,25 @@ export default function PrayerMap() {
           <Marker key={n.id} position={[n.lat, n.lng]} icon={newsIcon}
             eventHandlers={{ click: () => selectCountry(n.country_code) }}>
             <Tooltip direction="top" offset={[0, -6]}>{n.headline}</Tooltip>
+            <Popup>
+              <strong>{n.headline}</strong><br />
+              {n.city}, {n.country} · {n.source} · {n.date}
+              <p>{n.summary}</p>
+            </Popup>
           </Marker>
         ))}
         {beacons.map(({ region, center, icon }) => (
           <Marker key={region.id} position={center} zIndexOffset={1000} icon={icon}
-            eventHandlers={{ click: () => selectRegion(region) }}
-          />
+            eventHandlers={{ click: () => selectRegion(region) }} />
         ))}
       </MapContainer>
     </div>
     <div id="prayer-detail">
       {selected && <section className="panel prayer-card" aria-live="polite">
         <button className="close" aria-label="Close region details" onClick={() => { setSelected(null); setHistory([]); }}>×</button>
-        <div className="eyebrow">{selected.country.toUpperCase()}</div>
+        <div className="eyebrow">{selected.country.toUpperCase()} · SOFT PRESENCE, NOT AN EXACT LOCATION</div>
         <h2>{selected.codename}</h2>
+        <p><b>{selected.field_of_ministry}</b> · serving since {selected.since} · team of {selected.team_size}</p>
         <div className="source-columns">
           <div className="source-block">
             <div className="source-label">From the field</div>
@@ -166,13 +174,13 @@ export default function PrayerMap() {
               : <p>No recent news from {selected.country}.</p>}
           </div>
         </div>
-        <div className="prayer-points">
+        {(latest || staff) && <div className="prayer-points">
           <b>Prayer points{latest && <span className="angle-pill">{latest.angle}</span>}</b>
           {latest && <ul>{latest.prayer_points.map((point, i) => <li key={i}>{point}</li>)}</ul>}
-          <button className="primary" disabled={busy} onClick={generateAngle}>
+          {staff && <button className="primary" disabled={busy} onClick={generateAngle}>
             {busy ? 'Loading…' : latest ? 'Pray about something else' : 'Show prayer points'}
-          </button>
-        </div>
+          </button>}
+        </div>}
       </section>}
     </div>
   </div>;

@@ -1,0 +1,58 @@
+# Deploys the two backend Workers (shared by every branch's preview, which
+# proxies /api and /giving-api to these) whenever their source changes on
+# main. Previews.yml only builds and deploys the frontend, so without this
+# the backend can silently drift out of date behind what every preview is
+# actually testing against.
+#
+# The pastor-notes deploy also rebuilds and pushes the Cloudflare Container
+# image for backend/ (the FastAPI app wrangler wraps it around), so it runs
+# noticeably longer than a plain Workers deploy.
+name: Deploy backend
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'api/**'
+      - 'api-giving/**'
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Cloudflare account
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::The CLOUDFLARE_API_TOKEN repository secret is not set."; exit 1; fi
+          ACCOUNT="${{ vars.CLOUDFLARE_ACCOUNT_ID }}"
+          if [ -z "$ACCOUNT" ]; then
+            ACCOUNT=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts?per_page=5" \
+              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s).result||[];if(r.length!==1){console.error('token sees '+r.length+' accounts; set the CLOUDFLARE_ACCOUNT_ID variable');process.exit(1)}console.log(r[0].id)})")
+          fi
+          echo "CLOUDFLARE_ACCOUNT_ID=$ACCOUNT" >> "$GITHUB_ENV"
+
+      - name: Deploy pastor-notes API (builds and pushes the backend co
+        working-directory: api
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+          npm run deploy
+
+      - name: Deploy giving API
+        working-directory: api-giving
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+          npm run deploy

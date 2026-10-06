@@ -3,8 +3,8 @@
     "name": "Kids & families",
     "category": "Next generation",
     "icon": "☀",
-    "filled": 32,
-    "total": 48,
+    "filled": 7,
+    "total": 12,
     "description": "Welcome families, lead activities, and help children feel known in a safe Sunday environment.",
     "skills": [
       "Teaching",
@@ -15,14 +15,52 @@
     "head": "Sarah Mitchell",
     "note": "Background check and onboarding required.",
     "id": 0,
-    "email": "sarah.mitchell@example.com"
+    "email": "sarah.mitchell@example.com",
+    "shifts": [
+      {
+        "id": "0-1",
+        "date": "2026-10-11",
+        "start_time": "08:30",
+        "end_time": "10:30",
+        "filled": 4,
+        "total": 6,
+        "services": [
+          "sunday-9"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      },
+      {
+        "id": "0-2",
+        "date": "2026-10-11",
+        "start_time": "10:30",
+        "end_time": "12:30",
+        "filled": 3,
+        "total": 6,
+        "services": [
+          "sunday-11"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      }
+    ],
+    "requirements": [
+      "background_check",
+      "onboarding"
+    ]
   },
   {
     "name": "Welcome team",
     "category": "Hospitality",
     "icon": "✳",
-    "filled": 24,
-    "total": 32,
+    "filled": 8,
+    "total": 12,
     "description": "Greet guests, help with check-in, and make introductions that turn a first visit into belonging.",
     "skills": [
       "Hospitality",
@@ -33,14 +71,49 @@
     "head": "David Chen",
     "note": "Training provided. A friendly face is a great place to start.",
     "id": 1,
-    "email": "david.chen@example.com"
+    "email": "david.chen@example.com",
+    "shifts": [
+      {
+        "id": "1-1",
+        "date": "2026-10-11",
+        "start_time": "08:30",
+        "end_time": "10:30",
+        "filled": 3,
+        "total": 6,
+        "services": [
+          "sunday-9"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      },
+      {
+        "id": "1-2",
+        "date": "2026-10-11",
+        "start_time": "10:30",
+        "end_time": "12:30",
+        "filled": 5,
+        "total": 6,
+        "services": [
+          "sunday-11"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      }
+    ],
+    "requirements": []
   },
   {
     "name": "Production & media",
     "category": "Creative & worship",
     "icon": "◈",
-    "filled": 12,
-    "total": 20,
+    "filled": 8,
+    "total": 10,
     "description": "Help every message be seen and heard. Support live sound, cameras, slides, and the online service.",
     "skills": [
       "Technology",
@@ -51,14 +124,51 @@
     "head": "Marcus Reed",
     "note": "Shadow an experienced team member before your first service.",
     "id": 2,
-    "email": "marcus.reed@example.com"
+    "email": "marcus.reed@example.com",
+    "shifts": [
+      {
+        "id": "2-1",
+        "date": "2026-10-11",
+        "start_time": "08:00",
+        "end_time": "10:30",
+        "filled": 3,
+        "total": 5,
+        "services": [
+          "sunday-9"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      },
+      {
+        "id": "2-2",
+        "date": "2026-10-11",
+        "start_time": "10:00",
+        "end_time": "12:30",
+        "filled": 5,
+        "total": 5,
+        "services": [
+          "sunday-11"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      }
+    ],
+    "requirements": [
+      "shadowing"
+    ]
   },
   {
     "name": "Community outreach",
     "category": "Local impact",
     "icon": "♡",
-    "filled": 26,
-    "total": 36,
+    "filled": 6,
+    "total": 10,
     "description": "Prepare food boxes, support local partners, and care for our neighbors at community events.",
     "skills": [
       "Hospitality",
@@ -69,14 +179,33 @@
     "head": "Elena Brooks",
     "note": "Flexible opportunities for individuals and families.",
     "id": 3,
-    "email": "elena.brooks@example.com"
+    "email": "elena.brooks@example.com",
+    "shifts": [
+      {
+        "id": "3-1",
+        "date": "2026-10-10",
+        "start_time": "09:00",
+        "end_time": "12:00",
+        "filled": 6,
+        "total": 10,
+        "services": [
+          "outside-services"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      }
+    ],
+    "requirements": []
   },
   {
     "name": "Worship collective",
     "category": "Creative & worship",
     "icon": "♫",
-    "filled": 18,
-    "total": 22,
+    "filled": 5,
+    "total": 6,
     "description": "Create space for worship. Join vocalists and instrumentalists for rehearsals and Sunday services.",
     "skills": [
       "Music",
@@ -87,14 +216,36 @@
     "head": "Jordan Ellis",
     "note": "Audition and midweek rehearsal required.",
     "id": 4,
-    "email": "jordan.ellis@example.com"
+    "email": "jordan.ellis@example.com",
+    "shifts": [
+      {
+        "id": "4-1",
+        "date": "2026-10-11",
+        "start_time": "08:00",
+        "end_time": "12:30",
+        "filled": 5,
+        "total": 6,
+        "services": [
+          "sunday-9",
+          "sunday-11"
+        ],
+        "frequencies": [
+          "weekly",
+          "monthly"
+        ]
+      }
+    ],
+    "requirements": [
+      "audition",
+      "midweek_rehearsal"
+    ]
   },
   {
     "name": "Care & connection",
     "category": "Pastoral care",
     "icon": "⌘",
-    "filled": 14,
-    "total": 24,
+    "filled": 2,
+    "total": 4,
     "description": "Make follow-up calls, coordinate meals, and walk alongside people through life’s changes.",
     "skills": [
       "Listening",
@@ -105,6 +256,28 @@
     "head": "Rachel Adams",
     "note": "Care training and confidentiality orientation required.",
     "id": 5,
-    "email": "rachel.adams@example.com"
+    "email": "rachel.adams@example.com",
+    "shifts": [
+      {
+        "id": "5-1",
+        "date": "2026-10-13",
+        "start_time": "18:00",
+        "end_time": "20:00",
+        "filled": 2,
+        "total": 4,
+        "services": [
+          "outside-services"
+        ],
+        "frequencies": [
+          "one-time",
+          "weekly",
+          "monthly"
+        ]
+      }
+    ],
+    "requirements": [
+      "care_training",
+      "confidentiality"
+    ]
   }
 ]

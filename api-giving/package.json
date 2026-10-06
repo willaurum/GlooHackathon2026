@@ -1,0 +1,16 @@
+{
+  "name": "gloo-hackathon2026-api-donate-giving",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "types": "wrangler types"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "wrangler": "^4.140.0"
+  }
+}

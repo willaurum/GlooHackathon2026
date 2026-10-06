@@ -1,0 +1,10 @@
+# Copy to .dev.vars for `npx wrangler dev`. Never commit .dev.vars.
+# 32 random bytes, base64: openssl rand -base64 32
+STRIPE_KEY_ENCRYPTION_KEY=
+# Point at the fake Stripe in test/fake-stripe.mjs instead of the real API.
+STRIPE_API_BASE=http://localhost:12111
+PUBLIC_ORIGIN=http://localhost:8799
+ALLOWED_ORIGIN=http://localhost:5199
+# Optional: turns on GET /api/platform/churches (the #/platform page). Any long random string.
+# openssl rand -base64 32
+PLATFORM_ADMIN_KEY=

@@ -1,105 +1,265 @@
-import { useEffect, useState } from 'react';
-import { api } from './api.js';
+import { useEffect, useMemo, useState } from 'react';
+import { api, churchCapabilities, gapi, setApiChurch } from './api.js';
+import { ChurchContext } from './ChurchContext.js';
+import ChatWidget from './ChatWidget.jsx';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
+import ChurchSetup from './ChurchSetup.jsx';
+import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
+import ChurchStart from './ChurchStart.jsx';
+import Give from './Give.jsx';
+import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
+import Home from './Home.jsx';
+import { ABOUT_DEMO_ONLY, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import PastorNotes from './PastorNotes.jsx';
+import Platform from './Platform.jsx';
+import Serve from './Serve.jsx';
+import Calendar from './Calendar.jsx';
+import Blog from './Blog.jsx';
+import VisitPage from './VisitPage.jsx';
+import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
-const gifts = ['Hospitality', 'Teaching', 'Technology', 'Creativity', 'Music', 'Organization', 'Listening', 'Encouragement'];
-const urgent = m => (m.total - m.filled) / m.total >= .35;
-const vision = 'Belong helps large churches turn a desire to serve into a meaningful connection. Leaders can monitor volunteer needs, explore each department’s responsibilities, and find the people leading those teams. During a conversation with a member, a leader enters their skills, interests, and preferred ways to serve. The planned Gloo AI backend will compare those details with current ministry needs and recommend departments, with department heads’ contact information for the next step. The goal: help more people move from attending church to actively belonging.';
+import About from './About.jsx';
+import Beliefs from './Beliefs.jsx';
+import News from './News.jsx';
+import Directory from './Directory.jsx';
+import Connect from './Connect.jsx';
+
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'about/blog', 'notes', 'give', 'give/trips', 'give/staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'prayer/map', 'start', 'setup', 'platform'];
+// One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
+const SERMON_ROUTE = /^notes\/[\w-]+$/;
+// Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
+const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
+
+// [eyebrow, title, intro] for each About page.
+const ABOUT_PAGES = {
+  about: ['About', 'Who we are.', 'The story, the people and the heart behind Grace Community Church.'],
+  'about/beliefs': ['About', 'What we believe.', 'The convictions that shape our teaching and our life together.'],
+  'about/news': ['About', 'What’s happening.', 'Announcements and stories from church life.'],
+  'about/directory': ['About', 'Who to contact.', 'Pastors, staff and ministry leaders, and how to reach them.'],
+  'about/connect': ['Connect', 'Let’s get you connected.', 'Whether you are new, curious or ready to jump in, here are a few ways to take the next step.'],
+  'about/blog': ['Church Blog', 'Reflections & stories.', 'Pastoral teaching, ministry updates, and stories from our church family.'],
+};
+const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
+// Pages that work before the church API knows about new churches: giving has its own API.
+// #/platform (every church, for the platform team) is not tied to the church showing.
+const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'start', 'platform']);
+
+// A section whose own route has no page (Guests, Prayer) opens its first sub-page,
+// so tapping it in the phone tab bar never lands on an empty page.
+// Other churches have no Our story, Beliefs, News, Directory or Connect content yet, so About opens the blog.
+function withDefault(route, demo = true) {
+  if (!demo && ABOUT_DEMO_ONLY.has(route)) return 'about/blog';
+  const s = SECTIONS.find(x => x.route === route);
+  return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
+}
+
+// Stripe returns to /give?church=<slug>&session_id=..., so that path opens Give for that church.
+const onGivePath = () => window.location.pathname.startsWith('/give');
+
+/** The church and page in the address bar. See church.js for the order churches are picked in. */
+function readLocation() {
+  const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
+  const back = new URLSearchParams(window.location.search).get('church');
+  if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
+  // The blog moved under About; keep its first link (#/blog) working.
+  let route = where.route === 'give/start' ? 'start' : where.route === 'blog' ? 'about/blog' : where.route;
+  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
+  else route = onGivePath() ? 'give' : '';
+  // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
+  if (where.source === 'link') saveChurch(where.slug);
+  return { ...where, route };
+}
+
+const titleCase = slug => slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
 export default function App() {
-  const [page, setPage] = useState('Overview'),
-    [query, setQuery] = useState(''),
-    [filter, setFilter] = useState(false),
-    [detail, setDetail] = useState(null),
-    [name, setName] = useState(''),
-    [skills, setSkills] = useState(['Hospitality', 'Encouragement']),
-    [style, setStyle] = useState('Working with people'),
-    [day, setDay] = useState('Sunday mornings'),
-    [results, setResults] = useState(null),
-    [saved, setSaved] = useState([]),
-    [teams, setTeams] = useState([]),
-    [loading, setLoading] = useState(true),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  async function load() {
-    setLoading(true); setError('');
-    try {
-      const [ministries, connections] = await Promise.all([api('/ministries'), api('/connections')]);
-      setTeams(ministries); setSaved(connections);
-    } catch (err) { setError('Could not load church data. Check that the backend is running. ' + err.message); }
-    finally { setLoading(false); }
+  const [where, setWhere] = useState(readLocation),
+    [chatOpen, setChatOpen] = useState(false),
+    [requestsVersion, setRequestsVersion] = useState(0),
+    [savedCount, setSavedCount] = useState(0),
+    [scrollTarget, setScrollTarget] = useState(null),
+    [apiReady, setApiReady] = useState(null),
+    [listing, setListing] = useState(null),
+    [listingVersion, setListingVersion] = useState(0),
+    [staffVersion, setStaffVersion] = useState(0);
+  const { slug, source, route } = where;
+  const demo = slug === DEMO_CHURCH;
+  // Every api() call from here down is for this church.
+  setApiChurch(slug);
+  const params = new URLSearchParams(window.location.search);
+  const giveSession = onGivePath() ? params.get('session_id') || '' : '';
+  const giveStatus = giveSession ? params.get('status') || '' : '';
+  const giveChurch = giveSession ? params.get('church') || '' : '';
+
+  useEffect(() => {
+    const sync = () => setWhere(readLocation());
+    const staffChanged = () => setStaffVersion(v => v + 1);
+    window.addEventListener('popstate', sync);
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('belong-staff', staffChanged);
+    // The older giving link (#/give/c/<slug>) becomes the sitewide form (#/c/<slug>/give).
+    if (/^#\/?give\/c\//.test(window.location.hash)) window.history.replaceState(null, '', '/' + hashFor(slug, route, source));
+    return () => {
+      window.removeEventListener('popstate', sync);
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('belong-staff', staffChanged);
+    };
+  }, []);
+  useEffect(() => { churchCapabilities().then(c => setApiReady(c.churches)); }, []);
+  // The name and city come from the church registry (the giving service), then the church API.
+  useEffect(() => {
+    let live = true;
+    setListing(demo ? DEMO_INFO : null);
+    if (demo) return;
+    (async () => {
+      let found = null, missing = false;
+      if ((await givingCapabilities()).churches) {
+        try { found = await gapi('/api/directory/' + encodeURIComponent(slug)); } catch (err) { missing = err.status === 404; }
+        // An older giving service has no /api/directory route, so a 404 there is not proof the church
+        // is missing. Its public church page has the same name and city, so ask that before giving up.
+        if (missing) {
+          try { found = await churchApi(slug); missing = false; } catch (err) { missing = err.status === 404; }
+        }
+      }
+      if (!found && !missing && (await churchCapabilities()).churches) found = await api('/info').catch(() => null);
+      if (missing) forgetSavedChurch(slug);
+      if (live) setListing(found ? { slug, name: found.name, city: found.city || '' } : { slug, name: titleCase(slug), city: '', missing });
+    })();
+    return () => { live = false; };
+  }, [slug, listingVersion]);
+  // Restored tokens require validation. Fresh login/password responses already verified the session.
+  const staffToken = getStaffToken(slug);
+  useEffect(() => {
+    let live = true, retry;
+    if (!staffToken || getVerifiedStaffToken(slug) === staffToken) return;
+    async function verify() {
+      try {
+        const valid = await verifyStaffSession(slug);
+        if (!live || getStaffToken(slug) !== staffToken) return;
+        setStaffToken(slug, valid ? staffToken : '', { verified: valid });
+      } catch (err) {
+        // A rejected token is cleared by staffApi; transient failures retry without discarding it.
+        if (live && getStaffToken(slug) === staffToken && err.status !== 401) retry = setTimeout(verify, 5000);
+      }
+    }
+    verify();
+    return () => { live = false; clearTimeout(retry); };
+  }, [slug, staffToken, staffVersion]);
+  // Lock page scroll behind the full-screen chat on phones.
+  useEffect(() => { document.body.classList.toggle('chat-open', chatOpen); }, [chatOpen]);
+
+  // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
+  function go(next, sectionId) {
+    next = withDefault(next === 'give/start' ? 'start' : next, demo);
+    // Drops any /give?session_id=… left over from a checkout return.
+    if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
+    setWhere(w => ({ ...w, route: next }));
+    setChatOpen(false);
+    setScrollTarget({ id: sectionId ?? null });
   }
-  useEffect(() => { load(); }, []);
-  async function save(m) {
-    setBusy(true); setError('');
-    try {
-      const connection = await api('/connections', { method: 'POST', body: JSON.stringify({ ministry_id: m.id, member: results.name }) });
-      setSaved(previous => [...previous.filter(s => s.connection_id !== connection.connection_id), connection]);
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-  async function remove(connectionId) {
-    setBusy(true); setError('');
-    try {
-      await api('/connections/' + connectionId, { method: 'DELETE' });
-      setSaved(previous => previous.filter(s => s.connection_id !== connectionId));
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+  // Switch the whole site to another church (after sign-up, or the demo church from the not-found page).
+  function choose(next, nextRoute = '') {
+    saveChurch(next);
+    if (source === 'subdomain') {
+      window.location.href = shareLink(next, nextRoute);
+      return;
+    }
+    window.history.pushState(null, '', '/' + hashFor(next, nextRoute));
+    setSavedCount(0);
+    setWhere({ slug: next, source: next === DEMO_CHURCH ? 'saved' : 'link', route: nextRoute });
+    setChatOpen(false);
+    setScrollTarget({ id: null });
   }
   useEffect(() => {
-    if (detail) document.getElementById('team-detail')?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'center'
-    });
-  }, [detail]);
-  const go = p => {
-    setPage(p);
-    setDetail(null);
-    window.scrollTo({
-      top: 0,
-      behavior: 'smooth'
-    });
-  };
-  async function match(e) {
-    e.preventDefault(); setBusy(true); setError(''); setResults(null);
-    try { setResults(await api('/matches', { method: 'POST', body: JSON.stringify({ name, skills, style, day }) })); }
-    catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-  const visible = teams.filter(m => (m.name + ' ' + m.description).toLowerCase().includes(query.toLowerCase()) && (!filter || urgent(m)));
-  const titles = {
-    'Overview': 'A place for everyone.',
-    'Ministries': 'Many teams. One purpose.',
-    'Find a place': 'Good gifts. The right place.',
-    'Saved connections': 'Keep the connection going.',
-    'Prayer map': 'Their story. Their world.',
-    'Our vision': 'From attending to belonging.'
-  };
-  return <div className="shell"><aside><a className="brand" href="#" onClick={e => {
-        e.preventDefault();
-        go('Overview');
-      }}><b>b</b>belong<span>.</span></a><div className="church"><span>G</span><div><strong>Grace Community</strong><small>Church workspace</small></div><i>⌄</i></div><div className="eyebrow nav-label">WORKSPACE</div><nav>{[['Overview', '▦'], ['Ministries', '◈'], ['Find a place', '✧'], ['Saved connections', '♡'], ['Prayer map', '☾'], ['Our vision', '☼']].map(([p, icon]) => <button className={page === p ? 'active' : ''} key={p} onClick={() => go(p)}><span>{icon}</span>{p}{p === 'Saved connections' && saved.length > 0 && <b>{saved.length}</b>}</button>)}</nav><div className="sidebar-bottom"><div className="ai-note"><span>✧</span><strong>People first. AI assisted.</strong><p>Meaningful connections, with Gloo AI at the heart of the vision.</p><div className="eyebrow">INTERACTIVE MOCKUP</div></div><div className="profile"><span className="avatar">AL</span><div><strong>Alex Lewis</strong><small>Church leadership · Demo</small></div></div></div></aside><div className="workspace"><header><div>Workspace <span>/</span><strong>{page}</strong></div><div className="header-right"><span className="demo">● Demo workspace</span><span className="avatar">AL</span></div></header><main>{error && <div className="api-message" role="alert">{error} <button onClick={load} disabled={loading || busy}>Reload data</button></div>}{loading && <p role="status">Loading church data…</p>}<div className="heading"><div><div className="eyebrow">GRACE COMMUNITY CHURCH</div><h1>{titles[page]}</h1><p>{page === 'Overview' ? 'See where help is needed. Connect people with a purpose.' : page === 'Find a place' ? 'Start a conversation, discover their gifts, and find a meaningful next step.' : page === 'Saved connections' ? 'A shortlist for your next conversation. Saved in your church workspace.' : page === 'Prayer map' ? 'Pick a country to read from the field, see what’s in the news there, and pray.' : 'Help a growing church grow closer, one connection at a time.'}</p></div>{page !== 'Find a place' && page !== 'Prayer map' && <button className="primary" onClick={() => go('Find a place')}>✧ &nbsp; Find a place to serve &nbsp; ↗</button>}</div>
- {page === 'Overview' && <><section className="hero"><div><div className="eyebrow">LESS SEARCHING. MORE BELONGING.</div><h2>The next right step<br />starts with a person.</h2><p>Everyone brings something unique. Help them discover where their gifts meet your church’s needs.</p><button onClick={() => go('Find a place')}>Make a connection &nbsp; ↗</button></div><div className="art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><span className="flower">✳</span><span className="art-tag one">♡ A heart to serve</span><span className="art-tag two">✦ A place to belong</span></div></section><div className="stats">{[['Active volunteers', teams.reduce((sum, team) => sum + team.filled, 0), 'People making a difference', '♧'], ['Open opportunities', teams.reduce((sum, team) => sum + team.total - team.filled, 0), `Across ${teams.length} ministry teams`, '↗'], ['Teams needing extra help', teams.filter(urgent).length, '35% or more roles unfilled', '◷'], ['One shared mission', 'Belonging', 'More than filling a schedule', '♡']].map(([label, value, caption, icon]) => <article key={label}><div>{label}<span>{icon}</span></div><strong>{value}</strong><small>{caption}</small></article>)}</div></>}
- {(page === 'Overview' || page === 'Ministries') && <section><div className="section-heading"><h2>Where you can make a difference <small>{teams.length} ministries</small></h2><p>A little of your time can make a lasting impact.</p></div><div className="toolbar"><div className="filters"><button className={!filter ? 'selected' : ''} onClick={() => setFilter(false)}>All ministries</button><button className={filter ? 'selected' : ''} onClick={() => setFilter(true)}>∙ Needs extra help</button></div><label className="search">⌕ <input aria-label="Search ministries" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search ministries..." /></label></div><div className="grid">{visible.map(m => <article className="team" key={m.id}><div className="card-top"><span className={'icon color' + m.id}>{m.icon}</span><span className={'badge ' + (urgent(m) ? 'urgent' : '')}>{urgent(m) ? '● Needs extra help' : 'Welcoming volunteers'}</span></div><div className="category">{m.category}</div><h3>{m.name}</h3><p>{m.description}</p><div className="coverage"><span><b>{m.total - m.filled}</b> open spots</span><span>{m.filled} / {m.total} filled</span></div><div className="progress" role="meter" aria-label={m.name + ' volunteer coverage'} aria-valuenow={m.filled} aria-valuemin={0} aria-valuemax={m.total}><span style={{
-                  width: m.filled / m.total * 100 + '%'
-                }} /></div><div className="card-bottom"><span>◷ {m.day}</span><button onClick={() => {
-                  setDetail(m);
-                }}>View team ↗</button></div></article>)}</div>{!loading && !error && !visible.length && <div className="empty">No ministries match. Try another search or clear the filter.</div>}<div id="team-detail">{detail && <section className="panel team-detail" aria-live="polite"><button className="close" aria-label="Close team details" onClick={() => setDetail(null)}>×</button><div className="eyebrow">MEET THE TEAM</div><h2>{detail.name}</h2><p>{detail.description}</p><p><b>{detail.total - detail.filled} openings · {detail.day}</b></p><p>{detail.note}</p><Contact m={detail} /><button className="primary" onClick={() => {
-                setSkills(detail.skills);
-                setDay(detail.day);
-                setStyle(detail.style);
-                setResults(null);
-                go('Find a place');
-              }}>Explore a match →</button></section>}</div></section>}
- {page === 'Find a place' && <div className="matching"><form className="panel match-form" onSubmit={match}><div className="form-title"><span className="icon color1">✧</span><div><h2>Meet the member</h2><p>A few details can open the right door.</p></div></div><label className="field">Member’s name <small>Optional</small><input value={name} maxLength={100} onChange={e => setName(e.target.value)} placeholder="e.g. Jamie Parker" /></label><fieldset><legend>What are their gifts & skills?</legend><p>Choose all that feel like a good fit.</p><div className="chips">{gifts.map(s => <button type="button" key={s} aria-pressed={skills.includes(s)} className={skills.includes(s) ? 'chosen' : ''} onClick={() => setSkills(skills.includes(s) ? skills.filter(v => v !== s) : [...skills, s])}>{skills.includes(s) ? '✓' : '+'} {s}</button>)}</div></fieldset><label className="field">How would they like to serve?<select value={style} onChange={e => setStyle(e.target.value)}>{['Working with people', 'Behind the scenes', 'Hands-on service'].map(v => <option key={v}>{v}</option>)}</select></label><label className="field">When are they available?<select value={day} onChange={e => setDay(e.target.value)}>{['Sunday mornings', 'Saturday mornings', 'Weekday evenings'].map(v => <option key={v}>{v}</option>)}</select></label><button className="primary wide" disabled={loading || busy || !teams.length}>{busy ? "Working…" : "✧ Discover opportunities →"}</button><p className="disclaimer">The backend currently uses simple rules for matching. Gloo AI integration is the next step.</p></form><section aria-live="polite">{!results ? <div className="placeholder"><span>✳</span><div className="eyebrow">EVERYONE HAS SOMETHING TO GIVE</div><h2>Let’s find their place.</h2><p>Tell us a little about the member. Suggested ministries and team contacts will appear here.</p><small>01 Get to know them<br /><br />02 Explore the fit<br /><br />03 Make an introduction</small></div> : <><div className="results-heading"><div className="eyebrow">RULE-BASED RECOMMENDATIONS</div><h2>A few places for {results.name}</h2><p>Conversation starters, not commitments. Confirm availability with each team.</p></div>{results.matches.map((m, i) => {
-                const exists = saved.some(s => s.id === m.id && s.member === results.name);
-                return <article className="panel recommendation" key={m.id}><div className="card-top"><span className={'icon color' + m.id}>{m.icon}</span><span className="badge">{i === 0 ? 'Top suggestion' : 'Suggestion ' + (i + 1)}</span></div><h3>{m.name}</h3><p>{m.description}</p><div className="reason"><b>Why it could fit</b><p>{m.overlap.length ? 'Connects with gifts in ' + m.overlap.join(', ').toLowerCase() + '.' : 'An opportunity to explore a new area of service.'} {m.style === results.style ? 'Matches their preferred serving style.' : 'Serving style: ' + m.style.toLowerCase() + '.'} {m.day === results.day ? 'Fits their availability.' : 'Schedule differs: ' + m.day.toLowerCase() + '.'} {m.total - m.filled} open spots.</p></div><div className="contact-row"><Contact m={m} /><button className="secondary" disabled={exists || busy} onClick={() => save(m)}>{exists ? '✓ Saved' : 'Save connection'}</button></div><small className="requirement">{m.note}</small></article>;
-              })}</>}</section></div>}
- {page === 'Prayer map' && <PrayerMap />}
- {page === 'Saved connections' && <section>{saved.length ? saved.map((m) => <article className="panel saved" key={m.id + '-' + m.member}><span className={'icon color' + m.id}>{m.icon}</span><div><h3>{m.member} → {m.name}</h3><Contact m={m} /><small>Introduction not yet sent</small></div><button className="secondary" disabled={busy} onClick={() => remove(m.connection_id)}>Remove</button></article>) : <div className="panel empty"><h2>Every connection starts somewhere.</h2><p>Find opportunities for a member, then save a team to follow up with.</p><button className="primary" onClick={() => go('Find a place')}>Find a place to serve →</button></div>}</section>}
- {(page === 'Overview' || page === 'Our vision') && <section className={'vision ' + (page === 'Our vision' ? 'expanded' : '')}><span>✧</span><div><div className="eyebrow">THE IDEA BEHIND BELONG</div><h2>A big church can still feel personal.</h2><p>{vision}</p>{page === 'Our vision' && <div className="steps">{[['01 / See the need', 'A shared view of volunteer coverage and responsibilities.'], ['02 / Know the person', 'Start with their gifts, interests, and time.'], ['03 / Connect with care', 'Gloo AI suggests possibilities. People lead the relationship.']].map(([title, text]) => <div key={title}><b>{title}</b><p>{text}</p></div>)}</div>}</div>{page === 'Overview' && <button onClick={() => go('Our vision')}>Our vision ↗</button>}</section>}
- <footer><b>belong.</b><span>Helping people find their people.</span><span>Prototype · All church data, contacts, regions, and testimonies are fictional</span></footer></main></div></div>;
-}
-function Contact({
-  m
-}) {
-  return <div className="contact"><strong>{m.head}</strong><small>Ministry lead · Sample contact</small><a href={'mailto:' + m.email}>{m.email}</a></div>;
+    if (!scrollTarget) return;
+    const top = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Do not return the value of top(): newer browsers return a Promise from scrollTo, and React
+    // would call it as this effect cleanup on the next navigation and crash the app.
+    if (!scrollTarget.id) { top(); return; }
+    // A section can render only after its page loads data, so wait up to 5 seconds for it.
+    let tries = 0;
+    const timer = setInterval(() => {
+      const element = document.getElementById(scrollTarget.id);
+      if (!element && ++tries < 50) return;
+      clearInterval(timer);
+      element ? element.scrollIntoView({ behavior: 'smooth', block: 'start' }) : top();
+    }, 100);
+    return () => clearInterval(timer);
+  }, [scrollTarget]);
+
+  const name = listing?.name || (demo ? DEMO_INFO.name : '');
+  const ready = demo || apiReady === true;
+  const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
+  const church = useMemo(() => ({
+    slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
+    // After staff rename the church in Church setup.
+    refresh: () => setListingVersion(v => v + 1),
+  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion]);
+
+  const section = route.split('/')[0];
+  // A new church on an older church API: everything but giving waits for the deploy.
+  const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
+  let page;
+  if (listing?.missing && section !== 'start' && section !== 'platform') page = <ChurchMissing />;
+  else if (blocked) page = <ChurchNotReady section={section} />;
+  else page = <>
+    {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
+    {/* Kept mounted so the saved/pending count stays live in the nav. */}
+    {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
+    {section === 'about' && <div className="page">
+      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]} text={ABOUT_PAGES[route]?.[2]} />
+      {demo && <SubNav tabs={aboutTabsFor(demo)} route={route} go={go} />}
+      {route === 'about/blog' && <Blog />}
+      {demo && route === 'about' && <About go={go} />}
+      {demo && route === 'about/beliefs' && <Beliefs />}
+      {demo && route === 'about/news' && <News go={go} />}
+      {demo && route === 'about/directory' && <Directory />}
+      {demo && route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
+    </div>}
+    {section === 'notes' && <div className="page">
+      <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
+      <PastorNotes route={route} go={go} />
+    </div>}
+    {section === 'give' && <div className="page">
+      <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
+    </div>}
+    {section === 'calendar' && <div className="page">
+      <PageHeader eyebrow="Calendar" title="Church Life & Gatherings." text="Explore upcoming gatherings, services, and outreach with AI-generated summaries." />
+      <Calendar />
+    </div>}
+    {section === 'guests' && <div className="page">
+      <PageHeader eyebrow="Guests" title={route === 'guests/plan' ? 'Plan your visit.' : 'Welcome team.'} text={route === 'guests/plan' ? 'Everything a first-time guest needs, and a way to let us know they’re coming.' : 'See who has arrived and get them to the right person.'} />
+      <SubNav tabs={GUEST_TABS} route={route} go={go} />
+      {route === 'guests/plan' && <VisitPage />}
+      {route === 'guests/welcome' && <WelcomeTeam />}
+    </div>}
+    {section === 'prayer' && <div className="page">
+      <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
+      <PrayerMap />
+    </div>}
+    {section === 'start' && <div className="page"><ChurchStart /></div>}
+    {section === 'setup' && <div className="page"><ChurchSetup /></div>}
+    {section === 'platform' && <div className="page"><Platform /></div>}
+  </>;
+
+  return <ChurchContext.Provider value={church}>
+    <div className="app">
+      <Sidebar route={route} go={go} onAsk={() => setChatOpen(true)} savedCount={savedCount} />
+      <TopBar go={go} onAsk={() => setChatOpen(true)} />
+      <div className="content">
+        <WorkspaceBar />
+        {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
+        <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
+          {page}
+          <footer className="site-footer">
+            <b>belong.</b>
+            <span>{name || 'Your church'} · Helping people find their people.</span>
+            {demo ? <small>Demo site. Church details, people and contacts are fictional.</small> : <small>Made with belong.</small>}
+          </footer>
+        </main>
+      </div>
+      <TabBar route={route} go={go} onAsk={() => setChatOpen(true)} chatOpen={chatOpen} savedCount={savedCount} />
+      <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onRequestFiled={() => setRequestsVersion(v => v + 1)} onNavigate={go} />
+    </div>
+  </ChurchContext.Provider>;
 }
