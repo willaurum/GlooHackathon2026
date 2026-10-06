@@ -293,6 +293,20 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:11434:arrietty.hpc.lan:11434 YOU
 
 Then set `AI_PROVIDER=ollama`, `OLLAMA_MODEL=gpt-oss:20b`, and `OLLAMA_BASE_URL=http://host.docker.internal:11434` (or `http://127.0.0.1:11434` outside Docker) for the backend. No API key is needed, and the chat adds `/v1` if it is missing. Both Find a place and the chat use it. This tunnel only works locally, not from Cloudflare.
 
+#### Ollama on another machine (Tailscale or LAN)
+
+An Ollama on another machine, such as a desktop on the tailnet, needs only the provider and the endpoint:
+
+```
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://100.x.y.z:11434/v1
+OLLAMA_MODEL=qwen3.8:27b
+```
+
+Give the address, not a name: the container resolves through Docker, which does not know Tailscale MagicDNS or `.local`. Nothing else is needed, because `docker-compose.yml` falls `AI_BASE_URL` back to `OLLAMA_BASE_URL` and `AI_MODEL` back to `OLLAMA_MODEL`, and `ai_client` strips the trailing `/v1` for the calendar's native calls. `host.docker.internal` is for an Ollama on the Docker host and will not reach another machine.
+
+Check it with `GET /api/ai/status` (`connected: true`, with the model list) and `GET /api/chat/status` (`providers: ["ollama:<model>"]`). A 27B model answers in roughly 20-25 seconds, so a first calendar summary is slow rather than stuck.
+
 #### Tests
 
 ```bash
