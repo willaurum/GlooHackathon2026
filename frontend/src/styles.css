@@ -855,6 +855,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .ministry-badge { font-size: 10px; color: #5d7565; background: #f1f4f0; padding: 3px 8px; border-radius: 4px; }
 .event-datetime-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #4b6352; font-weight: 600; background: #f4f7f2; border: 1px solid #e3ebe0; padding: 5px 10px; border-radius: 6px; }
 .calendar-section .event-title { font-size: 18px; color: #1e392b; margin-bottom: 6px; line-height: 1.35; }
+.calendar-section .event-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.calendar-section .event-delete { font-size: 13px; padding: 4px 10px; color: #a14a3b; flex: none; }
+.events-view-toggle { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .event-location { font-size: 11px; color: #63776b; margin-bottom: 12px; display: flex; align-items: center; gap: 4px; }
 .calendar-section .event-description { font-size: 12px; line-height: 1.7; color: #516257; margin-bottom: 16px; flex-grow: 1; }
 

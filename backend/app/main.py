@@ -410,6 +410,13 @@ def post_event(body: EventCreate):
                             ministry_name=body.ministry_name)
 
 
+@app.delete("/api/events/{event_id}", status_code=204)
+def delete_event(event_id: int):
+    # Staff only: the API Worker allows DELETE /api/events/<id> for a staff session (api/churches.ts).
+    if not db.delete_event(event_id):
+        raise HTTPException(status_code=404, detail="Event not found")
+
+
 @app.post("/api/events/{event_id}/summarize")
 async def summarize_event(event_id: int, model: str | None = None):
     event = db.get_event(event_id)

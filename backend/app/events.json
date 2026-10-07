@@ -77,6 +77,17 @@
     "ai_summary": null
   },
   {
+    "id": 10,
+    "title": "Serve Day",
+    "category": "Outreach",
+    "date": "2026-10-17",
+    "time": "08:30 AM - 12:30 PM",
+    "location": "Main parking lot",
+    "ministry_name": "Community outreach",
+    "description": "Teams spread out to help local schools, a food pantry, and elderly neighbors with yard work. All ages welcome; meet in the main parking lot.",
+    "ai_summary": null
+  },
+  {
     "id": 8,
     "title": "Welcome to Grace Newcomers Luncheon",
     "category": "Hospitality",
