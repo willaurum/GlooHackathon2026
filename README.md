@@ -2,7 +2,7 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-Tekton is the base church-site template for a future agentic templatizer. The [JSON template framework](templatizer/README.md) provides a versioned agent output contract, examples, validation and local content-package preparation. Website reading and automatic provisioning/deployment are not implemented, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
