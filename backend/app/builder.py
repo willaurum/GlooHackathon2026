@@ -1,9 +1,13 @@
 """Agentic builder: turn an existing church website into a church profile, with every value traced to its source.
 
-    1. Import   fetch the site (same-site pages) into sources: [{id, url, title, text}]
+    1. Import   fetch the site into sources: [{id, url, title, text}]. robots.txt is obeyed, the sitemap and the
+                navigation are read first, and pages are read most useful first (builder_crawl.py), with iCal and
+                sermon feeds read as their own sources.
     2. Extract  read each source into claims: {field, value, quote, source_id, method}. Pattern rules catch
                 phones, emails, addresses and service times; the AI (when configured) adds the name, prose and
-                FAQs. Every AI claim must quote its source exactly, or it is dropped.
+                FAQs. Every AI claim must quote its source exactly, or it is dropped. Lists (events, staff,
+                ministries, groups, locations, sermons) come from structured data (builder_structured.py) and from
+                specialist readers, one bounded AI call per page (builder_agents.py), checked the same way.
     3. Clarify  plain code compares the claims field by field: one agreeing value is prefilled, different
                 values are a conflict, nothing found for a required field is missing. Nothing is decided by
                 the AI, and a conflict is never resolved without the church's answer.
@@ -11,8 +15,9 @@
     5. Build    the confirmed profile becomes ChurchContent JSON (church_content.py) and can be loaded into a
                 church, whose own site is then the preview.
 
-Public drafts live in the reserved platform space 'builder' as 'draft:<id>', expire after 24 hours,
-and can be applied once by staff into a new church.
+A website import runs in the background: POST answers 202 with a draft whose status is 'importing', and the
+page polls GET until it is 'clarifying', 'review' or 'failed'. Public drafts live in the reserved platform space
+'builder' as 'draft:<id>', expire after 24 hours, and can be applied once by staff into a new church.
 """
 import asyncio
 import io
@@ -28,6 +33,7 @@ import threading
 import time
 import zipfile
 import xml.etree.ElementTree as ET
+import heapq
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -42,12 +48,15 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import church_content, db
+from . import builder_agents, builder_crawl, builder_structured, church_content, db
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_PAGES = 12
+MAX_PAGES = max(1, min(60, int(os.environ.get('BUILDER_MAX_PAGES') or 40)))
+CRAWL_WORKERS = 3
+MAX_FEEDS = 4
+MAX_SPECIALIST_CALLS = max(0, int(os.environ.get('BUILDER_MAX_AI_CALLS') or 60) - MAX_PAGES // 2)
 MAX_PAGE_BYTES = 1_000_000
 MAX_SOURCE_CHARS = 20_000
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -56,6 +65,9 @@ MAX_UPLOAD_FILES = 5
 FETCH_TIMEOUT = 10.0
 IMPORT_BUDGET = float(os.environ.get('BUILDER_IMPORT_BUDGET', '75.0'))
 CRAWL_BUDGET = 30.0
+# A website import runs in the background (see import_site), so it can read more than one request allows.
+JOB_BUDGET = float(os.environ.get('BUILDER_JOB_BUDGET') or 180.0)
+JOB_MAX = JOB_BUDGET + 60.0
 DOCUMENT_TIMEOUT = 20.0
 DOCUMENT_MEMORY = 1024 * 1024 * 1024  # address space, which includes the app the child imports
 _WORKERS = ThreadPoolExecutor(max_workers=12, thread_name_prefix='builder')
@@ -107,45 +119,77 @@ def _parallel(items, read, deadline, workers=4):
 
 
 class _PageText(HTMLParser):
-    """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page."""
+    """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page. Also kept for the
+    structured readers: link text and whether a link is in the navigation, JSON-LD blocks, embedded players,
+    feed links and the canonical address."""
     # Form dropdowns are choices, not content (a "Which service?" list would read as service times).
     SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'select', 'textarea'}
     BLOCK = {'p', 'div', 'br', 'li', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article',
              'header', 'footer', 'nav', 'main', 'aside', 'dt', 'dd', 'table', 'form', 'blockquote', 'label', 'button'}
+    NAV = {'nav', 'header', 'footer'}
+    MAX_JSONLD = 10
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts, self.links, self.images, self.title, self._skip, self._in_title = [], [], [], '', 0, False
+        self.anchors, self.jsonld, self.embeds, self.feeds, self.canonical = [], [], [], [], ''
+        self._nav, self._anchor, self._script = 0, None, None
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag in self.SKIP:
             self._skip += 1
+            if tag == 'script' and (attrs.get('type') or '').lower() == 'application/ld+json' and len(self.jsonld) < self.MAX_JSONLD:
+                self._script = []
         elif tag == 'title':
             self._in_title = True
         elif tag == 'a' and attrs.get('href'):
             self.links.append(attrs['href'])
+            self._anchor = [attrs['href'], [], self._nav > 0]
         elif tag == 'img':
             if attrs.get('src'):
                 self.images.append(attrs['src'])
             if attrs.get('alt'):
                 self.parts.append(f" [image: {attrs['alt']}] ")
+        elif tag == 'iframe' and attrs.get('src'):
+            self.embeds.append((attrs['src'], attrs.get('title') or ''))
+        elif tag == 'link' and attrs.get('href'):
+            rel, kind = (attrs.get('rel') or '').lower(), (attrs.get('type') or '').lower()
+            if rel == 'canonical':
+                self.canonical = attrs['href']
+            elif 'alternate' in rel and ('rss' in kind or 'atom' in kind or 'calendar' in kind):
+                self.feeds.append(attrs['href'])
+        if tag in self.NAV:
+            self._nav += 1
         if tag in self.BLOCK:
             self.parts.append('\n')
 
     def handle_endtag(self, tag):
         if tag in self.SKIP:
             self._skip = max(0, self._skip - 1)
+            if tag == 'script' and self._script is not None:
+                self.jsonld.append(''.join(self._script)[:MAX_SOURCE_CHARS])
+                self._script = None
         elif tag == 'title':
             self._in_title = False
+        elif tag == 'a' and self._anchor:
+            href, text, in_nav = self._anchor
+            self.anchors.append((href, ' '.join(''.join(text).split())[:120], in_nav))
+            self._anchor = None
+        if tag in self.NAV:
+            self._nav = max(0, self._nav - 1)
         if tag in self.BLOCK:
             self.parts.append('\n')
 
     def handle_data(self, data):
-        if self._in_title:
+        if self._script is not None:
+            self._script.append(data)
+        elif self._in_title:
             self.title += data
         elif not self._skip:
             self.parts.append(data)
+            if self._anchor:
+                self._anchor[1].append(data)
 
     def text(self):
         lines = (re.sub(r'[ \t\r\f\v]+', ' ', line).strip() for line in ''.join(self.parts).split('\n'))
@@ -156,7 +200,9 @@ def parse_html(html):
     page = _PageText()
     page.feed(html)
     page.close()
-    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links, 'images': page.images}
+    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links, 'images': page.images,
+            'anchors': page.anchors, 'jsonld': page.jsonld, 'embeds': page.embeds, 'feeds': page.feeds,
+            'canonical': page.canonical}
 
 
 class FetchRefused(ValueError):
@@ -186,8 +232,23 @@ def _check_public(url):
             raise ValueError('That address is on a private network and cannot be imported.')
 
 
-def crawl(start_url, fetch=None, max_pages=MAX_PAGES, deadline=None, notes=None):
-    """Breadth-first over same-site HTML pages. `fetch(url) -> (final_url, content_type, text)` can be injected."""
+def _fetch_each(urls, fetch, deadline, workers):
+    """One result per url, in order: ('ok', value), ('error', exception), or None for work cut off by the deadline."""
+    def read(url):
+        try:
+            return 'ok', fetch(url)
+        except Exception as error:  # one broken page must not stop the import
+            return 'error', error
+    values, _ = _parallel(urls, read, deadline, workers=workers)
+    return values
+
+
+def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetch_feed=None, feeds=None, progress=None):
+    """Same-site HTML pages, most useful first (builder_crawl.score). `fetch(url) -> (final_url, content_type, text)`
+    can be injected. With `fetch_feed` (used for robots.txt and sitemaps), robots.txt is obeyed and the sitemap's
+    pages join the queue. Feed links (iCal, RSS) found on the way are appended to `feeds`. `progress(read, found)`
+    is called after each batch of pages."""
+    max_pages = max_pages or MAX_PAGES
     start_url = urldefrag(start_url.strip())[0]
     deadline = deadline if deadline is not None else _now() + min(CRAWL_BUDGET, IMPORT_BUDGET)
     _, skipped = _parallel([start_url], _check_public, deadline, workers=1)
@@ -197,43 +258,114 @@ def crawl(start_url, fetch=None, max_pages=MAX_PAGES, deadline=None, notes=None)
         return []
     origin = urlparse(start_url).netloc
     fetch = fetch or _http_fetch
-    queue, seen, sources = [start_url], {start_url}, []
-    while queue and len(sources) < max_pages:
-        if _now() >= deadline:
+    feeds = feeds if feeds is not None else []
+    order, queue, seen, sources = 0, [], {start_url}, []
+
+    def push(url, value):
+        nonlocal order
+        order += 1
+        heapq.heappush(queue, (-value, order, url))
+
+    def add_feed(url):
+        url = builder_crawl.feed_url(url)
+        if url not in feeds and urlparse(url).scheme in ('http', 'https'):
+            feeds.append(url)
+
+    robots = builder_crawl.Robots()
+    if fetch_feed is not None:
+        # robots.txt and sitemaps get at most a fifth of the reading time.
+        found_by = _now() + max(0.0, deadline - _now()) * 0.2
+        robots, mapped = builder_crawl.discover(start_url, fetch_feed, lambda urls, f: [
+            r[1] if r and r[0] == 'ok' else None for r in _fetch_each(urls, f, found_by, CRAWL_WORKERS)])
+        if not robots.allowed(start_url):
+            raise ValueError('This website asks automated tools not to read it (robots.txt), so it cannot be imported. '
+                             'Upload your church materials instead.')
+        for url in mapped:
+            if url not in seen and not builder_crawl.skippable(url):
+                seen.add(url)
+                push(url, builder_crawl.score(url))
+    push(start_url, float('inf'))
+    posts, stopped = 0, False
+    while queue and len(sources) < max_pages and _now() < deadline and not stopped:
+        wave = []
+        while queue and len(wave) < min(CRAWL_WORKERS, max_pages - len(sources)):
+            url = heapq.heappop(queue)[2]
+            if url != start_url and (not robots.allowed(url) or builder_crawl.is_post(url) and posts >= builder_crawl.MAX_POSTS):
+                continue
+            posts += url != start_url and builder_crawl.is_post(url)
+            wave.append(url)
+        if not wave:
             break
-        url = queue.pop(0)
-        try:
-            results, skipped = _parallel([url], fetch, deadline, workers=1)
-            if skipped:
-                queue.insert(0, url)
-                break
-            final_url, content_type, body = results[0]
-        except FetchRefused:
-            if url == start_url:
-                raise  # "That address is on a private network" says more than "no pages could be read".
-            continue
-        except Exception as error:  # one broken page must not stop the import
-            log.info('builder: skipped %s (%s)', url, error)
-            continue
-        if 'html' not in content_type:
-            continue
-        page = parse_html(body)
-        # The same page under two addresses ("/" and "/index.html") is one source, or it would count twice.
-        if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] for s in sources):
-            continue
-        images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
-        sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
-                        'text': page['text'][:MAX_SOURCE_CHARS],
-                        'images': [i for i in images if urlparse(i).netloc == origin and IMAGE_RE.search(i)]})
-        for href in page['links']:
-            link = urldefrag(urljoin(final_url, href))[0]
-            if urlparse(link).netloc == origin and link not in seen and not re.search(r'\.(pdf|jpe?g|png|gif|zip|docx?)$', link, re.I):
-                seen.add(link)
-                queue.append(link)
-    if queue and len(sources) < max_pages and notes is not None:
+        for url, result in zip(wave, _fetch_each(wave, fetch, deadline, CRAWL_WORKERS)):
+            if result is None:
+                push(url, float('inf'))  # read first next time; counted as not read in the note below
+                stopped = True
+                continue
+            status, value = result
+            if status == 'error':
+                if isinstance(value, FetchRefused) and url == start_url:
+                    raise value  # "That address is on a private network" says more than "no pages could be read".
+                log.info('builder: skipped %s (%s)', url, value)
+                continue
+            final_url, content_type, body = value
+            if 'html' not in content_type:
+                continue
+            page = parse_html(body)
+            canonical = urldefrag(urljoin(final_url, page['canonical']))[0] if page['canonical'] else ''
+            # The same page under two addresses ("/" and "/index.html") is one source, or it would count twice.
+            if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] or canonical and s['url'] == canonical for s in sources):
+                continue
+            images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
+            anchors = [(urldefrag(urljoin(final_url, href))[0], text, nav) for href, text, nav in page['anchors']
+                       if not href.lower().startswith(('mailto:', 'tel:', 'javascript:'))][:300]
+            sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
+                            'text': page['text'][:MAX_SOURCE_CHARS],
+                            'images': [i for i in images if urlparse(i).netloc == origin and IMAGE_RE.search(i)],
+                            'page_type': builder_crawl.page_type(final_url, page['title']),
+                            'links': list(dict.fromkeys(a[0] for a in anchors)),
+                            'anchors': anchors, 'jsonld': page['jsonld'],
+                            'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']]})
+            for href in page['feeds']:
+                add_feed(urljoin(final_url, href))
+            for link, text, nav in anchors:
+                if builder_crawl.is_feed(link):
+                    add_feed(link)
+                elif builder_crawl.same_site(link, origin) and link not in seen and not builder_crawl.skippable(link):
+                    seen.add(link)
+                    push(link, builder_crawl.score(link, text, nav))
+            for href in page['links']:
+                if href.lower().startswith('webcal:'):
+                    add_feed(href)
+        if progress:
+            progress(len(sources), len(sources) + len(queue))
+    if queue and notes is not None:
         total = min(max_pages, len(sources) + len(queue))
-        notes.append(f'Stopped reading after {len(sources)} of {total} pages to stay within the time limit.')
+        if len(sources) < max_pages:
+            notes.append(f'Stopped reading after {len(sources)} of {total} pages to stay within the time limit.')
+        else:
+            notes.append(f'Read the {len(sources)} most useful pages of {len(sources) + len(queue)} found; '
+                         'older posts and archive pages were skipped.')
     return sources
+
+
+def read_feeds(feeds, fetch_feed, first_id, deadline, notes=None):
+    """Calendar (iCal) and sermon (RSS, podcast) feeds as sources of kind 'feed'. Calendars are read first."""
+    if not feeds or fetch_feed is None or _now() >= deadline:
+        return []
+    ranked = sorted(dict.fromkeys(feeds), key=lambda u: (not re.search(r'\.ics|calendar', u, re.I),
+                                                         not re.search(r'sermon|podcast|message', u, re.I)))[:MAX_FEEDS]
+    out = []
+    for url, result in zip(ranked, _fetch_each(ranked, fetch_feed, deadline, CRAWL_WORKERS)):
+        if not result or result[0] != 'ok':
+            continue
+        final_url, _, body = result[1]
+        body = body if isinstance(body, str) else body.decode('utf-8', errors='replace')
+        calendar = 'BEGIN:VCALENDAR' in body[:2000]
+        if not calendar and not re.search(r'<(rss|feed)\b', body[:2000]):
+            continue
+        out.append({'id': f's{first_id + len(out)}', 'kind': 'feed', 'url': final_url,
+                    'title': 'Calendar feed' if calendar else 'Sermon feed', 'text': '', 'feed': body[:MAX_PAGE_BYTES]})
+    return out
 
 
 IMAGE_RE = re.compile(r'\.(png|jpe?g|gif|webp)$', re.I)
@@ -538,10 +670,14 @@ def read_files(files, describe=None, deadline=None, notes=None):
     return sources
 
 
-def _http_fetch(url):
+FEED_TYPES = re.compile(r'xml|rss|atom|calendar|text/plain', re.I)
+
+
+def _http_fetch(url, kind='page'):
+    """(final_url, content_type, text). kind 'feed' is for robots.txt, sitemaps and iCal/RSS feeds."""
     _check_public(url)
     if _fetch_bridge():
-        final_url, content_type, data = _bridge_fetch(url, 'page')
+        final_url, content_type, data = _bridge_fetch(url, kind)
         charset = re.search(r'charset=([\w.-]+)', content_type)
         try:
             text = data.decode(charset.group(1) if charset else 'utf-8', errors='replace')
@@ -557,7 +693,14 @@ def _http_fetch(url):
             response = client.get(url)
             hops += 1
         response.raise_for_status()
-        return str(response.url), response.headers.get('content-type', ''), response.text[:MAX_PAGE_BYTES]
+        content_type = response.headers.get('content-type', '')
+        if kind == 'feed' and not FEED_TYPES.search(content_type):
+            raise ValueError('not a feed')
+        return str(response.url), content_type, response.text[:MAX_PAGE_BYTES]
+
+
+def _http_feed(url):
+    return _http_fetch(url, 'feed')
 
 
 # ---------------------------------------------------------------- 2. Extract
@@ -689,10 +832,7 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
     """Claims from the AI. `complete(messages, tools) -> tool arguments dict` can be injected for tests.
     Any claim whose quote is not found in the source is dropped: the AI can propose, never invent.
     A failed call is appended to `errors`; each real call is limited to the time left before `deadline`."""
-    if complete is None and _ai_complete is not None and deadline is not None:
-        remaining = max(1.0, deadline - _now())
-        complete = lambda messages, tools: _ai_complete(messages, tools, timeout=remaining)  # noqa: E731
-    complete = complete or _ai_complete
+    complete = _completer(complete, deadline)
     if not complete:
         return []
     fields = '\n'.join(f'- {k}: {v}' for k, v in AI_FIELDS.items())
@@ -723,27 +863,52 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
     return claims
 
 
+def _completer(complete, deadline):
+    """The call one AI task makes: an injected `complete`, or the real model limited to the time left."""
+    if complete is None and _ai_complete is not None and deadline is not None:
+        remaining = max(1.0, deadline - _now())
+        return lambda messages, tools: _ai_complete(messages, tools, timeout=remaining)  # noqa: E731
+    return complete or _ai_complete
+
+
+def _tool_arguments(text):
+    """Tool arguments as a dict. Some models wrap the JSON in prose or a code fence; take the outer object."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        start, end = text.find('{'), text.rfind('}')
+        return json.loads(text[start:end + 1]) if 0 <= start < end else None
+
+
 def _ai_complete_impl(messages, tools, timeout=None):
+    """Force the first tool. If the first configured provider fails, the next one (AI_FALLBACK) gets one try."""
     import openai
     from . import chat
     clients = chat.make_clients()
     if not clients:
         return None
-    name, model, extra_body, client = clients[0]
-    model = builder_model(name, model)
-    if timeout is not None:  # never outlive the import that asked
-        client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
-    forced = {'type': 'function', 'function': {'name': 'record_church_facts'}}
-    extra = {'extra_body': extra_body} if extra_body else {}
-    try:
-        response = client.chat.completions.create(model=model, messages=messages, tools=tools,
-                                                  tool_choice=forced, temperature=0, **extra)
-    except openai.BadRequestError:
-        # Some endpoints and models accept tools but not a forced choice.
-        response = client.chat.completions.create(model=model, messages=messages, tools=tools,
-                                                  tool_choice='auto', temperature=0, **extra)
-    calls = response.choices[0].message.tool_calls or []
-    return json.loads(calls[0].function.arguments) if calls else None
+    forced = {'type': 'function', 'function': {'name': tools[0]['function']['name']}}
+    error = None
+    for name, model, extra_body, client in clients[:2]:
+        model = builder_model(name, model)
+        if timeout is not None:  # never outlive the import that asked
+            client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
+        extra = {'extra_body': extra_body} if extra_body else {}
+        try:
+            try:
+                response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                                          tool_choice=forced, temperature=0, **extra)
+            except openai.BadRequestError:
+                # Some endpoints and models accept tools but not a forced choice.
+                response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                                          tool_choice='auto', temperature=0, **extra)
+        except Exception as failure:
+            log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
+            error = failure
+            continue
+        calls = response.choices[0].message.tool_calls or []
+        return _tool_arguments(calls[0].function.arguments) if calls else None
+    raise error
 
 
 def _ai_available():
@@ -766,33 +931,137 @@ AI_MISSING_NOTE = ('No AI model is set up, so only details found by plain rules 
 
 
 def extract(sources, complete=None, deadline=None, notes=None):
-    claims = []
+    """Claims for the profile fields (see extract_all for the lists)."""
+    return extract_all(sources, complete, deadline, notes)[0]
+
+
+def feed_items(source):
+    try:
+        if 'BEGIN:VCALENDAR' in source['feed'][:2000]:
+            return builder_structured.ics_events(source, source['feed'])
+        return builder_structured.feed_sermons(source, source['feed'])
+    except (ET.ParseError, ValueError) as error:
+        log.info('builder: skipped feed %s (%s)', source.get('url'), error)
+        return []
+
+
+def extract_all(sources, complete=None, deadline=None, notes=None):
+    """(claims, items). The orchestrator: every page, image and file gets the info reader; pages of a known type also
+    get specialist readers (builder_agents.ROUTES), at most MAX_SPECIALIST_CALLS of them. All AI work shares one
+    deadline and four workers. Structured data and feeds are read by plain code."""
+    claims, items = [], []
     use_ai = complete is not None or (_ai_complete is not None and _ai_available())
     deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
-    results = [None] * len(sources)
-    failed = []
+    readable = [s for s in sources if s.get('kind', 'page') != 'feed']
+    results = [None] * len(readable)
+    failed, list_failed = [], []
     if use_ai:
-        results, skipped = _parallel(sources, lambda source: ai_claims(source, complete, deadline, failed), deadline)
-        answered = len(sources) - skipped
-        if sources and not answered and notes is not None:
+        tasks = [('info', source) for source in readable]
+        tasks += [(name, source) for source in readable for name in builder_agents.specialists_for(source)][:MAX_SPECIALIST_CALLS]
+
+        def run(task):
+            name, source = task
+            if name == 'info':
+                return ai_claims(source, complete, deadline, failed)
+            return builder_agents.run(name, source, _completer(complete, deadline), list_failed)
+
+        done, _ = _parallel(tasks, run, deadline)
+        results, lists = done[:len(readable)], done[len(readable):]
+        skipped = sum(r is None for r in results)
+        answered = len(readable) - skipped
+        explained = False
+        if readable and not answered and notes is not None:
             notes.append(AI_SLOW_NOTE)
+            explained = True
         elif skipped and notes is not None:
             subject = '1 source was' if skipped == 1 else f'{skipped} sources were'
             notes.append(f'{subject} read without AI because it took too long.')
         if answered and failed and notes is not None:
             if len(failed) >= answered:
                 notes.append(AI_OFFLINE_NOTE)
+                explained = True
             else:
                 subject = '1 source was' if len(failed) == 1 else f'{len(failed)} sources were'
                 notes.append(f'{subject} read without AI because the AI reader returned an error.')
-    elif sources and complete is None and _ai_complete is not None and notes is not None:
+        unfinished = sum(r is None for r in lists) + len(list_failed)
+        if unfinished and not explained and notes is not None:
+            subject = '1 page' if unfinished == 1 else f'{unfinished} pages'
+            notes.append(f'{subject} of events, staff, ministries or sermons could not be read in time. '
+                         'Check those lists in the review.')
+        for found in lists:
+            items += found or []
+    elif readable and complete is None and _ai_complete is not None and notes is not None:
         notes.append(AI_MISSING_NOTE)
-    for source, result in zip(sources, results):
+    for source, result in zip(readable, results):
         claims += pattern_claims(source)
+        if source.get('kind', 'page') == 'page':
+            info, found = builder_structured.page_items(source)
+            claims += info
+            items += found
         claims += result or []
+    for source in sources:
+        if source.get('kind') == 'feed':
+            items += feed_items(source)
     for i, claim in enumerate(claims, 1):
         claim['id'] = f'c{i}'
-    return claims
+    return claims, items
+
+
+METHOD_RANK = {'structured': 0, 'pattern': 1, 'ai': 2}
+COLLECTION_LIMITS = {'events': 100, 'staff': 100, 'ministries': 60, 'groups': 100, 'locations': 30, 'sermons': 100}
+COLLECTION_LABELS = {'events': 'Events', 'staff': 'Staff and leaders', 'ministries': 'Ministries', 'groups': 'Small groups',
+                     'locations': 'Locations', 'sermons': 'Sermons'}
+
+
+def _item_key(collection, value):
+    name = re.sub(r'[^a-z0-9]', '', str(value.get('name') or value.get('title') or '').lower())
+    if collection == 'events':
+        return f"{name}|{value.get('date', '')}"
+    if collection == 'sermons':
+        return value.get('url') or f"{name}|{value.get('date', '')}"
+    if collection == 'locations':
+        return re.sub(r'[^a-z0-9]', '', str(value.get('address', '')).lower())[:24] or name
+    return name
+
+
+def collect(items, sources):
+    """{collection: [entry]}: the same item found on several pages (or by several readers) is one entry, its fields
+    taken from the most reliable reader first (structured data, then page patterns, then AI). Each entry keeps its
+    evidence and starts included, except staff: a person is only included by default when two pages, or the site's
+    structured data, name them, because their name and email will be public."""
+    by_id = {s['id']: s for s in sources}
+    grouped = {}
+    for item in sorted(items, key=lambda i: METHOD_RANK.get(i['method'], 3)):
+        key = _item_key(item['collection'], item['value'])
+        if key.strip('|'):
+            grouped.setdefault(item['collection'], {}).setdefault(key, []).append(item)
+    out = {}
+    for collection in builder_structured.COLLECTIONS:
+        entries = []
+        for found in grouped.get(collection, {}).values():
+            value, evidence, seen = {}, [], set()
+            for item in found:
+                for field, v in item['value'].items():
+                    value.setdefault(field, v)
+                if (item['source_id'], item['quote']) not in seen:
+                    seen.add((item['source_id'], item['quote']))
+                    source = by_id.get(item['source_id'], {})
+                    evidence.append({'source_id': item['source_id'], 'url': source.get('url'),
+                                     'title': source.get('title', ''), 'quote': item['quote']})
+            methods = sorted({i['method'] for i in found}, key=lambda m: METHOD_RANK.get(m, 3))
+            pages = {i['source_id'] for i in found}
+            include = len(pages) >= 2 or 'structured' in methods if collection == 'staff' else True
+            entries.append({'value': value, 'evidence': evidence[:5], 'methods': methods, 'include': include})
+        if collection == 'events':
+            entries.sort(key=lambda e: (e['value'].get('date') or '9999', e['value'].get('name', '').lower()))
+        elif collection == 'sermons':
+            entries.sort(key=lambda e: e['value'].get('date') or '', reverse=True)
+        entries = entries[:COLLECTION_LIMITS[collection]]
+        for n, entry in enumerate(entries, 1):
+            entry['id'] = f'{collection}-{n}'
+        if entries:
+            out[collection] = entries
+    return out
 
 
 # ---------------------------------------------------------------- 3. Clarify
@@ -992,28 +1261,124 @@ def build_content(session, *, allow_unanswered=False):
     content = {'info': info}
     if faqs:
         content['faqs'] = faqs
+    content.update(collection_content(session.get('collections', {})))
     return church_content.normalize(church_content.ChurchContent(**content))
 
 
-def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None):
-    started, notes = _now(), []
-    deadline = started + IMPORT_BUDGET
-    sources = crawl(url, fetch, deadline=min(deadline, started + CRAWL_BUDGET), notes=notes)
+ITEM_FIELDS = {
+    'events': ('name', 'date', 'time', 'when', 'location', 'description'),
+    'staff': ('name', 'role', 'email', 'phone', 'bio'),
+    'ministries': ('name', 'description', 'when', 'where', 'leader', 'email', 'audience'),
+    'groups': ('name', 'description', 'when', 'where', 'leader', 'email', 'audience'),
+    'locations': ('name', 'address', 'service_times'),
+    'sermons': ('title', 'date', 'speaker', 'series', 'scripture', 'url'),
+}
+
+
+def _valid(model, item):
+    try:
+        return model(**item).model_dump(exclude_none=True)
+    except Exception as error:  # pydantic.ValidationError: one bad item is left out, not the whole site
+        log.info('builder: left out %s item %s (%s)', model.__name__, item.get('name') or item.get('title'), error)
+        return None
+
+
+def collection_content(collections, today=None):
+    """Included list entries as ChurchContent sections. Dated events in the future go to the calendar; repeating
+    or undated ones are event highlights. Sections with nothing included are left out, so applying a draft never
+    empties a section the church already has."""
+    today = (today or datetime.now(timezone.utc).date()).isoformat()
+    cc = church_content
+    included = {name: [e['value'] for e in collections.get(name, []) if e.get('include')] for name in ITEM_FIELDS}
+    out = {'calendar': [], 'events': [], 'groups': [], 'ministries': [], 'staff': [], 'locations': [], 'sermons': []}
+    for v in included['events']:
+        if v.get('date'):
+            if v['date'] >= today:
+                out['calendar'].append(_valid(cc.CalendarEvent, {
+                    'title': v['name'], 'date': v['date'], 'time': v.get('time', '')[:100],
+                    'location': v.get('location', '')[:200], 'description': v.get('description', '')[:4000]}))
+        else:
+            out['events'].append(_valid(cc.Highlight, {
+                'name': v['name'], 'when': (v.get('when') or v.get('time', ''))[:200], 'where': v.get('location', '')[:200],
+                'description': v.get('description', '')[:2000]}))
+    for v in included['groups']:
+        out['groups'].append(_valid(cc.Highlight, {
+            'name': v['name'], 'when': v.get('when', '')[:200], 'where': v.get('where', '')[:200],
+            'description': v.get('description', '')[:2000], 'audience': v.get('audience', '')[:100]}))
+    for v in included['ministries']:
+        out['ministries'].append(_valid(cc.Ministry, {
+            'name': v['name'][:120], 'description': v.get('description', '')[:2000], 'day': v.get('when', '')[:120],
+            'head': v.get('leader', '')[:120], 'email': v.get('email', '')[:200]}))
+    for v in included['staff']:
+        out['staff'].append(_valid(cc.Person, {k: v.get(k, '') for k in ITEM_FIELDS['staff']}))
+    for v in included['locations']:
+        out['locations'].append(_valid(cc.Location, {k: v.get(k, '') for k in ITEM_FIELDS['locations']}))
+    for v in included['sermons']:
+        out['sermons'].append(_valid(cc.Sermon, {k: v.get(k, '') for k in ITEM_FIELDS['sermons']}))
+    limits = cc.ChurchContent.model_fields
+    content = {}
+    for name, entries in out.items():
+        entries = [e for e in entries if e]
+        if entries:
+            limit = next((m.max_length for m in limits[name].metadata if hasattr(m, 'max_length')), None)
+            content[name] = entries[:limit] if limit else entries
+    return content
+
+
+def apply_item(session, collection, item_id=None, include=None, value=None):
+    """Include, leave out or edit a list entry (all entries of the list when item_id is None)."""
+    entries = session.get('collections', {}).get(collection)
+    if collection not in ITEM_FIELDS or entries is None:
+        raise ValueError('Unknown list')
+    targets = entries if item_id is None else [e for e in entries if e['id'] == item_id]
+    if not targets:
+        raise ValueError('Unknown item')
+    if value is not None:
+        if item_id is None or not isinstance(value, dict):
+            raise ValueError('Edit one item at a time.')
+        entry = targets[0]
+        edited = {**entry['value'], **{k: ' '.join(str(v).split()) for k, v in value.items() if k in ITEM_FIELDS[collection] and v is not None}}
+        edited = {k: v for k, v in edited.items() if v != ''}
+        if not collection_content({collection: [{'value': edited, 'include': True}]}):
+            raise ValueError('Check this item: it needs a name, and dates must be written as YYYY-MM-DD and not be in the past.')
+        entry['value'], entry['edited'] = edited, True
+    if include is not None:
+        for entry in targets:
+            entry['include'] = bool(include)
+    return session
+
+
+def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None, fetch_feed=None, budget=None,
+                crawl_budget=None, progress=None):
+    """Import a website. With no injected `fetch`, robots.txt, sitemaps and feeds are read too (or with `fetch_feed`).
+    `progress(stage, pages_read, pages_found)` reports how far it got."""
+    started, notes, feeds = _now(), [], []
+    deadline = started + (IMPORT_BUDGET if budget is None else budget)
+    crawl_budget = CRAWL_BUDGET if crawl_budget is None else crawl_budget
+    if fetch_feed is None and fetch is None:
+        fetch_feed = _http_feed
+    report = (lambda read, found: progress('reading', read, found)) if progress else None
+    sources = crawl(url, fetch, deadline=min(deadline, started + crawl_budget), notes=notes, fetch_feed=fetch_feed,
+                    feeds=feeds, progress=report)
     if not sources:
         raise ValueError('No pages could be read from that address.')
     if describe is not None or (_ai_describe is not None and _ai_available()):
         sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes)
+    sources += read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes)
+    if progress:
+        progress('extracting', len([s for s in sources if s.get('kind') == 'page']), len(sources))
     return session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
 
 
 def session_from_sources(url, sources, complete=None, deadline=None, notes=None):
     notes = notes if notes is not None else []
-    claims = extract(sources, complete, deadline=deadline, notes=notes)
+    claims, items = extract_all(sources, complete, deadline=deadline, notes=notes)
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
     return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(),
             'url': url, 'status': 'clarifying' if qs else 'review',
-            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes}
+            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes,
+            'collections': collect(items, sources)}
 
 
 # ---------------------------------------------------------------- storage and routes
@@ -1037,6 +1402,14 @@ class ImportLimiter:
 
     @contextmanager
     def importing(self, ip):
+        self.acquire(ip)
+        try:
+            yield
+        finally:
+            self.release()
+
+    def acquire(self, ip):
+        """Count one import against the limits; every successful acquire needs one release()."""
         with self.lock:
             now = time.monotonic()
             while self.starts and self.starts[0][0] <= now - 3600:
@@ -1049,22 +1422,26 @@ class ImportLimiter:
                 raise HTTPException(status_code=429, detail='Three imports are already running. Please try again shortly.')
             self.starts.append((now, ip))
             self.running += 1
-        try:
-            yield
-        finally:
-            with self.lock:
-                self.running -= 1
+
+    def release(self):
+        with self.lock:
+            self.running = max(0, self.running - 1)
 
 
 import_limiter = ImportLimiter()
 
 
+STORED_SOURCE_KEYS = ('id', 'kind', 'url', 'title', 'page_type')
+
+
 def _save(session):
-    """Store a draft and drop expired ones; a draft nobody opens again would otherwise stay forever."""
+    """Store a draft and drop expired ones; a draft nobody opens again would otherwise stay forever.
+    Page texts are not stored: every value keeps its quote, which is all review and evidence need."""
     cutoff = datetime.fromtimestamp(time.time() - DRAFT_TTL, timezone.utc).isoformat()
+    stored = {**session, 'sources': [{k: s[k] for k in STORED_SOURCE_KEYS if k in s} for s in session['sources']]}
     with db.use_church(DRAFT_SPACE):
         db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
-                ('draft:' + session['id'], json.dumps(session))),
+                ('draft:' + session['id'], json.dumps(stored))),
                ("DELETE FROM config WHERE key LIKE 'draft:%' AND json_extract(data, '$.created_at') < ?", (cutoff,)))
     return session
 
@@ -1074,24 +1451,45 @@ def _delete(draft_id):
         db.run(('DELETE FROM config WHERE key = ?', ('draft:' + draft_id,)))
 
 
+def _read(draft_id):
+    with db.use_church(DRAFT_SPACE):
+        row = db.one('SELECT data FROM config WHERE key = ?', ('draft:' + draft_id,))
+    return json.loads(row['data']) if row else None
+
+
+INTERRUPTED = 'The import was interrupted. Please try again.'
+
+
 def _load(draft_id):
     if not re.fullmatch(r'[A-Za-z0-9_-]{24}', draft_id):
         raise HTTPException(status_code=404, detail='Builder draft not found')
-    with db.use_church(DRAFT_SPACE):
-        row = db.one('SELECT data FROM config WHERE key = ?', ('draft:' + draft_id,))
-    if not row:
+    draft = _read(draft_id)
+    if not draft:
         raise HTTPException(status_code=404, detail='Builder draft not found')
-    draft = json.loads(row['data'])
-    if (datetime.now(timezone.utc) - datetime.fromisoformat(draft['created_at'])).total_seconds() >= DRAFT_TTL:
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(draft['created_at'])).total_seconds()
+    if age >= DRAFT_TTL:
         _delete(draft_id)
         raise HTTPException(status_code=404, detail='Builder draft not found')
+    if draft.get('status') == 'importing' and (not _job_alive(draft_id) or age > JOB_MAX):
+        # The container restarted (or the job hung): say so instead of showing "importing" forever.
+        draft = {**draft, 'status': 'failed', 'error': INTERRUPTED}
+        _save(draft)
+    return draft
+
+
+def _ready(draft):
+    """Answers, lists, previews and apply need a finished import."""
+    if draft.get('status') == 'importing':
+        raise HTTPException(status_code=409, detail='This draft is still being imported.')
+    if draft.get('status') == 'failed':
+        raise HTTPException(status_code=409, detail=draft.get('error') or 'This import failed. Please start a new one.')
     return draft
 
 
 def _public(session):
     """The draft for the page, without the full page texts (the evidence quotes are enough)."""
-    return {**session, 'notes': session.get('notes', []),
-            'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title')} for s in session['sources']]}
+    return {**session, 'notes': session.get('notes', []), 'collections': session.get('collections', {}),
+            'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title') if k in s} for s in session['sources']]}
 
 
 class ImportBody(BaseModel):
@@ -1104,16 +1502,90 @@ class AnswerBody(BaseModel):
     value: str | list | dict
 
 
-@router.post('/api/builder/drafts', status_code=201)
-def import_site(body: ImportBody, request: Request):
-    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
-    with import_limiter.importing(ip):
-        try:
-            session = new_session(body.url)
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
+class ItemBody(BaseModel):
+    collection: str = Field(min_length=1, max_length=20)
+    id: str | None = Field(default=None, max_length=40)
+    include: bool | None = None
+    value: dict | None = None
+
+
+# ---------------------------------------------------------------- background imports
+
+_JOBS = ThreadPoolExecutor(max_workers=3, thread_name_prefix='builder-import')
+_running = {}  # draft id -> Future of its import
+_running_lock = threading.Lock()
+
+
+def _job_alive(draft_id):
+    with _running_lock:
+        future = _running.get(draft_id)
+    return future is not None and not future.done()
+
+
+def wait_for_imports(timeout=10.0):
+    """Wait for running imports (tests and shutdown)."""
+    with _running_lock:
+        futures = list(_running.values())
+    wait(futures, timeout=timeout)
+
+
+def _importing_draft(url):
+    return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(), 'url': url,
+            'status': 'importing', 'progress': {'stage': 'starting', 'pages_read': 0, 'pages_found': 0},
+            'sources': [], 'claims': [], 'fields': {}, 'questions': [], 'notes': [], 'collections': {}}
+
+
+def _run_import(draft):
+    """The import job. Progress is saved at most every 2 seconds; the finished draft replaces it."""
+    last = [0.0]
+
+    def progress(stage, read, found):
+        if stage == 'reading' and _now() - last[0] < 2:
+            return
+        last[0] = _now()
         with _draft_lock:
-            return _public(_save(session))
+            current = _read(draft['id'])
+            if current and current.get('status') == 'importing':
+                _save({**current, 'progress': {'stage': stage, 'pages_read': read, 'pages_found': found}})
+
+    try:
+        try:
+            session = new_session(draft['url'], budget=JOB_BUDGET, crawl_budget=JOB_BUDGET / 2, progress=progress)
+            session.update(id=draft['id'], created_at=draft['created_at'])
+        except ValueError as error:
+            session = {**draft, 'status': 'failed', 'error': str(error)}
+        except Exception:
+            log.exception('builder: import %s failed', draft['id'])
+            session = {**draft, 'status': 'failed', 'error': 'The import failed. Please try again.'}
+        with _draft_lock:
+            if _read(draft['id']):  # an expired or consumed draft is not brought back
+                _save(session)
+    finally:
+        import_limiter.release()
+
+
+@router.post('/api/builder/drafts', status_code=202)
+def import_site(body: ImportBody, request: Request):
+    """Start a website import. The draft answers 'importing' until the job finishes; poll GET for the result."""
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    import_limiter.acquire(ip)
+    try:
+        url = urldefrag(body.url.strip())[0]
+        _check_public(url)
+        draft = _importing_draft(url)
+        with _draft_lock:
+            _save(draft)
+        with _running_lock:
+            for done in [key for key, future in _running.items() if future.done()]:
+                del _running[done]
+            _running[draft['id']] = _JOBS.submit(_run_import, draft)
+    except ValueError as error:
+        import_limiter.release()
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except BaseException:
+        import_limiter.release()
+        raise
+    return _public(draft)
 
 
 @router.post('/api/builder/drafts/blank', status_code=201)
@@ -1192,7 +1664,7 @@ def get_draft(draft_id: str):
 @router.post('/api/builder/drafts/{draft_id}/answers')
 def answer(draft_id: str, body: AnswerBody):
     with _draft_lock:
-        session = _load(draft_id)
+        session = _ready(_load(draft_id))
         try:
             apply_answer(session, body.field, body.value)
         except ValueError as error:
@@ -1200,9 +1672,21 @@ def answer(draft_id: str, body: AnswerBody):
         return _public(_save(session))
 
 
+@router.post('/api/builder/drafts/{draft_id}/items')
+def item(draft_id: str, body: ItemBody):
+    """Include, leave out or edit an imported list entry (events, staff, ministries, groups, locations, sermons)."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            apply_item(session, body.collection, body.id, body.include, body.value)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
 def _content(draft_id):
     try:
-        return build_content(_load(draft_id))
+        return build_content(_ready(_load(draft_id)))
     except (ValueError, church_content.ContentError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1216,7 +1700,7 @@ def preview(draft_id: str):
 @router.get('/api/builder/drafts/{draft_id}/site')
 def site(draft_id: str):
     with _draft_lock:
-        return church_content.public_site(build_content(_load(draft_id), allow_unanswered=True))
+        return church_content.public_site(build_content(_ready(_load(draft_id)), allow_unanswered=True))
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')
@@ -1226,6 +1710,11 @@ def apply(draft_id: str):
         content = _content(draft_id)
         if db.current_church() == db.DEMO_CHURCH:
             raise HTTPException(status_code=403, detail='The demo church cannot be replaced. Sign up a church to build into.')
+        existing = db.get_church_info()
+        info = content['info']
+        # The draft has no city or care team; keep the ones the church signed up with.
+        info.update({key: info.get(key) or existing.get(key, '') for key in ('city', 'care_team')})
+        info['map_query'] = info['map_query'] or info['city']
         db.replace_content(content)
         _delete(draft_id)
         return {'content': content, 'church': db.current_church()}

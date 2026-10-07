@@ -326,7 +326,7 @@ class BudgetTests(BuilderTestCase):
             links = ''.join(f'<a href="/{i}">Page {i}</a>' for i in range(1, 12))
             return url, 'text/html', f'<p>{url} Sundays 9 & 11</p>{links}'
 
-        with mock.patch.object(builder, '_now', lambda: now[0]):
+        with mock.patch.object(builder, '_now', lambda: now[0]), mock.patch.object(builder, 'CRAWL_WORKERS', 1):
             s = builder.new_session('https://church.test/', fetch=fetch, complete=lambda m, t: None, describe=False)
         self.assertEqual(fetched, ['https://church.test/', 'https://church.test/1', 'https://church.test/2'])
         self.assertEqual(len(s['sources']), 3)
@@ -538,9 +538,14 @@ class RouteTests(ChurchTestCase):
 
     def create(self, headers=None):
         response = self.client.post('/api/builder/drafts', headers=headers, json={'url': 'https://church.test/'})
-        self.assertEqual(response.status_code, 201, response.text)
-        self.assertNotIn('text', response.json()['sources'][0])
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()['status'], 'importing')
         self.assertEqual(len(response.json()['id']), 24)
+        builder.wait_for_imports()
+        response = self.client.get('/api/builder/drafts/' + response.json()['id'])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn(response.json()['status'], ('clarifying', 'review'))
+        self.assertNotIn('text', response.json()['sources'][0])
         self.assertEqual(response.json()['notes'], [])
         return response.json()['id']
 
@@ -734,7 +739,9 @@ class RouteTests(ChurchTestCase):
                          [('Sunday', '9:00 AM'), ('Sunday', '11:00 AM')])
         self.assertEqual(snapshot['church']['info'], snapshot['info'])
         self.assertEqual(snapshot['ministries'], [])
-        self.assertEqual(snapshot['events'], [])
+        # Dated events found on the site (the fish fry, while it is upcoming) are the calendar.
+        self.assertEqual([e['title'] for e in snapshot['events']],
+                         [e['value']['name'] for e in draft['collections'].get('events', []) if e['value'].get('date')])
         self.assertEqual(set(self.fake.seen), {builder.DRAFT_SPACE})
         self.assertEqual(set(self.fake.databases), databases)
         self.assertEqual(builder._load(sid), draft)
@@ -763,6 +770,9 @@ class RouteTests(ChurchTestCase):
         with mock.patch.object(builder, 'build_content', return_value=content):
             snapshot = self.client.get(f'/api/builder/drafts/{sid}/site').json()
             self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope()).status_code, 200)
+        # Applying keeps the city the church signed up with (the draft has none).
+        for info in (snapshot['info'], snapshot['church']['info']):
+            info['city'] = 'Austin'
         for path in ('info', 'church', 'ministries', 'events'):
             self.assertEqual(self.client.get('/api/' + path, headers=self.hope()).json(), snapshot[path])
         self.assertEqual(snapshot['ministries'][0]['total'], 3)
@@ -866,7 +876,13 @@ class RouteTests(ChurchTestCase):
             self.assertIn('already running', r.json()['detail'])
         self.assertEqual(builder.import_limiter.running, 0)
         with mock.patch.object(builder, 'new_session', side_effect=ValueError('No pages')):
-            self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'}).status_code, 400)
+            started = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
+            self.assertEqual(started.status_code, 202)
+            builder.wait_for_imports()
+        failed = self.client.get('/api/builder/drafts/' + started.json()['id']).json()
+        self.assertEqual((failed['status'], failed['error']), ('failed', 'No pages'))
+        self.assertEqual(builder.import_limiter.running, 0)
+        self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'ftp://church.test/'}).status_code, 400)
         self.assertEqual(builder.import_limiter.running, 0)
         self.create()
 

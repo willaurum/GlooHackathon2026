@@ -8,6 +8,7 @@ The shape is exactly the seed files the demo church starts from:
     {"ministries": [...]}                                            backend/app/ministries.json
     {"calendar": [...]}                                              backend/app/events.json
     {"regions": [...]}                                               backend/app/regions.json
+    {"staff": [...], "locations": [...], "sermons": [...]}           filled by the site builder (builder.py)
 
 so anything that can write those files (the Church setup screens today, a site importer
 later) can set up a church. Every section is optional; one that is sent replaces that
@@ -161,6 +162,43 @@ class Region(Loose):
     updates: list[FieldUpdate] = Field(default_factory=list, max_length=300)
 
 
+class Person(Loose):
+    """A staff or leadership directory entry."""
+    id: int | None = Field(default=None, ge=0)
+    name: str = Field(min_length=1, max_length=120)
+    role: str = Text(120)
+    email: str = Text(200)
+    phone: str = Text(60)
+    bio: str = Text(2000)
+    photo: str = Text(500)
+
+
+class Location(Loose):
+    """A campus or meeting place. The church's main address stays in info.address."""
+    id: int | None = Field(default=None, ge=0)
+    name: str = Field(min_length=1, max_length=120)
+    address: str = Text(300)
+    map_query: str = Text(300)
+    service_times: str = Text(300)
+    note: str = Text(500)
+
+
+class Sermon(Loose):
+    """A sermon or message the church has published (a link, not a Sermon Notes transcript)."""
+    id: int | None = Field(default=None, ge=0)
+    title: str = Field(min_length=1, max_length=200)
+    date: str = ''
+    speaker: str = Text(120)
+    series: str = Text(120)
+    scripture: str = Text(120)
+    url: str = Field(default='', max_length=500, pattern=r'^(https?://\S+)?$')
+
+    @field_validator('date')
+    @classmethod
+    def _valid_date(cls, value):
+        return _date(value) if value else value
+
+
 class ChurchContent(BaseModel):
     model_config = ConfigDict(extra='forbid')
     info: Info | None = None
@@ -170,6 +208,9 @@ class ChurchContent(BaseModel):
     ministries: list[Ministry] | None = Field(default=None, max_length=60)
     calendar: list[CalendarEvent] | None = Field(default=None, max_length=500)
     regions: list[Region] | None = Field(default=None, max_length=60)
+    staff: list[Person] | None = Field(default=None, max_length=200)
+    locations: list[Location] | None = Field(default=None, max_length=30)
+    sermons: list[Sermon] | None = Field(default=None, max_length=200)
 
 
 class ContentError(ValueError):
@@ -181,7 +222,9 @@ def public_info(content):
 
 
 def public_church(content):
-    return {'info': public_info(content), 'faqs': content.get('faqs', []), 'events': content.get('events', [])}
+    return {'info': public_info(content), 'faqs': content.get('faqs', []), 'events': content.get('events', []),
+            'groups': content.get('groups', []), 'staff': content.get('staff', []),
+            'locations': content.get('locations', []), 'sermons': content.get('sermons', [])}
 
 
 def public_ministries(content):
@@ -221,9 +264,12 @@ def normalize(body):
     if 'info' in content:
         info = content['info']
         info['map_query'] = info['map_query'] or info['address'] or info['city']
-    for kind, label in (('faqs', 'FAQs'), ('events', 'events'), ('groups', 'groups'), ('calendar', 'calendar events')):
+    for kind, label in (('faqs', 'FAQs'), ('events', 'events'), ('groups', 'groups'), ('calendar', 'calendar events'),
+                        ('staff', 'staff members'), ('locations', 'locations'), ('sermons', 'sermons')):
         if kind in content:
             content[kind] = with_ids(content[kind], label)
+    for location in content.get('locations', []):
+        location['map_query'] = location['map_query'] or location['address']
     if 'regions' in content:
         regions = with_ids(content['regions'], 'regions')
         codes = [r['country_code'] for r in regions]

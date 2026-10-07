@@ -231,8 +231,8 @@ class ClaimRequest(BaseModel):
 
 @app.get('/api/church')
 def church():
-    return church_content.public_church({'info': db.get_church_info(), 'faqs': db.list_content('faqs'),
-                                        'events': db.list_content('events')})
+    return church_content.public_church({'info': db.get_church_info(),
+                                         **{kind: db.list_content(kind) for kind in db.CONTENT_KINDS}})
 
 
 @app.post('/api/visits', status_code=201)

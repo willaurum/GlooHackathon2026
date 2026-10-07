@@ -527,7 +527,7 @@ def list_content(kind):
 # The info fields every church has. A new church starts with these empty except its name and city.
 BLANK_INFO = {'name': '', 'city': '', 'address': '', 'phone': '', 'email': '', 'office_hours': '',
               'services': [], 'about': '', 'first_visit': '', 'care_team': '', 'map_query': ''}
-CONTENT_KINDS = ('faqs', 'events', 'groups')
+CONTENT_KINDS = ('faqs', 'events', 'groups', 'staff', 'locations', 'sermons')
 EVENT_COLUMNS = ('title', 'category', 'date', 'time', 'location', 'ministry_name', 'description', 'ai_summary')
 
 
@@ -546,7 +546,8 @@ def export_content():
 
 
 def replace_content(content):
-    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar, regions)
+    """Replace the sections present in `content` (info, faqs, events, groups, staff, locations, sermons, ministries,
+    calendar, regions)
     in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
     A ministry that saved connections or requests still point at is kept, so they stay readable."""
     statements = []
