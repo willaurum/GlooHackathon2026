@@ -132,6 +132,7 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['GET', new RegExp(`^/api/builder/drafts/${ID}$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/site$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/files$`)],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/chat$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/pages/${ID}$`)],
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|parts|preview|beliefs|edits)$`)],
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/edits/undo$`)],

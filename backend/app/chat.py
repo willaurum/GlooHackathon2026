@@ -1,9 +1,9 @@
 """Website chat agent: chat completions (Gloo AI, with an optional backup provider)
-plus tools over the church database.
+plus tools over church content or a builder draft.
 
 Each user message runs a loop: send the conversation and tool definitions to the model,
 execute any tools the model asks for, feed the results back, and repeat until the
-model answers in plain text. Every step is written to the chat_log table.
+model answers in plain text. Live church turns are written to chat_log; draft turns stay ephemeral.
 """
 
 import datetime
@@ -11,10 +11,61 @@ import json
 import logging
 import os
 import re
+from typing import Literal
+
+from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 from . import db
 
 log = logging.getLogger(__name__)
+
+
+class ChatMessage(BaseModel):
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+
+
+def recent_messages(body):
+    if body.messages[-1].role != 'user':
+        raise HTTPException(status_code=400, detail='The last message must come from the user')
+    messages = [m.model_dump() for m in body.messages][-20:]
+    while messages[0]['role'] != 'user':
+        messages.pop(0)
+    return messages
+
+
+PREVIEW_REQUEST = 'This is a preview; once the church is created, this will reach the staff.'
+
+
+class DraftContent:
+    """The chat's read tools over a draft, without any church database writes."""
+    def __init__(self, content):
+        self.content = content
+
+    def get_church_info(self):
+        return self.content['info']
+
+    def get_site(self):
+        return self.content.get('site') or {}
+
+    def list_content(self, kind):
+        return self.content.get(kind, [])
+
+    def list_ministries(self):
+        return self.list_content('ministries')
+
+    def list_events(self):
+        return sorted(self.list_content('calendar'), key=lambda e: (e.get('date') or '', e.get('time') or ''))
+
+    def log_chat(self, *args):
+        pass
+
 
 # Each provider speaks the OpenAI chat-completions format. AI_PROVIDER is tried
 # first; if it has no key or a call fails, AI_FALLBACK takes over.
@@ -166,6 +217,11 @@ TOOLS = [
         'parameters': {'type': 'object', 'properties': {}},
     }},
     {'type': 'function', 'function': {
+        'name': 'list_pages',
+        'description': 'The church website pages and their imported sections, including its story, beliefs and visitor information.',
+        'parameters': {'type': 'object', 'properties': {}},
+    }},
+    {'type': 'function', 'function': {
         'name': 'search_ministries',
         'description': 'Read ministry facts, schedules, open spots, and contacts for factual questions or an explicit connection request. This is not a recommendation tool. For personalized matches use suggest_page with find-place.',
         'parameters': {'type': 'object', 'properties': {}},
@@ -270,39 +326,41 @@ MAX_UPCOMING = 20
 MAX_SERMONS = 15
 
 
-def church_info():
+def church_info(source=db):
     """get_church_info: the info row, FAQs, campuses, and the church's key links elsewhere (from its imported site)."""
     links = {}
-    for link in (db.get_site() or {}).get('links', []):
+    for link in (source.get_site() or {}).get('links', []):
         kind = link.get('kind')
         if kind in LINK_KINDS and len(links.setdefault(kind, [])) < MAX_LINKS_PER_KIND:
             links[kind].append({key: link.get(key, '') for key in ('text', 'provider', 'url')})
-    locations = [{key: loc.get(key, '') for key in ('name', 'address', 'service_times', 'note')} for loc in db.list_content('locations')]
-    return {'church': db.get_church_info(), 'faqs': db.list_content('faqs'), 'locations': locations, 'links': links}
+    locations = [{key: loc.get(key, '') for key in ('name', 'address', 'service_times', 'note')} for loc in source.list_content('locations')]
+    return {'church': source.get_church_info(), 'faqs': source.list_content('faqs'), 'locations': locations, 'links': links}
 
 
-def list_events(today=None):
+def list_events(today=None, source=db):
     """Regular gatherings and the next dated calendar events."""
     today = (today or datetime.date.today()).isoformat()
-    upcoming = [e for e in db.list_events() if (e.get('date') or '') >= today][:MAX_UPCOMING]
+    upcoming = [e for e in source.list_events() if (e.get('date') or '') >= today][:MAX_UPCOMING]
     calendar = [{key: e.get(key) for key in ('title', 'date', 'time', 'location', 'description')} for e in upcoming]
-    return {'events': db.list_content('events'), 'calendar': calendar}
+    return {'events': source.list_content('events'), 'calendar': calendar}
 
 
-def list_staff():
-    return {'staff': [{key: p.get(key, '') for key in ('name', 'role', 'group', 'email', 'phone')} for p in db.list_content('staff')]}
+def list_staff(source=db):
+    return {'staff': [{key: p.get(key, '') for key in ('name', 'role', 'group', 'email', 'phone')} for p in source.list_content('staff')]}
 
 
-def list_sermons():
-    sermons = sorted(db.list_content('sermons'), key=lambda s: s.get('date') or '', reverse=True)[:MAX_SERMONS]
+def list_sermons(source=db):
+    sermons = sorted(source.list_content('sermons'), key=lambda s: s.get('date') or '', reverse=True)[:MAX_SERMONS]
     return {'sermons': [{key: s.get(key, '') for key in ('title', 'date', 'speaker', 'series', 'scripture')} for s in sermons]}
 
 
-def search_ministries():
-    return {'ministries': [summarize_ministry(m) for m in db.list_ministries()]}
+def search_ministries(source=db):
+    return {'ministries': [summarize_ministry(m) for m in source.list_ministries()]}
 
 
-def request_connection(ministry_id, name, contact, note=''):
+def request_connection(ministry_id, name, contact, note='', source=db):
+    if isinstance(source, DraftContent):
+        return {'message': PREVIEW_REQUEST}
     name, contact = name.strip(), contact.strip()
     ministry = db.get_ministry(ministry_id)
     if ministry is None:
@@ -320,19 +378,21 @@ def request_connection(ministry_id, name, contact, note=''):
             'message': 'Saved in the church workspace for staff review. No notification or introduction has been sent.'}
 
 
-def hand_off_to_staff(reason, summary, name='', contact=''):
+def hand_off_to_staff(reason, summary, name='', contact='', source=db):
+    if isinstance(source, DraftContent):
+        return {'message': PREVIEW_REQUEST}
     if reason not in ('pastoral_care', 'prayer', 'crisis', 'other'):
         return {'error': 'reason must be one of pastoral_care, prayer, crisis, other.'}
     if not summary.strip():
         return {'error': 'Add a short summary of what the person needs.'}
     row = db.create_request(reason, name.strip() or 'Anonymous website visitor', contact.strip(), summary.strip())
-    info = db.get_church_info()
+    info = source.get_church_info()
     return {'request_id': row['request_id'], 'status': 'pending_staff_review',
             'message': f"Saved in the church workspace for staff review; no notification has been sent. "
                        f"To contact the office directly: {info['phone']}, {info['email']}."}
 
 
-def call_tool(name, arguments):
+def call_tool(name, arguments, source=db):
     """Run one tool. Errors go back to the model as data so it can correct itself."""
     try:
         args = json.loads(arguments or '{}')
@@ -341,31 +401,35 @@ def call_tool(name, arguments):
     try:
         if not isinstance(args, dict):
             return {'error': 'Arguments must be a JSON object.'}
+        if isinstance(source, DraftContent) and name in ('request_connection', 'hand_off_to_staff'):
+            return {'message': PREVIEW_REQUEST}
         if name == 'suggest_page':
             return suggest_page(args.get('page'), args.get('section'))
         if name == 'get_church_info':
-            return church_info()
+            return church_info(source)
         if name == 'list_events':
-            return list_events()
+            return list_events(source=source)
         if name == 'list_staff':
-            return list_staff()
+            return list_staff(source)
         if name == 'list_sermons':
-            return list_sermons()
+            return list_sermons(source)
+        if name == 'list_pages':
+            return {'pages': source.list_content('pages')}
         if name == 'list_small_groups':
-            return {'groups': db.list_content('groups')}
+            return {'groups': source.list_content('groups')}
         if name == 'search_ministries':
-            return search_ministries()
+            return search_ministries(source)
         if name == 'request_connection':
-            return request_connection(int(args['ministry_id']), str(args['name']), str(args['contact']), str(args.get('note') or ''))
+            return request_connection(int(args['ministry_id']), str(args['name']), str(args['contact']), str(args.get('note') or ''), source=source)
         if name == 'hand_off_to_staff':
             return hand_off_to_staff(str(args['reason']), str(args['summary']), str(args.get('name') or ''),
-                                     str(args.get('contact') or ''))
+                                     str(args.get('contact') or ''), source=source)
         return {'error': f'Unknown tool {name}.'}
     except (KeyError, ValueError, TypeError) as err:
         return {'error': f'Bad or missing argument: {err}. Check the tool description and try again.'}
 
 
-def complete(clients, convo, session_id, final=False):
+def complete(clients, convo, session_id, final=False, source=db):
     """One model call, falling through to the next provider if one fails.
     A provider that fails is dropped for the rest of this turn. With final=True the tools stay
     described (the conversation already has tool results) but tool_choice is 'none', so the model
@@ -377,7 +441,7 @@ def complete(clients, convo, session_id, final=False):
                 model=model, messages=convo, tools=TOOLS, tool_choice='none' if final else 'auto', extra_body=extra_body)
             return response, f'{name}:{model}'
         except Exception as err:
-            db.log_chat(session_id, 'provider_error', {'provider': name, 'model': model, 'error': repr(err)[:500]})
+            source.log_chat(session_id, 'provider_error', {'provider': name, 'model': model, 'error': repr(err)[:500]})
             clients.pop(0)
             if not clients:
                 raise
@@ -411,12 +475,12 @@ def demo_intent(text):
                         for w in words)), None)
 
 
-def demo_tools(session_id, actions):
+def demo_tools(session_id, actions, source=db):
     """The chat tools with keyword-friendly arguments for demo_reply. Calls are logged like the AI path,
     and filed requests are added to `actions`."""
     def use(tool, **args):
-        result = call_tool(tool, json.dumps(args))
-        db.log_chat(session_id, 'tool', {'name': tool, 'arguments': args, 'result': result, 'provider': 'demo'})
+        result = call_tool(tool, json.dumps(args), source)
+        source.log_chat(session_id, 'tool', {'name': tool, 'arguments': args, 'result': result, 'provider': 'demo'})
         collect_action(actions, tool, result)
         return result
 
@@ -429,8 +493,10 @@ def demo_tools(session_id, actions):
         return use('hand_off_to_staff', reason=kind, summary=reason[:500])
 
     def connect(name, details):
+        if isinstance(source, DraftContent):
+            return use('request_connection')
         text = details.lower()
-        ministry = next((m for m in db.list_ministries() if m['name'].lower() in text), None)
+        ministry = next((m for m in source.list_ministries() if m['name'].lower() in text), None)
         contact = re.search(r'[\w.+-]+@[\w-]+\.[\w.]+|\+?\d[\d\s().-]{6,}\d', details)
         given = re.search(r"(?:my name is|i'm|i am)\s+([^\n,.!?;@]+)", details, re.I)
         given_name = given.group(1).strip() if given else ''
@@ -475,8 +541,13 @@ def format_demo_result(result):
     if 'church' in result:
         info = result['church']
         services = ', '.join(f"{s['day']} {s['time']}" for s in info['services'])
-        return (f"{info['name']} is at {info['address']}. Services are {services}. "
-                f"You can reach the office at {info['phone']} or {info['email']} ({info['office_hours']}).")
+        contact = ' or '.join(info[key] for key in ('phone', 'email') if info.get(key))
+        return ' '.join(filter(None, (
+            f"{info['name']} is at {info['address']}." if info.get('address') else info['name'] + '.',
+            f'Services are {services}.' if services else '',
+            f'You can reach the office at {contact}.' if contact else '',
+            f"Office hours: {info['office_hours']}." if info.get('office_hours') else '',
+        )))
     if 'error' in result:
         return result['error']
     return result.get('message', DEMO_MENU)
@@ -488,12 +559,15 @@ def demo_reply(message: str, tools: dict, history=None) -> str:
         text = message.lower()
         # Safety first: crisis language always gets 988/911 and a staff hand-off.
         if any(w in text for w in CRISIS_WORDS):
+            result = {}
             try:
                 result = tools['hand_off_to_staff'](reason=message)
                 saved = 'request_id' in result
             except Exception:
                 log.exception('crisis request could not be saved')
                 saved = False
+            if result.get('message') == PREVIEW_REQUEST:
+                return DEMO_CRISIS + ' ' + PREVIEW_REQUEST
             return DEMO_CRISIS + (" Your request was saved for staff review; no notification was sent."
                                   if saved else " I couldn't save your request for staff review.")
         if text.strip(' .!') in ('cancel', 'never mind', 'nevermind', 'no thanks'):
@@ -585,28 +659,30 @@ def give_up(question, info):
     return fact_reply(question, info) or GAVE_UP.format(**info)
 
 
-def run(messages, session_id, clients=None):
+def run(messages, session_id, clients=None, source=db):
     """Answer the latest user message. `messages` is the visible user/assistant history.
     `clients` is [(name, model, extra_body, client), ...]; tests pass fakes here."""
-    db.log_chat(session_id, 'user', messages[-1])
+    source.log_chat(session_id, 'user', messages[-1])
     # Demo mode: no key configured, use local intent-matching
     if clients is None and not provider_chain():
         actions = []
-        reply = demo_reply(messages[-1]['content'], demo_tools(session_id, actions), messages[:-1])
-        db.log_chat(session_id, 'assistant', {'content': reply, 'provider': 'demo'})
+        reply = demo_reply(messages[-1]['content'], demo_tools(session_id, actions, source), messages[:-1])
+        source.log_chat(session_id, 'assistant', {'content': reply, 'provider': 'demo'})
         return {'reply': reply, 'configured': False, 'actions': actions, 'provider': 'demo'}
     clients = list(clients if clients is not None else make_clients())
     if not clients:
-        db.log_chat(session_id, 'not_configured', {})
+        source.log_chat(session_id, 'not_configured', {})
         return {'reply': NOT_CONFIGURED, 'configured': False, 'actions': []}
 
-    info = db.get_church_info()
+    info = source.get_church_info()
     if is_override_attempt(messages[-1]['content']):
         reply = OFF_TOPIC.format(**info)
-        db.log_chat(session_id, 'guardrail', {'content': reply})
+        source.log_chat(session_id, 'guardrail', {'content': reply})
         return {'reply': reply, 'configured': True, 'actions': []}
     convo = [{'role': 'system', 'content': SYSTEM_PROMPT.format(church=info['name'], pages=', '.join(SITE_PAGES), sections='; '.join(
         f"{page}: {', '.join(sections)}" for page, sections in SITE_SECTIONS.items()))}, *messages]
+    if isinstance(source, DraftContent):
+        convo[0]['content'] += '\nThis is a draft preview. Never collect contact details or claim requests were saved. For any staff or connection request, say: ' + PREVIEW_REQUEST
     actions = []
     question = messages[-1]['content']
     tool_calls = 0
@@ -619,23 +695,23 @@ def run(messages, session_id, clients=None):
             # system message after the first one.
             convo[0] = {'role': 'system', 'content': convo[0]['content'] + '\n\n' + FINAL_ANSWER}
         try:
-            response, provider = complete(clients, convo, session_id, final=final)
+            response, provider = complete(clients, convo, session_id, final=final, **({'source': source} if source is not db else {}))
         except Exception:
             # Every provider failed (for example the team AI bridge is off): answer like demo mode
             # instead of showing an error.
             log.warning('every AI provider failed; answering with demo replies')
-            reply = demo_reply(messages[-1]['content'], demo_tools(session_id, actions), messages[:-1])
-            db.log_chat(session_id, 'assistant', {'content': reply, 'provider': 'demo', 'offline': True})
+            reply = demo_reply(messages[-1]['content'], demo_tools(session_id, actions, source), messages[:-1])
+            source.log_chat(session_id, 'assistant', {'content': reply, 'provider': 'demo', 'offline': True})
             return {'reply': reply, 'configured': False, 'actions': actions, 'provider': 'demo', 'offline': True}
         message = response.choices[0].message
         if final or not message.tool_calls:
             # On the final call any tool calls are ignored; its text (if any) is the answer.
             reply = (message.content or '').strip()
             if reply:
-                db.log_chat(session_id, 'assistant', {'content': reply, 'provider': provider})
+                source.log_chat(session_id, 'assistant', {'content': reply, 'provider': provider})
             else:
                 reply = give_up(question, info)
-                db.log_chat(session_id, 'gave_up', {'content': reply, 'provider': provider})
+                source.log_chat(session_id, 'gave_up', {'content': reply, 'provider': provider})
             return {'reply': reply, 'configured': True, 'actions': actions, 'provider': provider}
 
         convo.append({'role': 'assistant', 'content': message.content or '', 'tool_calls': [
@@ -643,12 +719,12 @@ def run(messages, session_id, clients=None):
             for c in message.tool_calls]})
         for call in message.tool_calls:
             tool_calls += 1
-            result = call_tool(call.function.name, call.function.arguments)
-            db.log_chat(session_id, 'tool', {'name': call.function.name, 'arguments': call.function.arguments,
+            result = call_tool(call.function.name, call.function.arguments, source)
+            source.log_chat(session_id, 'tool', {'name': call.function.name, 'arguments': call.function.arguments,
                                              'result': result, 'provider': provider})
             collect_action(actions, call.function.name, result)
             convo.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps(result, default=str)})
 
     reply = give_up(question, info)  # not reached: the last step always returns
-    db.log_chat(session_id, 'gave_up', {'content': reply})
+    source.log_chat(session_id, 'gave_up', {'content': reply})
     return {'reply': reply, 'configured': True, 'actions': actions}

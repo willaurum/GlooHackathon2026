@@ -152,7 +152,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
     [website, setWebsite] = useState(null);
   const { slug, source, route } = where;
   const demo = !snapshot && slug === DEMO_CHURCH;
-  if (snapshot) startApiPreview(snapshot);
+  if (snapshot) startApiPreview(snapshot, draft?.id);
   // Every api() call from here down is for this church.
   setApiChurch(slug);
   const params = new URLSearchParams(window.location.search);
@@ -275,14 +275,14 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
     return () => clearInterval(timer);
   }, [scrollTarget]);
 
-  const name = listing?.name || (demo ? DEMO_INFO.name : '');
+  const currentListing = snapshot ? listing : listing?.slug === slug ? listing : null;
+  const name = currentListing?.name || (demo ? DEMO_INFO.name : '');
   useEffect(() => {
     if (route === 'new') { document.title = 'Create your church site · Tekton'; return; }
-    if (!name) return;
-    document.title = name;
+    document.title = name || 'Tekton';
     let icon = document.querySelector('link[rel="icon"]');
     if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
-    icon.href = safeHref(website?.site?.theme?.favicon) || churchIcon(name);
+    icon.href = safeHref(website?.site?.theme?.favicon) || churchIcon(name || 'Tekton');
   }, [name, route, website]);
   const ready = !!snapshot || demo || apiReady === true;
   // The church's imported website (menu and page list), when the site builder made one.
@@ -304,7 +304,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
   useEffect(() => website?.site?.theme ? applyTheme(website.site.theme) : undefined, [website]);
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
-    slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
+    slug, source, demo, preview: !!snapshot, name, city: currentListing?.city || '', missing: !!currentListing?.missing, ready, staff, choose, go,
     site: website?.site || null, pages: website?.pages || [],
     provenance: snapshot?.provenance || null, showSources: !!snapshot && showSources,
     // After staff rename the church in Church setup.
@@ -321,7 +321,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
   // A new church on an older church API: everything but giving waits for the deploy.
   const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
   let page;
-  if (listing?.missing && section !== 'platform') page = <ChurchMissing />;
+  if (currentListing?.missing && section !== 'platform') page = <ChurchMissing />;
   else if (blocked) page = <ChurchNotReady section={section} />;
   else page = <>
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}

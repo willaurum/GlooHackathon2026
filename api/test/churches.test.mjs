@@ -216,6 +216,7 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
       for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
         ['GET', `/api/builder/drafts/${id}/site`],
         ['GET', `/api/builder/drafts/${id}/files`],
+        ['POST', `/api/builder/drafts/${id}/chat`],
         ['GET', `/api/builder/drafts/${id}/pages/s1`],
         ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/items`],
         ['POST', `/api/builder/drafts/${id}/parts`], ['POST', `/api/builder/drafts/${id}/preview`],
@@ -223,6 +224,8 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
         ['POST', `/api/builder/drafts/${id}/edits/undo`]])
         assert.equal(access(m, p, demo), 'public', m + ' ' + p);
       assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
+      for (const method of ['GET', 'PUT', 'PATCH', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${id}/chat`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
         assert.equal(access(method, `/api/builder/drafts/${id}/site`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])

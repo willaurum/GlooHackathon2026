@@ -50,7 +50,7 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
 from . import (builder_agents, builder_crawl, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
-               church_content, db)
+               chat, church_content, db)
 from .builder_edit import clean_layout, default_layout
 from .builder_export import files as content_files, load as load_content_files, sources as content_sources, calendars as content_calendars
 
@@ -2501,6 +2501,24 @@ def site(draft_id: str):
         return {**church_content.public_site(_draft_content(draft, allow_unanswered=True)),
                 **({'provenance': draft['json_sources']} if draft.get('json_sources') else
                    {'provenance': provenance(draft)} if draft.get('import_kind') != 'json' else {})}
+
+
+draft_chat_limiter = ImportLimiter()
+
+
+@router.post('/api/builder/drafts/{draft_id}/chat')
+def draft_chat(draft_id: str, body: chat.ChatRequest, request: Request):
+    messages = chat.recent_messages(body)
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        content = _draft_content(draft, allow_unanswered=True)
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with draft_chat_limiter.importing(ip):
+        try:
+            return chat.run(messages, body.session_id, source=chat.DraftContent(content))
+        except Exception:
+            log.exception('draft chat turn failed')
+            raise HTTPException(status_code=502, detail='The assistant is unavailable right now. Please try again in a moment.')
 
 
 class BeliefsBody(BaseModel):

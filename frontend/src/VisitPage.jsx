@@ -4,7 +4,7 @@ import ChurchMap from './ChurchMap.jsx';
 import { useChurch } from './ChurchContext.js';
 import { directionsHref, nextSteps as pickNextSteps, orderedSections } from './churchSite.js';
 import Sourced from './Sourced.jsx';
-import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS } from './visitMap.js';
+import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS, geocodeAddress, parkingFaq } from './visitMap.js';
 
 const TOKEN_KEY = 'belong.visitToken';
 // The Plan your visit sections in their usual order; a church can reorder or hide them by asking Tekton (site.layout,
@@ -36,7 +36,15 @@ export default function VisitPage() {
     [partySize, setPartySize] = useState(1),
     [kids, setKids] = useState(''),
     [wantsHost, setWantsHost] = useState(true),
-    [spotId, setSpotId] = useState(null);
+    [spotId, setSpotId] = useState(null),
+    [location, setLocation] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    setLocation(null);
+    if (!site.demo && church?.info?.address) geocodeAddress(church.info.address, church.info.city).then(result => { if (live) setLocation(result); });
+    return () => { live = false; };
+  }, [site.demo, church?.info?.address, church?.info?.city]);
 
   useEffect(() => {
     (async () => {
@@ -105,12 +113,13 @@ export default function VisitPage() {
   if (loading) return <p role="status" className="muted">Loading…</p>;
   if (error && !church) return <div className="api-message" role="alert">{error}</div>;
   const info = church.info;
-  // The parking and entrances map is an illustration made for the demo church; other churches get directions to their address.
+  // Only the demo church uses the illustrated campus; imported churches use their own address.
   const place = site.demo ? EXAMPLE_CAMPUS.directionsQuery : [info.address, info.city].filter(Boolean).join(', ') || info.map_query || '';
   const directions = encodeURIComponent(place);
   const nextSteps = pickNextSteps(church.events, site.demo);
   // The demo church's own questions are about Grace Community, so they stay in the chat; other churches show theirs.
-  const faqs = site.demo ? [] : church.faqs;
+  const parking = site.demo ? [] : church.faqs.filter(parkingFaq);
+  const faqs = site.demo ? [] : church.faqs.filter(f => !parkingFaq(f));
 
   return <div className="visit-page">
     {error && <div className="api-message" role="alert">{error}</div>}
@@ -132,15 +141,28 @@ export default function VisitPage() {
         <h2>Before you arrive</h2>
         <p><Sourced field="first_visit">{info.first_visit}</Sourced></p>
       </section>),
-      map: <>{!site.demo && place && <section className="card visit-section" id="visit-map">
+      map: <>{!site.demo && <div className={'visit-location' + (place && parking.length ? ' has-parking' : '')}>
+      {place && <section className="card visit-section" id="visit-map">
         <div className="eyebrow">FIND YOUR WAY</div>
         <h2>Where we meet</h2>
         <p>{info.address ? <Sourced field="address">{info.address}</Sourced> : place}</p>
+        {location && <>
+          <ChurchMap center={location.center} approximate={location.approximate} name={info.name} />
+          {location.approximate && <p className="map-address">Approximate location</p>}
+        </>}
         <div className="map-links">
           <a className="btn primary" href={`https://www.google.com/maps/dir/?api=1&destination=${directions}`} target="_blank" rel="noopener noreferrer">Get directions</a>
           <a className="btn secondary" href={`https://maps.apple.com/?daddr=${directions}`} target="_blank" rel="noopener noreferrer">Open in Apple Maps</a>
         </div>
       </section>}
+      {parking.length > 0 && <section className="card visit-section" id="visit-parking">
+        <div className="eyebrow">BEFORE YOU ARRIVE</div>
+        <h2>Parking &amp; accessibility</h2>
+        <div className="faq-list">
+          {parking.map(f => <details key={f.id ?? f.question} className="faq"><summary>{f.question}</summary><p>{f.answer}</p></details>)}
+        </div>
+      </section>}
+      </div>}
       {site.demo && <section className="card visit-section" id="visit-map">
         <div className="eyebrow">FIND YOUR WAY</div>
         <h2>Parking, entrances &amp; kids check-in</h2>

@@ -113,14 +113,7 @@ def remove_connection(connection_id: int):
         raise HTTPException(status_code=404, detail='Connection not found')
 
 
-class ChatMessage(BaseModel):
-    role: Literal['user', 'assistant']
-    content: str = Field(min_length=1, max_length=2000)
-
-
-class ChatRequest(BaseModel):
-    session_id: str = Field(min_length=1, max_length=64)
-    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+ChatRequest = chat.ChatRequest
 
 
 class RequestStatus(BaseModel):
@@ -134,12 +127,7 @@ def chat_status():
 
 @app.post('/api/chat')
 def chat_turn(body: ChatRequest):
-    if body.messages[-1].role != 'user':
-        raise HTTPException(status_code=400, detail='The last message must come from the user')
-    # Keep recent history, starting on a user turn; some models reject a leading assistant turn.
-    messages = [m.model_dump() for m in body.messages][-20:]
-    while messages[0]['role'] != 'user':
-        messages.pop(0)
+    messages = chat.recent_messages(body)
     try:
         return chat.run(messages, body.session_id)
     except Exception:

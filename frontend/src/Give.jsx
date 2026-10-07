@@ -7,7 +7,7 @@ import GiveManage from './GiveManage.jsx';
 import GiveStaff from './GiveStaff.jsx';
 import { useChurch } from './ChurchContext.js';
 import { givingLink } from './churchSite.js';
-import { DEMO_CHURCH, churchApi, friendly, loadChurch, manageLinkFor, percent, startCheckout, tripDates } from './giving.js';
+import { churchApi, friendly, loadChurch, manageLinkFor, percent, startCheckout, tripDates } from './giving.js';
 
 const TABS = [['give', 'Give', 'heart'], ['give/trips', 'Mission trips', 'compass']];
 const HEADERS = {
@@ -21,7 +21,7 @@ const MANAGE_PREFIX = 'give/manage/';
 
 // Gives to the church the whole site is showing (church.js); the church search here switches the site.
 export default function Give({ route, go, sessionId = '', status = '', returnChurch = '' }) {
-  const { slug, choose, site } = useChurch();
+  const { slug, choose, site, preview } = useChurch();
   const [church, setChurch] = useState(null),
     [loadErr, setLoadErr] = useState(null),
     [fundId, setFundId] = useState(''),
@@ -32,6 +32,7 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
   useEffect(() => {
     let live = true;
     setLoadErr(null);
+    if (preview) return;
     loadChurch(slug).then(c => live && setChurch(c)).catch(e => { if (live) { setChurch(null); setLoadErr(e); } });
     return () => { live = false; };
   }, [slug, version]);
@@ -46,12 +47,13 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
   // Until a church connects Stripe here (or while giving is unavailable), point givers to the giving page it
   // already uses, found on its website by Tekton.
   const elsewhere = tab === 'give' && !sessionId && givingLink(site);
-  const showElsewhere = elsewhere && (loadErr || church?.mode === 'demo');
+  const showElsewhere = elsewhere && (preview || loadErr || church?.mode === 'demo');
   let body;
-  if (sessionId) body = <Confirmation id={sessionId} status={status} slug={returnChurch} go={go} />;
+  if (preview) body = <div className="card give-pad"><p>Online giving opens after your church is created.</p></div>;
+  else if (sessionId) body = <Confirmation id={sessionId} status={status} slug={returnChurch} go={go} />;
   else if (tab === 'staff') body = <GiveStaff slug={slug} church={church} go={go} onPickChurch={pickChurch} onChanged={() => setVersion(v => v + 1)} />;
   else if (tab === 'give/manage') body = <GiveManage token={manageToken} church={church} slug={slug} go={go} onPickChurch={pickChurch} onChanged={() => setVersion(v => v + 1)} />;
-  else if (loadErr) body = <LoadError err={loadErr} slug={slug} onPick={pickChurch} />;
+  else if (loadErr) body = <LoadError err={loadErr} />;
   else if (!church) body = <div className="card give-pad"><p role="status">Loading giving options…</p></div>;
   else body = <>
     <GiveChurchBar church={church} slug={slug} onPick={pickChurch} />
@@ -69,17 +71,16 @@ export default function Give({ route, go, sessionId = '', status = '', returnChu
         <a className="btn primary" href={elsewhere.url} target="_blank" rel="noopener noreferrer">Give online through {elsewhere.label}<Icon name="link" size={16} /></a>
       </div>}
       {/* With the church's own giving page shown, a giving service error adds nothing. */}
-      {showElsewhere && loadErr ? null : body}
+      {showElsewhere && (preview || loadErr) ? null : body}
     </section>
   </>;
 }
 
-function LoadError({ err, slug, onPick }) {
+export function LoadError({ err }) {
   const missing = err.status === 404;
   return <div className="card give-pad give-error" role="alert">
     <h2>{missing ? 'We could not find that church.' : 'Giving is unavailable right now.'}</h2>
     <p>{missing ? 'The link may be old, or the church may have changed its address.' : friendly(err)}</p>
-    {slug !== DEMO_CHURCH && <button className="secondary" onClick={() => onPick(DEMO_CHURCH)}>Go to Grace Community</button>}
   </div>;
 }
 

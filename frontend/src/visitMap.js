@@ -2,6 +2,47 @@
 // Building and lot outlines, and the main entrance, come from OpenStreetMap (© OpenStreetMap contributors, ODbL).
 // Which lot is for guests and the other doors are illustrative, for the demo only.
 
+const geocodes = new Map();
+const PARKING = /\b(park(?:ing)?|accessible|accessibility|wheelchair|handicap(?:ped)?|entrances?)\b|\bkids?['’]?\s+check[ -]?in\b/i;
+export const parkingFaq = faq => PARKING.test([faq.question, faq.answer].filter(Boolean).join(' '));
+
+function cityRegion(address, city) {
+  const parts = address.split(',').map(p => p.trim()).filter(Boolean);
+  const region = parts.slice(1).join(', ').replace(/\s+\d{5}(?:-\d{4})?\b/g, '').replace(/,\s*(USA|United States)$/i, '');
+  return region || city;
+}
+
+export function geocodeAddress(address, city = '') {
+  const query = city && !address.toLowerCase().includes(city.toLowerCase()) ? address + ', ' + city : address;
+  const key = 'tekton-map:' + query;
+  if (!geocodes.has(key)) geocodes.set(key, (async () => {
+    try {
+      const saved = sessionStorage.getItem(key);
+      if (saved !== null) return JSON.parse(saved);
+    } catch { /* Storage may be unavailable. */ }
+    const search = async q => {
+      try {
+        const response = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q), { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) return null;
+        const [found] = await response.json();
+        const lat = Number(found?.lat), lon = Number(found?.lon);
+        return found && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+      } catch { return null; }
+    };
+    let center = await search(query), approximate = false;
+    const region = cityRegion(address, city);
+    if (!center && region && region !== query) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      center = await search(region);
+      approximate = !!center;
+    }
+    const result = center ? { center, approximate } : null;
+    try { sessionStorage.setItem(key, JSON.stringify(result)); } catch { /* Storage may be unavailable. */ }
+    return result;
+  })());
+  return geocodes.get(key);
+}
+
 export const EXAMPLE_CAMPUS = {
   name: 'Limelight Boulder',
   address: 'University Avenue, Boulder, CO',
