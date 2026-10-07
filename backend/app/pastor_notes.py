@@ -1,6 +1,7 @@
 """Pastor Notes: turn a sermon video into a stored, searchable transcript.
 
-A note comes from a YouTube URL (downloaded here with yt-dlp) or an uploaded file
+A note comes from a YouTube URL (through the YouTube helper on a home connection when
+YT_HELPER_URL is set, with yt-dlp right here as the fallback) or an uploaded file
 (the Worker streams it to R2; we read it back through the `notes-media` host).
 ffmpeg cuts the audio into 10-minute mono parts, Workers AI transcribes each part
 (`workers-ai` host, whisper-large-v3-turbo), and the segments are grouped into
@@ -113,7 +114,81 @@ def youtube_retry_delays():
     return delays
 
 
+# The YouTube helper (scripts/youtube-helper) downloads from a home connection, because YouTube
+# refuses Cloudflare's IPs. On Cloudflare YT_HELPER_URL is http://youtube-helper and the Worker adds
+# the key (api/ythelper.ts); a local run can point it straight at the helper with YT_HELPER_KEY.
+HELPER_AUDIO_TYPES = {'audio/mp4': '.m4a', 'audio/webm': '.webm', 'audio/ogg': '.ogg', 'audio/mpeg': '.mp3'}
+# The helper answers these for the video itself, so trying again from here would not help.
+HELPER_FINAL_ERRORS = {'too_long', 'youtube_unavailable'}
+HELPER_MAX_BYTES = 200 * 1024 * 1024
+
+
+class HelperFailed(Exception):
+    """The helper could not get the audio; the direct yt-dlp download is tried next."""
+
+
+def youtube_helper_url():
+    return os.environ.get('YT_HELPER_URL', '').strip().rstrip('/')
+
+
+def youtube_helper_timeout():
+    """Seconds to wait for the helper's first byte: it downloads the whole file before answering."""
+    try:
+        return max(30, int(os.environ.get('YT_HELPER_TIMEOUT') or 660))
+    except ValueError:
+        return 660
+
+
+def fetch_via_helper(url, workdir, base):
+    """Save the helper's audio for `url` in workdir and return its path."""
+    headers = {}
+    key = os.environ.get('YT_HELPER_KEY', '').strip()
+    if key:
+        headers['Authorization'] = f'Bearer {key}'
+    try:
+        with httpx.stream('POST', f'{base}/fetch', json={'url': url}, headers=headers,
+                          timeout=httpx.Timeout(30, read=youtube_helper_timeout())) as response:
+            if response.status_code != 200:
+                response.read()
+                try:
+                    code = response.json().get('error')
+                except (ValueError, AttributeError):
+                    code = None
+                if code in HELPER_FINAL_ERRORS:
+                    raise NoteError(code)
+                raise HelperFailed(f'HTTP {response.status_code} {code or ""}'.strip())
+            kind = response.headers.get('content-type', '').split(';')[0].strip().lower()
+            target = workdir / f'src{HELPER_AUDIO_TYPES.get(kind, ".audio")}'
+            size = 0
+            with target.open('wb') as out:
+                for block in response.iter_bytes(1 << 20):
+                    size += len(block)
+                    if size > HELPER_MAX_BYTES:
+                        raise HelperFailed('response too large')
+                    out.write(block)
+    except httpx.HTTPError as err:
+        raise HelperFailed(type(err).__name__) from err
+    if size == 0:
+        raise HelperFailed('empty response')
+    return target
+
+
 def download_youtube(url, workdir, sleep=time.sleep):
+    """The audio of a YouTube link: through the helper when it is set up, else (or when the
+    helper fails) with yt-dlp right here. When both fail, the note fails with youtube_blocked
+    or download_failed and the page suggests uploading the file instead."""
+    base = youtube_helper_url()
+    if base:
+        try:
+            return fetch_via_helper(url, workdir, base)
+        except HelperFailed as err:
+            log.warning('YouTube helper failed (%s); downloading directly', err)
+            for leftover in workdir.glob('src.*'):
+                leftover.unlink(missing_ok=True)
+    return download_youtube_direct(url, workdir, sleep)
+
+
+def download_youtube_direct(url, workdir, sleep=time.sleep):
     """Download the audio, trying again with backoff when YouTube rate-limits or bot-checks
     the request. That refusal is per-IP and often temporary, so a spaced-out retry can
     recover the link; any other error fails right away."""

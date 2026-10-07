@@ -4,16 +4,9 @@ import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import { canStep, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, writePrefs } from './readerPrefs.js';
 import { fetchVerse, referenceParts } from './verses.js';
+import { noteErrorMessage } from './noteErrors.js';
 
 const pending = note => note.status === 'queued' || note.status === 'processing';
-const ERRORS = {
-  youtube_blocked: 'YouTube blocked the download from our servers. Upload the video file instead.',
-  youtube_unavailable: 'That YouTube video is private or unavailable.',
-  too_long: 'The video is longer than the 90-minute limit.',
-  no_audio: 'The file has no audio track.',
-  no_speech: 'No speech was found in the audio.',
-  interrupted: 'Processing was interrupted. Try again.',
-};
 
 // Transcript highlight categories, in toggle-bar order. Bible ones are on by default.
 const CATS = [
@@ -367,7 +360,7 @@ function NoteView({ note, onChange, prefs, setPrefs }) {
     return <section className="card pn-state">
       <span className={'status ' + note.status}>{statusLabel(note.status)}</span>
       <h2>{note.title}</h2>
-      <p>{note.status === 'failed' ? (ERRORS[note.error] || `Processing failed (${note.error}).`) : 'Transcribing… this page updates on its own.'}</p>
+      <p>{note.status === 'failed' ? noteErrorMessage(note.error) : 'Transcribing… this page updates on its own.'}</p>
       {error && <p className="pn-error" role="alert">{error}</p>}
       {note.status === 'failed' && <button className="secondary" onClick={() => api(`/notes/${note.id}/retry`, { method: 'POST' }).then(onChange, err => setError(err.message))}>Try again</button>}
     </section>;
