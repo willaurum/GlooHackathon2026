@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEMO_CHURCH, churchAddress, hashFor, needsChurchInHash, resolveChurch, shareLink, slugFromHost, splitHash } from './church.js';
+import { DEMO_CHURCH, churchAddress, hashFor, isLanding, needsChurchInHash, resolveChurch, shareLink, slugFromHost, splitHash } from './church.js';
+
+test('the bare address is the builder landing page; church links and subdomains are not', () => {
+  for (const hash of ['', '#', '#/']) assert.equal(isLanding({ hash }), true, JSON.stringify(hash));
+  for (const hash of ['#/serve', '#/c/grace-community/', '#/c/hope-chapel/serve', '#/new', '#/platform'])
+    assert.equal(isLanding({ hash }), false, hash);
+  // A church's own subdomain opens that church, not the builder.
+  assert.equal(isLanding({ host: 'hope-chapel.belong.example.org', hash: '', base: 'belong.example.org' }), false);
+  assert.equal(isLanding({ host: 'belong.example.org', hash: '', base: 'belong.example.org' }), true);
+  // The landing route rewrites the address bar to the builder.
+  assert.equal(hashFor(DEMO_CHURCH, 'new'), '#/new');
+});
 
 test('a subdomain wins when a base domain is set', () => {
   const r = resolveChurch({ host: 'hope-chapel.belong.example.org', hash: '#/c/other-church/serve', saved: 'third', base: 'belong.example.org' });
