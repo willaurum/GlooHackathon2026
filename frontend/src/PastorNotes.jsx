@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, apiHeaders, apiUrl, getApiKey, setApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
+import { canStep, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, writePrefs } from './readerPrefs.js';
 import { fetchVerse, referenceParts } from './verses.js';
 
 const pending = note => note.status === 'queued' || note.status === 'processing';
@@ -66,11 +67,10 @@ function NewNote({ onCreated }) {
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
-  return <form className="card pn-new" onSubmit={submit}>
-    <h2>Add a sermon</h2>
-    <div className="filters">
-      <button type="button" className={mode === 'youtube' ? 'selected' : ''} onClick={() => setMode('youtube')}>YouTube link</button>
-      <button type="button" className={mode === 'upload' ? 'selected' : ''} onClick={() => setMode('upload')}>Upload a file</button>
+  return <form className="pn-new" onSubmit={submit}>
+    <div className="filters" role="group" aria-label="Source">
+      <button type="button" className={mode === 'youtube' ? 'selected' : ''} aria-pressed={mode === 'youtube'} onClick={() => setMode('youtube')}>YouTube link</button>
+      <button type="button" className={mode === 'upload' ? 'selected' : ''} aria-pressed={mode === 'upload'} onClick={() => setMode('upload')}>Upload a file</button>
     </div>
     <label className="field">Title<input value={title} maxLength={200} onChange={e => setTitle(e.target.value)} placeholder="e.g. Sunday, Luke 10" /></label>
     {mode === 'youtube'
@@ -122,14 +122,187 @@ function mergeAnnotations(list) {
   return out;
 }
 
-function NoteView({ note, onChange }) {
-  const [segments, setSegments] = useState([]), [question, setQuestion] = useState(''),
-    [answer, setAnswer] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''),
-    [annotations, setAnnotations] = useState([]), [openVerse, setOpenVerse] = useState(null), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
+// A modal panel: a drawer from the right on desktop, a bottom sheet on phones.
+function Sheet({ title, onClose, children, className = '', focusField }) {
+  const ref = useRef(null), titleId = useId();
   useEffect(() => {
-    setSegments([]); setAnnotations([]); setAnswer(null); setOpenVerse(null);
+    const before = document.activeElement, el = ref.current;
+    // Focus the first field. On touch screens that throws the keyboard up over the panel, so only when asked.
+    const touch = window.matchMedia?.('(pointer: coarse)').matches;
+    (((focusField ?? !touch) && el.querySelector('input:not([type=file]), textarea')) || el).focus();
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+      if (e.key !== 'Tab') return;
+      // Keep Tab inside the panel while it is open.
+      const items = [...el.querySelectorAll('button:not(:disabled), input:not(:disabled), a[href], textarea')];
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    el.addEventListener('keydown', onKey);
+    return () => { el.removeEventListener('keydown', onKey); before?.focus?.(); };
+  }, []);
+  return <div className="pn-sheet-wrap">
+    <div className="pn-sheet-backdrop" onClick={onClose} />
+    <div ref={ref} className={'pn-sheet ' + className} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+      <div className="pn-sheet-head">
+        <h2 id={titleId}>{title}</h2>
+        <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
+      </div>
+      <div className="pn-sheet-body">{children}</div>
+    </div>
+  </div>;
+}
+
+// The header dropdown: the open sermon's title and date, opening a list to switch sermons.
+function SermonPicker({ notes, current, onPick }) {
+  const [open, setOpen] = useState(false), wrap = useRef(null), listId = useId();
+  const items = () => [...wrap.current.querySelectorAll('.pn-picker-list button')];
+  const toggle = () => wrap.current.querySelector('.pn-picker-btn');
+  useEffect(() => {
+    if (!open) return;
+    (items().find(b => b.getAttribute('aria-current')) || items()[0])?.focus();
+    const away = e => { if (!wrap.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open]);
+  function onKeyDown(e) {
+    const list = open ? items() : [], i = list.indexOf(document.activeElement);
+    if (e.key === 'Escape' && open) { e.stopPropagation(); setOpen(false); toggle().focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); open ? list[Math.min(i + 1, list.length - 1)]?.focus() : setOpen(true); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); if (open) list[Math.max(i - 1, 0)]?.focus(); }
+    else if (e.key === 'Home' && open) { e.preventDefault(); list[0]?.focus(); }
+    else if (e.key === 'End' && open) { e.preventDefault(); list[list.length - 1]?.focus(); }
+    else if (e.key === 'Tab' && open) setOpen(false);
+  }
+  const date = current && formatNoteDate(current.created_at);
+  return <div className="pn-picker" ref={wrap} onKeyDown={onKeyDown}>
+    <button type="button" className="pn-picker-btn" aria-haspopup="true" aria-expanded={open} aria-controls={listId}
+      onClick={() => setOpen(o => !o)} disabled={!notes.length}>
+      <span className="pn-picker-text">
+        <small>{notes.length ? `Sermon${notes.length > 1 ? ` · ${notes.length} in all` : ''}` : 'No sermons yet'}
+          {date && <span className="pn-picker-inline-date"> · {date}</span>}
+          {current && current.status !== 'ready' && <span className="pn-picker-inline-date"> · <span className={'status ' + current.status}>{statusLabel(current.status)}</span></span>}
+        </small>
+        <strong>{current ? current.title : notes.length ? 'Pick a sermon' : 'Add one to get started'}</strong>
+      </span>
+      {current && (date || current.status !== 'ready') && <span className="pn-picker-meta">
+        {date}{current.status !== 'ready' && <span className={'status ' + current.status}>{statusLabel(current.status)}</span>}
+      </span>}
+      <span className="pn-chevron" aria-hidden="true" />
+    </button>
+    {open && <ul id={listId} className="pn-picker-list" aria-label="Sermons">
+      {notes.map(n => <li key={n.id}>
+        <button type="button" aria-current={n.id === current?.id ? 'true' : undefined}
+          onClick={() => { setOpen(false); toggle().focus(); onPick(n.id); }}>
+          <strong>{n.title}</strong>
+          <small>
+            <Icon name={n.source_kind === 'youtube' ? 'play' : 'book'} size={14} />
+            {n.source_kind === 'youtube' ? 'YouTube' : 'Upload'}
+            {formatNoteDate(n.created_at) && <> · {formatNoteDate(n.created_at)}</>}
+            {n.status !== 'ready' && <> · <span className={'status ' + n.status}>{statusLabel(n.status)}</span></>}
+          </small>
+          {n.id === current?.id && <Icon name="check" size={16} className="pn-picker-check" />}
+        </button>
+      </li>)}
+    </ul>}
+  </div>;
+}
+
+// A- / A+ and the timestamps switch.
+function ReaderControls({ prefs, setPrefs, disabled }) {
+  const step = delta => setPrefs(p => ({ ...p, size: stepSize(p.size, delta) }));
+  return <div className="pn-controls" role="group" aria-label="Reading options">
+    <button type="button" className="pn-ctl" aria-label="Smaller text" title="Smaller text" disabled={disabled || !canStep(prefs.size, -1)} onClick={() => step(-1)}>
+      <span aria-hidden="true">A<span className="pn-ctl-sign">−</span></span>
+    </button>
+    <button type="button" className="pn-ctl pn-ctl-big" aria-label="Larger text" title="Larger text" disabled={disabled || !canStep(prefs.size, 1)} onClick={() => step(1)}>
+      <span aria-hidden="true">A<span className="pn-ctl-sign">+</span></span>
+    </button>
+    <button type="button" className="pn-ctl pn-ctl-ts" aria-pressed={prefs.timestamps} disabled={disabled}
+      onClick={() => setPrefs(p => ({ ...p, timestamps: !p.timestamps }))}>
+      <Icon name="clock" size={16} /><span>Timestamps</span>
+    </button>
+  </div>;
+}
+
+// Question, answer and error for "Ask about this sermon".
+function useAsk(noteId) {
+  const [question, setQuestion] = useState(''), [answer, setAnswer] = useState(null),
+    [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function ask(e) {
+    e.preventDefault(); setBusy(true); setError(''); setAnswer(null);
+    try { setAnswer(await api(`/notes/${noteId}/ask`, { method: 'POST', body: JSON.stringify({ question }) })); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  return { question, setQuestion, answer, busy, error, ask };
+}
+
+function AskBox({ asker, label = 'Ask about this sermon' }) {
+  const { question, setQuestion, answer, busy, error, ask } = asker;
+  return <div className="pn-askbox">
+    <form className="pn-ask" onSubmit={ask}>
+      <label className="field"><span className="pn-ask-label">{label}</span><input value={question} maxLength={500} onChange={e => setQuestion(e.target.value)} placeholder="What was said about the good Samaritan?" /></label>
+      <button className="primary" disabled={busy || !question.trim()}>{busy ? 'Looking…' : 'Ask'}</button>
+    </form>
+    {error && <p className="pn-error" role="alert">{error}</p>}
+    {answer && (answer.found
+      ? <div className="pn-answer" aria-live="polite">
+          {answer.engine !== 'extractive' && <p>{answer.answer}</p>}
+          <ol>{answer.citations.map(c => <li key={c.chunk + c.quote}>
+            {c.url ? <a href={c.url} target="_blank" rel="noreferrer">{c.timestamp}</a> : <b>{c.timestamp}</b>} “{c.quote}”
+          </li>)}</ol>
+          <small>Answered from the transcript ({answer.engine}).</small>
+        </div>
+      : <div className="pn-answer none" aria-live="polite"><p>Not found in this note.</p></div>)}
+  </div>;
+}
+
+function Transcript({ segments, bySegment, activeCats, prefs }) {
+  const [openVerse, setOpenVerse] = useState(null);
+  return <article className={'pn-transcript' + (prefs.timestamps ? '' : ' no-ts')} style={{ '--pn-size': textSizePx(prefs.size) + 'px' }} aria-label="Transcript">
+    <ol className="pn-segments">{segments.map(s => {
+      const shown = (bySegment.get(s.idx) || []).filter(a => activeCats.has(a.category));
+      // A passage's label goes on its first segment; the first shown category picks the color.
+      const starts = shown.filter(a => a.seg_from === s.idx);
+      return <li key={s.idx} className={shown.length ? 'hl hl-' + shown[0].category : undefined}>
+        {starts.length > 0 && <span className="hl-legend">{starts.map((a, i) => {
+          const parts = BIBLE_CATS.has(a.category) ? referenceParts(a.label) : [{ text: a.label, ref: null }];
+          return <span key={i}>{i > 0 && ' · '}{CAT_LABEL[a.category]}{a.label && ': '}
+            {parts.map((p, j) => {
+              const key = `${s.idx}:${i}:${j}`;
+              return p.ref ? <button key={j} className="hl-verse-btn" aria-expanded={openVerse?.key === key}
+                  onClick={() => setOpenVerse(openVerse?.key === key ? null : { key, ref: p.ref })}>{p.text}</button>
+                : p.text;
+            })}
+          </span>;
+        })}</span>}
+        <b className="pn-ts">{s.timestamp}</b> {s.text}
+        {openVerse?.key.startsWith(s.idx + ':') && <VerseCard reference={openVerse.ref} onClose={() => setOpenVerse(null)} />}
+      </li>;
+    })}</ol>
+  </article>;
+}
+
+// Where Ask and the highlight chips sit around the transcript.
+function ReaderBody({ asker, toggles, transcript }) {
+  return <div className="pn-body">
+    <AskBox asker={asker} />
+    {toggles}
+    {transcript}
+  </div>;
+}
+
+function NoteView({ note, onChange, prefs }) {
+  const [segments, setSegments] = useState([]), [error, setError] = useState(''), [loading, setLoading] = useState(true),
+    [annotations, setAnnotations] = useState([]), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
+  const asker = useAsk(note.id);
+  useEffect(() => {
+    setSegments([]); setAnnotations([]); setError(''); setLoading(true);
     if (note.status !== 'ready') return;
-    api(`/notes/${note.id}/segments`).then(setSegments).catch(err => setError(err.message));
+    api(`/notes/${note.id}/segments`).then(setSegments).catch(err => setError(err.message)).finally(() => setLoading(false));
     // Highlights are optional; a transcript without them still reads fine.
     api(`/notes/${note.id}/annotations`).then(list => setAnnotations(mergeAnnotations(list))).catch(() => {});
   }, [note.id, note.status]);
@@ -147,85 +320,38 @@ function NoteView({ note, onChange }) {
     next.has(key) ? next.delete(key) : next.add(key);
     return next;
   });
-  async function ask(e) {
-    e.preventDefault(); setBusy(true); setError(''); setAnswer(null);
-    try { setAnswer(await api(`/notes/${note.id}/ask`, { method: 'POST', body: JSON.stringify({ question }) })); }
-    catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
   if (note.status !== 'ready') {
-    return <section className="card pn-note"><h2>{note.title}</h2>
+    return <section className="card pn-state">
+      <span className={'status ' + note.status}>{statusLabel(note.status)}</span>
+      <h2>{note.title}</h2>
       <p>{note.status === 'failed' ? (ERRORS[note.error] || `Processing failed (${note.error}).`) : 'Transcribing… this page updates on its own.'}</p>
       {error && <p className="pn-error" role="alert">{error}</p>}
       {note.status === 'failed' && <button className="secondary" onClick={() => api(`/notes/${note.id}/retry`, { method: 'POST' }).then(onChange, err => setError(err.message))}>Try again</button>}
     </section>;
   }
-  return <section className="card pn-note">
-    <h2>{note.title}</h2>
-    <form className="pn-ask" onSubmit={ask}>
-      <label className="field">Ask about this note<input value={question} maxLength={500} onChange={e => setQuestion(e.target.value)} placeholder="What was said about the good Samaritan?" /></label>
-      <button className="primary" disabled={busy || !question.trim()}>{busy ? 'Looking…' : 'Ask'}</button>
-    </form>
-    {error && <p className="pn-error" role="alert">{error}</p>}
-    {answer && (answer.found
-      ? <div className="pn-answer" aria-live="polite">
-          {answer.engine !== 'extractive' && <p>{answer.answer}</p>}
-          <ol>{answer.citations.map(c => <li key={c.chunk + c.quote}>
-            {c.url ? <a href={c.url} target="_blank" rel="noreferrer">{c.timestamp}</a> : <b>{c.timestamp}</b>} “{c.quote}”
-          </li>)}</ol>
-          <small>Answered from the transcript ({answer.engine}).</small>
-        </div>
-      : <div className="pn-answer none" aria-live="polite"><p>Not found in this note.</p></div>)}
-    <h3>Transcript</h3>
-    {annotations.length > 0 && <CategoryToggles counts={counts} active={activeCats} onToggle={toggleCat} />}
-    <ol className="pn-segments">{segments.map(s => {
-      const shown = (bySegment.get(s.idx) || []).filter(a => activeCats.has(a.category));
-      // A passage's label goes on its first segment; the first shown category picks the color.
-      const starts = shown.filter(a => a.seg_from === s.idx);
-      return <li key={s.idx} className={shown.length ? 'hl hl-' + shown[0].category : undefined}>
-        {starts.length > 0 && <span className="hl-legend">{starts.map((a, i) => {
-          const parts = BIBLE_CATS.has(a.category) ? referenceParts(a.label) : [{ text: a.label, ref: null }];
-          return <span key={i}>{i > 0 && ' · '}{CAT_LABEL[a.category]}{a.label && ': '}
-            {parts.map((p, j) => {
-              const key = `${s.idx}:${i}:${j}`;
-              return p.ref ? <button key={j} className="hl-verse-btn" aria-expanded={openVerse?.key === key}
-                  onClick={() => setOpenVerse(openVerse?.key === key ? null : { key, ref: p.ref })}>{p.text}</button>
-                : p.text;
-            })}
-          </span>;
-        })}</span>}
-        <b>{s.timestamp}</b> {s.text}
-        {openVerse?.key.startsWith(s.idx + ':') && <VerseCard reference={openVerse.ref} onClose={() => setOpenVerse(null)} />}
-      </li>;
-    })}</ol>
-  </section>;
+  const transcript = error ? <p className="pn-error pn-transcript-msg" role="alert">{error}</p>
+    : loading && !segments.length ? <p className="muted pn-transcript-msg">Loading transcript…</p>
+    : <Transcript segments={segments} bySegment={bySegment} activeCats={activeCats} prefs={prefs} />;
+  const toggles = annotations.length > 0 ? <CategoryToggles counts={counts} active={activeCats} onToggle={toggleCat} /> : null;
+  return <ReaderBody asker={asker} toggles={toggles} transcript={transcript} highlightCount={annotations.length} />;
 }
 
-// The open sermon lives in the route (#/notes/<id>). On phones it takes over the page, with a back button to the list.
+// The open sermon lives in the route (#/notes/<id>); without one, the newest ready sermon opens.
 export default function PastorNotes({ route, go }) {
   const church = useChurch();
   // The Sermon Notes key, or a signed-in staff session for this church, opens the notes.
   const [hasKey, setHasKey] = useState(Boolean(getApiKey() || church.staff)),
-    [notes, setNotes] = useState([]), [loaded, setLoaded] = useState(false), [error, setError] = useState('');
+    [notes, setNotes] = useState([]), [loaded, setLoaded] = useState(false), [error, setError] = useState(''),
+    [adding, setAdding] = useState(false), [prefs, setPrefs] = useState(() => readPrefs(globalThis.localStorage));
   const selected = route.startsWith('notes/') ? route.slice('notes/'.length) : null;
-  // True when the open sermon was tapped from the list, so Back can return to that same history entry.
-  const openedFromList = useRef(false);
   async function load() {
     try {
       setNotes(await api('/notes')); setError('');
     } catch (err) { setError(err.message); }
     finally { setLoaded(true); }
   }
-  function open(id) {
-    if (id === selected) return;
-    openedFromList.current = true;
-    go('notes/' + id);
-  }
-  function back() {
-    if (openedFromList.current) { openedFromList.current = false; window.history.back(); }
-    else go('notes');
-  }
   useEffect(() => { if (hasKey) load(); }, [hasKey]);
+  useEffect(() => { writePrefs(globalThis.localStorage, prefs); }, [prefs]);
   // Poll while anything is still being transcribed.
   useEffect(() => {
     if (!notes.some(pending)) return;
@@ -233,29 +359,31 @@ export default function PastorNotes({ route, go }) {
     return () => clearTimeout(timer);
   }, [notes]);
   if (!hasKey) return <KeyForm onChange={() => setHasKey(true)} />;
-  const current = notes.find(n => n.id === selected);
-  return <div className={'pn' + (selected ? ' pn-detail' : '')}>
-    <div className="pn-bar">
-      <div className="eyebrow">{church.name || ' '}</div>
-      {getApiKey() && <button className="ghost" onClick={() => { setApiKey(''); setHasKey(church.staff); setNotes([]); }}>Forget key</button>}
-    </div>
+  const current = pickCurrent(notes, selected);
+  // Anyone who can open the notes can add a sermon, as before.
+  const canAdd = hasKey;
+  return <div className="pn pn-reading">
+    <header className="pn-head">
+      <div className="pn-head-top">
+        <span className="eyebrow">Sermon Notes{church.name ? ` · ${church.name}` : ''}</span>
+        {getApiKey() && <button className="ghost" onClick={() => { setApiKey(''); setHasKey(church.staff); setNotes([]); }}>Forget key</button>}
+      </div>
+      <div className="pn-head-main">
+        <SermonPicker notes={notes} current={current} onPick={id => { if (id !== current?.id) go('notes/' + id); }} />
+        {canAdd && <button type="button" className="primary pn-add" aria-label="Add sermon" aria-haspopup="dialog" aria-expanded={adding} onClick={() => setAdding(true)}>
+          <Icon name="plus" size={18} /><span>Add sermon</span>
+        </button>}
+        <ReaderControls prefs={prefs} setPrefs={setPrefs} disabled={current?.status !== 'ready'} />
+      </div>
+    </header>
     {error && <div className="banner error" role="alert">{error}</div>}
-    <div className="pn-grid">
-      <div>
-        <section className="card pn-list"><h2>Sermons <small className="count">{notes.length}</small></h2>
-          {notes.length ? <ul>{notes.map(n => <li key={n.id}>
-            <button className={n.id === selected ? 'selected' : ''} aria-current={n.id === selected ? 'page' : undefined} onClick={() => open(n.id)}>
-              <strong>{n.title}</strong><small><Icon name={n.source_kind === 'youtube' ? 'play' : 'book'} size={14} />{n.source_kind === 'youtube' ? 'YouTube' : 'Upload'} · <span className={'status ' + n.status}>{n.status}</span></small>
-            </button></li>)}</ul> : <p className="muted">No sermons yet. Add a YouTube link or upload a file.</p>}
-        </section>
-        <NewNote onCreated={load} />
-      </div>
-      <div id="pn-view">
-        {selected && <button className="ghost pn-back" onClick={back}><Icon name="back" size={18} />All sermons</button>}
-        {current ? <NoteView note={current} onChange={load} />
-          : selected ? <section className="card pn-pick"><Icon name="book" size={40} /><h2>{loaded ? 'Sermon not found' : 'Loading sermon…'}</h2>{loaded && <p>It may have been removed. Go back to the list to pick another.</p>}</section>
-          : <section className="card pn-pick"><Icon name="book" size={40} /><h2>Pick a sermon</h2><p>Read its transcript and ask questions. Answers quote the sermon with timestamps.</p></section>}
-      </div>
-    </div>
+    {current ? <NoteView key={current.id} note={current} onChange={load} prefs={prefs} />
+      : <section className="card pn-state pn-empty"><Icon name="book" size={40} />
+          <h2>{!loaded ? 'Loading sermons…' : selected ? 'Sermon not found' : 'No sermons yet'}</h2>
+          {loaded && <p>{selected ? 'It may have been removed. Pick another from the list above.' : 'Add a YouTube link or upload a file. Once it is transcribed you can read it here and ask questions.'}</p>}
+        </section>}
+    {adding && <Sheet title="Add a sermon" onClose={() => setAdding(false)}>
+      <NewNote onCreated={() => { setAdding(false); load(); }} />
+    </Sheet>}
   </div>;
 }
