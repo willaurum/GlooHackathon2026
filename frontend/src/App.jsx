@@ -10,7 +10,7 @@ import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import { Brand, FirstVisit, PageHeader, SECTIONS, SiteNav, SubNav, TabBar, TopBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -80,7 +80,7 @@ function readLocation() {
 }
 
 // The browser tab shows the church itself: its name as the title, and its letter badge (the same
-// sand-colored initial as beside the church name in the sidebar) as the icon.
+// sand-colored initial as beside the church name in the header) as the icon.
 const xmlEscape = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
 function churchIcon(name) {
   const letter = xmlEscape(name.trim().charAt(0).toUpperCase() || '·');
@@ -351,10 +351,9 @@ function SiteApp({ snapshot }) {
   return <ChurchContext.Provider value={church}>
     <div className={'app' + (snapshot ? ' site-preview' : '')}>
       {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to Tekton</a></div>}
-      <Sidebar route={route} go={go} savedCount={savedCount} />
-      <TopBar go={go} onAsk={() => setChatOpen(true)} />
+      <SiteNav route={route} go={go} savedCount={savedCount} />
+      <TopBar onAsk={() => setChatOpen(true)} />
       <div className="content">
-        <WorkspaceBar />
         {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
         <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
@@ -370,6 +369,7 @@ function SiteApp({ snapshot }) {
         </main>
       </div>
       <TabBar route={route} go={go} chatOpen={chatOpen} savedCount={savedCount} />
+      <FirstVisit route={route} go={go} />
       <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onRequestFiled={() => setRequestsVersion(v => v + 1)} onNavigate={go} />
     </div>
   </ChurchContext.Provider>;

@@ -36,7 +36,7 @@
 
   --font: 'DM Sans', system-ui, -apple-system, sans-serif;
   --display: 'Manrope', system-ui, -apple-system, sans-serif;
-  --sidebar: 252px;
+  --sitenav: 64px;
   --topbar: 56px;
   --tabbar: 64px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -139,10 +139,57 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .search input { border: 0; outline: none; background: none; font-size: 16px; width: 220px; color: var(--ink); min-width: 0; }
 
 /* ---------- App shell ---------- */
-.sidebar {
-  position: fixed; inset: 0 auto 0 0; width: var(--sidebar); z-index: 10;
-  display: flex; flex-direction: column; gap: 6px; padding: 26px 16px 18px;
-  background: var(--card); border-right: 1px solid var(--line); overflow-y: auto;
+/* Desktop: one top bar, pinned while the page scrolls. The church on the left, the main
+   navigation in the middle, staff sign-in on the right. */
+.site-nav {
+  position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px;
+  height: var(--sitenav); padding: 0 28px; background: rgb(255 255 255 / .94);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line);
+}
+.site-nav-links { display: flex; justify-content: center; flex: 1; min-width: 0; height: 100%; }
+.site-account { display: flex; align-items: center; gap: 10px; flex: none; }
+.site-user { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.site-user strong { font-size: 13px; color: var(--ink); }
+.site-staff { gap: 4px; margin-top: 2px; font-size: 12px; white-space: nowrap; }
+.label-short { display: none; }
+.site-nav-item { position: relative; display: flex; }
+.site-nav-link { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 12px; color: var(--muted); font-size: 15px; font-weight: 500; white-space: nowrap; }
+.site-nav-link:hover, .site-nav-item:focus-within > .site-nav-link { color: var(--ink); }
+.site-nav-link.active { color: var(--green-800); font-weight: 700; }
+/* The current section is underlined, flush with the bar's bottom edge. */
+.site-nav-link.active::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--green-700); }
+.site-nav-link .count { margin-left: 2px; }
+.site-nav-link .caret { color: var(--faint); transition: transform .15s; }
+.site-nav-item:focus-within .caret { transform: rotate(180deg); }
+.site-nav-menu {
+  position: absolute; top: calc(100% - 4px); left: 50%; z-index: 21; display: none; flex-direction: column; min-width: 200px;
+  padding: 6px; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--shadow-lg); animation: pop .15s ease;
+}
+/* An invisible bridge over the gap, so moving the pointer down to the menu does not close it. */
+.site-nav-menu::before { content: ''; position: absolute; inset: -8px 0 auto; height: 8px; }
+.site-nav-item.has-menu:focus-within > .site-nav-menu { display: flex; }
+/* Hover opens the menus only with a real pointer; on touch screens a tap opens the section, whose page has its own tabs. */
+@media (hover: hover) {
+  .site-nav-item.has-menu:hover > .site-nav-menu { display: flex; }
+  .site-nav-item:hover .caret { transform: rotate(180deg); }
+}
+.site-nav-menu button, .site-nav-menu a { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border-radius: 8px; color: var(--muted); font-size: 14px; text-align: left; white-space: nowrap; }
+.site-nav-menu a { text-decoration: none; }
+.site-nav-menu button:hover, .site-nav-menu button:focus-visible, .site-nav-menu a:hover, .site-nav-menu a:focus-visible { background: var(--green-50); color: var(--ink); }
+.site-nav-menu button.active { color: var(--green-800); font-weight: 700; }
+html { scroll-padding-top: calc(var(--sitenav) + 16px); }
+/* Narrower desktops: short labels (Notes, Prayer), so the bar stays one row. */
+@media (max-width: 1360px) {
+  .site-nav { gap: 10px; padding: 0 16px; }
+  .site-nav-link { padding: 0 9px; font-size: 14px; }
+  .label-full { display: none; }
+  .label-short { display: inline; }
+  .site-nav .church-name .church small { display: none; }
+}
+@media (max-width: 1024px) {
+  .site-nav-link { padding: 0 7px; }
+  .site-account .avatar { display: none; }
 }
 .church { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); text-align: left; }
 .church > div { flex: 1; min-width: 0; }
@@ -158,14 +205,9 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .nav-children button { display: flex; align-items: center; min-height: 38px; padding: 0 10px; border-radius: 8px; color: var(--muted); font-size: 14px; text-align: left; }
 .nav-children button:hover { color: var(--ink); background: var(--green-50); }
 .nav-children button.active { color: var(--green-800); font-weight: 700; }
-.profile { display: flex; align-items: center; gap: 10px; margin-top: auto; padding: 14px 6px 0; border-top: 1px solid var(--line); }
-.profile strong { display: block; font-size: 14px; color: var(--ink); }
-.profile small { display: block; font-size: 12px; margin-top: 2px; }
 .avatar { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--sand-100); color: var(--sand-700); border: 3px solid var(--sand-50); box-sizing: border-box; font-size: 12px; font-weight: 700; }
-.workspace-bar { display: flex; align-items: center; justify-content: flex-end; gap: 14px; height: 64px; padding: 0 40px; background: var(--card); border-bottom: 1px solid var(--line); }
-.demo-pill { padding: 6px 12px; border-radius: 999px; background: var(--green-50); color: var(--green-600); font-size: 12px; }
 .topbar, .tabbar, .menu-sheet, .menu-backdrop { display: none; }
-.content { margin-left: var(--sidebar); min-width: 0; }
+.content { min-width: 0; }
 main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .page { animation: fade .25s ease; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } }
@@ -658,7 +700,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
-  :root { --sidebar: 224px; }
   main { padding: 32px 28px; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero-art { right: -40px; opacity: .6; }
@@ -666,8 +707,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 @media (max-width: 860px) {
-  .sidebar, .workspace-bar { display: none; }
-  .content { margin-left: 0; }
+  .site-nav { display: none; }
+  html { scroll-padding-top: calc(var(--topbar) + 16px); }
   #home-service-times, .visit-section { scroll-margin-top: calc(var(--topbar) + 16px); }
   .topbar {
     position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px;
@@ -675,8 +716,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
     background: rgb(255 255 255 / .92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--line);
   }
-  /* Narrow phones: drop the first-visit button (Guests is in the tab bar) so the church name fits. */
-  @media (max-width: 430px) { .topbar .first-visit { display: none; } }
   .tabbar {
     /* One column per button, however many there are, so a tab never wraps
        into a cut-off second row when SECTIONS grows. */
@@ -930,9 +969,26 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 /* --- First-time guest visit pages --- */
-.first-visit{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:40px;margin:-6px 0 14px;border:1px solid var(--green-200);border-radius:var(--r);background:var(--green-50);color:var(--green-800);font-size:14px;font-weight:600}
-.first-visit:hover{background:var(--green-100)}
-.topbar .first-visit{width:auto;min-height:32px;margin:0;padding:0 12px;font-size:12px;white-space:nowrap}
+/* "First time here?" welcome popup: fades in on a first visit, fades out when closed. */
+.welcome { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px; background: #172a2066; backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: fade-in .3s ease both; }
+.welcome.closing { animation: fade-out .25s ease both; }
+.welcome-card { position: relative; width: 100%; max-width: 460px; padding: 32px 30px 22px; border-radius: var(--r-xl); box-shadow: var(--shadow-lg); animation: rise .35s ease both; }
+.welcome.closing .welcome-card { animation: sink .25s ease both; }
+.welcome-card h2 { font-size: 24px; color: var(--ink); padding-right: 32px; }
+.welcome-card p { margin-top: 10px; font-size: 15px; line-height: 1.6; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.welcome-actions .primary { flex: 1 1 auto; }
+.welcome-hide { margin: 16px 0 0; font-size: 14px; color: var(--muted); }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes rise { from { opacity: 0; transform: translateY(12px) scale(.98); } }
+@keyframes sink { to { opacity: 0; transform: translateY(8px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .welcome, .welcome-card { animation-duration: .01s !important; } }
+@media (max-width: 600px) {
+  .welcome { padding: 12px; }
+  .welcome-card { padding: 26px 20px 18px; }
+  .welcome-actions > * { flex: 1 1 100%; }
+}
 .visit-page,.welcome-team{display:flex;flex-direction:column;gap:18px}
 .visit-section{padding:24px 26px}
 .visit-section h2{margin-top:6px}
@@ -1004,9 +1060,12 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 /* ---------- Your church: the church this site is for (no picker; churches do not see each other) ---------- */
 .church-name { margin: 22px 0 16px; }
-/* The church sits at the top of the sidebar in place of a site logo, without a box around it. */
-.sidebar .church-name { margin-top: 0; }
-.sidebar .church-name .church { border: 0; padding: 4px 6px; }
+/* The church sits at the left of the top bar in place of a site logo, without a box around it. */
+.site-nav .church-name { margin: 0; flex: 0 1 auto; min-width: 0; max-width: 240px; }
+.site-nav .church-name .church { border: 0; padding: 0; background: transparent; }
+.site-nav .church-name .church > span { width: 32px; height: 32px; font-size: 18px; }
+.site-nav .church-name .church strong { font-family: var(--display); font-size: 16px; }
+@media (max-width: 1024px) { .site-nav .church-name { max-width: 150px; } }
 .church-name .church-staff { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-top: 2px; font-size: 12px; font-weight: 600; }
 .church-name.compact { display: none; margin: 0; }
 .church-link { margin-bottom: 18px; }
@@ -1098,7 +1157,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .news-item { padding: 20px 22px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .news-item p { font-size: 15px; }
 .news-meta { display: flex; align-items: center; gap: 10px; }
-.news-side { padding: 20px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 24px; }
+.news-side { padding: 20px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: calc(var(--sitenav) + 24px); }
 .news-side ul { display: flex; flex-direction: column; gap: 10px; }
 .news-side li b { display: block; color: var(--ink); font-size: 14px; }
 .news-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
@@ -1195,7 +1254,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .site-preview { --preview-height: 52px; padding-top: var(--preview-height); }
 .site-preview-banner { position: fixed; inset: 0 0 auto; z-index: 110; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 8px 16px; background: var(--green-50); border-bottom: 1px solid var(--line); font-size: 13px; }
 .site-preview-banner a { flex: none; font-weight: 600; }
-.site-preview .sidebar { top: var(--preview-height); }
+.site-preview .site-nav { top: var(--preview-height); }
 .site-preview .topbar { top: var(--preview-height); }
 .site-preview-banner span { overflow-wrap: anywhere; }
 @media (max-width: 600px) {

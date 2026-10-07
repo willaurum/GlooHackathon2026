@@ -5,7 +5,7 @@ import Icon from './Icon.jsx';
 import { pageOfType } from './churchSite.js';
 import { siteMenu } from './site.js';
 
-// One navigation for every screen size: a sidebar on desktop; on phones, a tab bar holds the
+// One navigation for every screen size: a top navigation bar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
 // `staffOnly` sections appear only while church staff are signed in.
 export const SECTIONS = [
@@ -17,7 +17,7 @@ export const SECTIONS = [
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass' },
   { route: 'about', label: 'About', icon: 'info', children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect']] },
-  { route: 'staff', label: 'Church staff', icon: 'lock', staffOnly: true },
+  { route: 'staff', label: 'Church staff', short: 'Staff', icon: 'lock', staffOnly: true },
 ];
 // The sections this visitor can see: staff-only ones are hidden until staff sign in.
 export const visibleSections = staff => SECTIONS.filter(s => staff || !s.staffOnly);
@@ -47,47 +47,118 @@ export function Brand() {
   return <a className="tekton-brand" href="/#/new"><Icon name="sparkle" size={26} />Tekton</a>;
 }
 
-export function Sidebar({ route, go, savedCount }) {
-  const { demo, staff, pages } = useChurch();
-  const user = identity(staff);
-  return <aside className="sidebar">
-    <ChurchName />
-    <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
-    <nav aria-label="Main">
-      {visibleSections(staff).map(s => <div key={s.route}>
-        <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
-          <Icon name={s.icon} />{s.label}
+// The church's imported website menu as one list for a dropdown: pages open here, outside links in a new tab.
+const flatMenu = items => items.flatMap(item => [item, ...flatMenu(item.children)]).filter(item => item.route || item.href);
+
+// Desktop top bar, pinned while scrolling: the church in place of a site logo, the main navigation,
+// and staff sign-in. A section with sub-pages opens them in a dropdown on hover or keyboard focus;
+// the section itself still opens its first page.
+export function SiteNav({ route, go, savedCount }) {
+  const church = useChurch();
+  const { demo, staff, pages } = church;
+  const current = sectionOf(route);
+  const website = flatMenu(siteMenu(church.site, pages));
+  // Leave the dropdown once a page is picked (focus would otherwise keep it open).
+  const pick = (e, next) => { e.currentTarget.blur(); go(next); };
+  return <header className="site-nav">
+    <ChurchName staffLink={false} />
+    <nav className="site-nav-links" aria-label="Main">
+      {visibleSections(staff).map(s => {
+        const kids = childrenFor(s, demo, pages);
+        return <div key={s.route} className={'site-nav-item' + (kids.length > 1 ? ' has-menu' : '')}>
+          <button className={'site-nav-link' + (current === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined}
+            aria-haspopup={kids.length > 1 ? 'true' : undefined} onClick={e => pick(e, s.route)}>
+            {/* Narrower screens use the short label (Notes, Prayer) so the bar stays one row. */}
+            <span className="label-full">{s.label}</span><span className="label-short">{s.short ?? s.label}</span>
+            {s.route === 'serve' && savedCount > 0 && <b className="count">{savedCount}</b>}
+            {kids.length > 1 && <svg className="caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          </button>
+          {kids.length > 1 && <div className="site-nav-menu">
+            {kids.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={e => pick(e, r)}>
+              {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
+            </button>)}
+          </div>}
+        </div>;
+      })}
+      {/* The menu of the website Tekton imported, when the church has one. */}
+      {website.length > 0 && <div className="site-nav-item has-menu">
+        <button className={'site-nav-link' + (website.some(item => item.route === route) ? ' active' : '')} aria-haspopup="true"
+          onClick={e => website[0].route ? pick(e, website[0].route) : e.currentTarget.focus()}>
+          <span className="label-full">Our website</span><span className="label-short">Website</span>
+          <svg className="caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
-        {s.children && sectionOf(route) === s.route && <div className="nav-children">
-          {childrenFor(s, demo, pages).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
-            {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
-          </button>)}
-        </div>}
-      </div>)}
+        <div className="site-nav-menu">
+          {website.map(item => item.route
+            ? <button key={'r' + item.route} className={route === item.route ? 'active' : ''} aria-current={route === item.route ? 'page' : undefined} onClick={e => pick(e, item.route)}>{item.label}</button>
+            : <a key={'h' + item.href} href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a>)}
+        </div>
+      </div>}
     </nav>
-    <SiteMenu route={route} go={go} />
-    <div className="profile">
+    <div className="site-account">
+      {/* Who is browsing, with the staff sign-in (or Church setup, once signed in) just below. */}
+      <div className="site-user">
+        <strong>{identity(staff).name}</strong>
+        {!church.missing && <button className="link site-staff" onClick={e => pick(e, 'setup')}>
+          <Icon name="lock" size={13} />{staff ? 'Church setup' : 'Staff sign in'}
+        </button>}
+      </div>
       <Avatar />
-      <div><strong>{user.name}</strong><small>{user.role}</small></div>
     </div>
-  </aside>;
+  </header>;
 }
 
-export function TopBar({ go, onAsk }) {
+export function TopBar({ onAsk }) {
   return <header className="topbar">
     <ChurchName compact />
-    <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Tekton" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />
   </header>;
 }
 
-// Desktop-only strip in the top-right corner; phones get the avatar in the TopBar instead.
-export function WorkspaceBar() {
-  const church = useChurch();
-  return <div className="workspace-bar">
-    {church.demo ? <span className="demo-pill">● Demo workspace</span> : church.staff && <span className="demo-pill">● Signed in as staff</span>}
-    <Avatar />
+// Welcome popup for first-time visitors. It fades in shortly after the site opens, at most once
+// per visit (a refresh is the same visit), and never again once "Don't show this again" is
+// checked. Not shown on the Guests pages, where a first-time visitor already is.
+const HIDE_KEY = 'belong.firstVisitHidden', SEEN_KEY = 'belong.firstVisitSeen';
+const stored = (store, key) => { try { return store.getItem(key) === '1'; } catch { return false; } };
+const store1 = (store, key) => { try { store.setItem(key, '1'); } catch { /* private mode: just close */ } };
+
+export function FirstVisit({ route, go }) {
+  const { name } = useChurch();
+  const [state, setState] = useState('hidden'); // hidden → open → closing → hidden
+  const [dontShow, setDontShow] = useState(false);
+  const onGuests = sectionOf(route) === 'guests';
+
+  useEffect(() => {
+    if (onGuests || stored(localStorage, HIDE_KEY) || stored(sessionStorage, SEEN_KEY)) return;
+    const t = setTimeout(() => { store1(sessionStorage, SEEN_KEY); setState('open'); }, 700);
+    return () => clearTimeout(t);
+  }, [onGuests]);
+
+  function close(next) {
+    if (dontShow) store1(localStorage, HIDE_KEY);
+    setState('closing');
+    setTimeout(() => setState('hidden'), 250);
+    if (next) go(next);
+  }
+  useEffect(() => {
+    if (state !== 'open') return;
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  if (state === 'hidden') return null;
+  return <div className={'welcome' + (state === 'closing' ? ' closing' : '')} onClick={e => e.target === e.currentTarget && close()}>
+    <div className="card welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-text">
+      <button className="close" aria-label="Close" onClick={() => close()}><Icon name="x" size={20} /></button>
+      <h2 id="welcome-title">First time here?</h2>
+      <p id="welcome-text">Welcome{name ? ` to ${name}` : ''}! We'd love to help your first Sunday feel easy. See service times, what to expect, where to park and how kids check-in works, and let us know you're coming so someone can say hello.</p>
+      <div className="welcome-actions">
+        <button className="primary" autoFocus onClick={() => close('guests/plan')}>Plan your visit<Icon name="arrow" size={18} /></button>
+        <button className="ghost" onClick={() => close()}>Not now</button>
+      </div>
+      <label className="field checkbox welcome-hide"><input type="checkbox" checked={dontShow} onChange={e => setDontShow(e.target.checked)} />Don't show this again</label>
+    </div>
   </div>;
 }
 
