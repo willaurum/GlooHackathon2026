@@ -3,7 +3,7 @@ import { api, apiHeaders, apiUrl, getApiKey, setApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import { askPlaceholder, canStep, cleanVersion, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
-import { fetchVerse, fetchVersions, pickVersion, referenceParts, versionLabel } from './verses.js';
+import { fetchVerse, fetchVersions, pickVersion, referenceParts, versionGroups, versionLabel } from './verses.js';
 import { noteErrorMessage } from './noteErrors.js';
 
 const pending = note => note.status === 'queued' || note.status === 'processing';
@@ -223,7 +223,9 @@ function VersionPicker({ prefs, setPrefs }) {
   return <label className="field pn-version" htmlFor={id}>
     <span>Bible version</span>
     <select id={id} value={pickVersion(list, prefs.version)} onChange={e => choose(e.target.value)}>
-      {list.versions.map(v => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+      {versionGroups(list).map(([name, versions]) => <optgroup key={name} label={name}>
+        {versions.map(v => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+      </optgroup>)}
     </select>
   </label>;
 }

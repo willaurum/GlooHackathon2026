@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BUILT_IN_VERSIONS, fetchVerse, fetchVersions, pickVersion, verseCacheKey, versionLabel } from './verses.js';
+import { BUILT_IN_VERSIONS, fetchVerse, fetchVersions, pickVersion, verseCacheKey, versionGroups, versionLabel } from './verses.js';
 
 globalThis.sessionStorage = { getItem: () => null };
 const JOHN = { usfm: 'JHN.3.16', human: 'John 3:16' };
@@ -73,7 +73,11 @@ test('the version list comes from the API, or the public-domain ones when it fai
 
 test('version labels and picking a saved version', () => {
   assert.equal(versionLabel({ abbreviation: 'BSB', title: 'Berean Standard Bible', source: 'youversion' }), 'Berean Standard Bible (BSB)');
-  assert.equal(versionLabel(BUILT_IN_VERSIONS.versions[1]), 'King James Version (KJV, public domain)');
+  assert.equal(versionLabel(BUILT_IN_VERSIONS.versions[1]), 'King James Version (KJV)');
+  assert.equal(versionLabel({ id: '42', abbreviation: '', title: '' }), '42');
+  const mixed = { default: '3034', versions: [{ id: '3034', source: 'youversion' }, ...BUILT_IN_VERSIONS.versions] };
+  assert.deepEqual(versionGroups(mixed).map(([name, vs]) => [name, vs.map(v => v.id)]), [['YouVersion', ['3034']], ['Public domain', ['web', 'kjv']]]);
+  assert.deepEqual(versionGroups(BUILT_IN_VERSIONS).map(([name]) => name), ['Public domain']);
   const list = { default: '3034', versions: [{ id: '3034' }, { id: 'kjv' }] };
   assert.equal(pickVersion(list, 'kjv'), 'kjv');
   assert.equal(pickVersion(list, ''), '3034');

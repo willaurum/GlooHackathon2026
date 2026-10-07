@@ -78,9 +78,14 @@ export const BUILT_IN_VERSIONS = Object.freeze({
   versions: Object.values(PUBLIC_DOMAIN).map(({ bibleCom, ...v }) => ({ ...v, language: 'en', source: 'public-domain' })),
 });
 
-/** The select's label for a version; public-domain ones say so. */
-export const versionLabel = v =>
-  `${v.title || v.abbreviation} (${[v.abbreviation, v.source === 'public-domain' && 'public domain'].filter(Boolean).join(', ')})`;
+/** The select's label for a version. */
+export const versionLabel = v => (v.title && v.abbreviation ? `${v.title} (${v.abbreviation})` : v.title || v.abbreviation || v.id);
+
+/** Versions grouped for the select: the key's licensed ones, then public-domain ones (labeled as such). */
+export function versionGroups(list) {
+  const groups = [['YouVersion', list.versions.filter(v => v.source !== 'public-domain')], ['Public domain', list.versions.filter(v => v.source === 'public-domain')]];
+  return groups.filter(([, versions]) => versions.length);
+}
 
 /** The id a reader picked if it is still offered, else the default. */
 export const pickVersion = (list, saved) => (list.versions.some(v => v.id === saved) ? saved : list.default);
