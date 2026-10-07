@@ -113,6 +113,38 @@ def _label(text, url, provider):
     return (provider or urlparse(url).hostname or '').removeprefix('www.')
 
 
+# Link words that say nothing about where the link goes ("Sign up here.", "Click for Details", "HERE").
+GENERIC_LINK = re.compile(r'^(?:click\s+)?(?:sign\s?up|register|apply|rsvp)?\s*(?:to serve\s*)?(?:here|now|today)?|'
+                          r'(?:click|tap)(?: here)?(?: for (?:details|more(?: info)?))?|here|learn more(?: here)?|more|'
+                          r'more info(?:rmation)?|details|read more|go|link|this link|get started(?: now)?|find out more$',
+                          re.I)
+
+
+def _generic(text):
+    words = ' '.join(str(text or '').split()).strip(' .!:>»→')
+    return bool(words) and bool(GENERIC_LINK.fullmatch(words))
+
+
+def _heading_before(text, nth, lines):
+    """The short line above the nth line that holds `text`: the item a "Sign up here." belongs to
+    ("Coffee" / "Bless others ... Sign up here.")."""
+    # The link's own words, as written ("HERE" is not the "here" in "Sign up here."), as whole words.
+    words = re.compile(rf'(?<!\w){re.escape(text)}(?!\w)')
+    holding = [i for i, line in enumerate(lines) if words.search(line)]
+    if not holding:
+        return ''
+    at = holding[min(nth, len(holding) - 1)]
+    for line in reversed(lines[max(0, at - 3):at]):
+        if _short(line) and not words.search(line):
+            return line
+    return ''
+
+
+def _short(line):
+    """A heading-like line: a few words, not a sentence."""
+    return 0 < len(line.split()) <= 6 and not re.search(r'[.!?:,]$', line)
+
+
 def _web(url):
     return urlparse(url).scheme in ('http', 'https')
 
@@ -251,7 +283,9 @@ def build(sources, start_url):
             'section_count': len(page_sections),
             'include': not post})
         ctas, hidden = set(page.get('ctas', [])), set(page.get('hidden_links', []))
+        lines, seen_text = [l.strip() for l in page.get('text', '').split('\n') if l.strip()], {}
         for url, text, in_nav in page.get('anchors', []):
+            nth = seen_text[text] = seen_text.get(text, -1) + 1
             url = builder_crawl.unwrap(url)
             if not _web(url) or url in hidden and not in_nav:
                 continue  # a link the page hides is followed by the crawler, but is not part of the page
@@ -261,8 +295,19 @@ def build(sources, start_url):
                 continue
             entry = links.setdefault(_link_key(url), {'url': url, 'text': '', 'kind': kind, 'provider': provider,
                                                       'pages': [], 'cta': False, 'in_menu': False, 'context': ''})
-            if not entry['text'] or entry['text'] == _label('', entry['url'], entry['provider']):
-                entry['text'] = _label(text, url, provider)
+            words = _label(text, url, provider)
+            if _generic(text) and not in_nav:
+                # "Sign up here." under "Coffee" is the Coffee sign-up; else the section it is in.
+                about = _heading_before(text.strip(), nth, lines) or _heading_of(page_sections, text)
+                if not (about and _short(about)):
+                    from .builder import _page_name
+                    about = _page_name(page) if kind == 'form' or not provider else provider
+                if about:
+                    signs = kind == 'form' and not re.search(r'sign[\s-]?up|regist|rsvp', about, re.I)
+                    words = f'{about} sign-up' if signs else about
+            if not entry['text'] or entry['text'] == _label('', entry['url'], entry['provider']) \
+                    or _generic(entry['text']) and not _generic(words):
+                entry['text'] = words
             entry['cta'] = entry['cta'] or cta
             entry['in_menu'] = entry['in_menu'] or in_nav
             entry['context'] = entry['context'] or _heading_of(page_sections, text)
@@ -272,7 +317,10 @@ def build(sources, start_url):
             names = {f['name'].lower() for f in form['fields']}
             if not form['fields'] or names <= SEARCH_FIELDS or 'search' in form['action'].lower():
                 continue
-            key = (urldefrag(form['action'])[0], tuple(sorted(names)))
+            # A form that posts back to its own page (no action) is one form wherever it appears: a footer form.
+            own_page = urldefrag(form['action'])[0] == urldefrag(page['url'])[0]
+            key = ('' if own_page else urldefrag(form['action'])[0],
+                   tuple(sorted(names)), tuple(f.get('label', '').lower() for f in form['fields']))
             entry = forms.setdefault(key, {
                 'action': form['action'] if _web(form['action']) else '', 'method': form['method'],
                 'name': form.get('name', ''), 'fields': form['fields'], 'submit': form.get('submit', ''),

@@ -391,5 +391,41 @@ class AddressTests(unittest.TestCase):
         self.assertEqual([c for c in builder.pattern_claims(page) if c['field'] == 'address'], [])
 
 
+class GenericLinkAndFormTests(unittest.TestCase):
+    """Crosspoint: the Serve page has a dozen "Sign up here." links to Church Center forms, all listed as "Sign up
+    here.", and its footer contact form was listed on every page as "Message, Message, Message, Message" (SnapPages
+    puts each <label> beside its input, with no for= or id)."""
+
+    @classmethod
+    def setUpClass(cls):
+        site = import_site('crosspoint', '')['site']
+        cls.links = {l['url'].rsplit('/', 1)[-1]: l['text'] for l in site['links']}
+        cls.forms = site['forms']
+
+    def test_generic_links_are_named_by_what_they_sign_up_for(self):
+        self.assertEqual(self.links['991533'], 'Connect Team sign-up')
+        self.assertEqual(self.links['991524'], 'Coffee sign-up')
+        self.assertEqual(self.links['776740'], 'Parking sign-up')
+        self.assertEqual(self.links['1275323'], 'CP Kids sign-up')  # "Apply HERE today!"
+        self.assertEqual(self.links['1294788'], 'CP Youth sign-up')  # "Apply to serve HERE."
+        self.assertEqual(self.links['1211774'], 'Monthly Connections sign-up')  # "Click for Details"
+        self.assertFalse([t for t in self.links.values() if builder_site._generic(t)], self.links)
+        self.assertFalse([t for t in self.links.values() if len(t.split()) > 12])
+
+    def test_snappages_form_labels_and_one_footer_form(self):
+        contact = [f for f in self.forms if [x['label'] for x in f['fields']] == ['First Name', 'Last Name', 'Email', 'Message']]
+        self.assertEqual(len(contact), 1)
+        self.assertGreater(len(contact[0]['pages']), 1)
+        online = next(f for f in self.forms if len(f['fields']) > 4)
+        self.assertEqual([x['label'] for x in online['fields']][4:],
+                         ['Checkboxes', 'Prayer Request', 'Get Baptized', 'Join a Discipleship Group', 'Become a Member'])
+
+    def test_labels_beside_wrapping_and_for(self):
+        page = builder.parse_html('<form><label>Name</label><input type="text"><label>Phone <input name="p"></label>'
+                                  '<label for="e">Email</label><input id="e" name="email"><input name="x" placeholder="Note">'
+                                  '<input type="checkbox" name="c"><input type="checkbox" name="c"></form>')
+        self.assertEqual([f['label'] for f in page['forms'][0]['fields']], ['Name', 'Phone', 'Email', 'Note', 'c'])
+
+
 if __name__ == '__main__':
     unittest.main()

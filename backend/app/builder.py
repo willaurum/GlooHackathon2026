@@ -193,12 +193,14 @@ class _PageText(HTMLParser):
                 self._form['submit'] = attrs['value'][:60]
             if kind in self.FIELD_SKIP or len(self._form['fields']) >= self.MAX_FIELDS:
                 return
+            # A label with no `for` names the field it wraps, or else the next field ("<label>Email</label><input>").
+            own = self._form.pop('_next_label', '') if not self._label else ''
             self._form['fields'].append({
                 'name': (attrs.get('name') or '')[:80], 'type': kind, 'id': attrs.get('id') or '',
-                'label': (attrs.get('aria-label') or attrs.get('placeholder') or '')[:120],
+                'label': (attrs.get('aria-label') or own or attrs.get('placeholder') or '')[:120],
                 'required': 'required' in attrs or (attrs.get('aria-required') or '') == 'true'})
         elif tag == 'label':
-            self._label = [attrs.get('for') or '', []]
+            self._label = [attrs.get('for') or '', [], len(self._form['fields'])]
         elif tag == 'button' and (attrs.get('type') or 'submit').lower() == 'submit':
             self._form['_button'] = []
 
@@ -278,7 +280,15 @@ class _PageText(HTMLParser):
             self._heading = None
         if self._form is not None:
             if tag == 'label' and self._label:
-                self._labels[self._label[0]] = ' '.join(''.join(self._label[1]).split())[:120]
+                target, words, first = self._label
+                text = ' '.join(''.join(words).split())[:120]
+                if target:
+                    self._labels[target] = text
+                elif len(self._form['fields']) > first:
+                    for field in self._form['fields'][first:]:
+                        field['label'] = field['label'] if field['id'] in self._labels else text
+                else:
+                    self._form['_next_label'] = text
                 self._label = None
             elif tag == 'button' and '_button' in self._form:
                 text = ' '.join(''.join(self._form.pop('_button')).split())
@@ -342,8 +352,16 @@ class _PageText(HTMLParser):
             if form.pop('password', False):
                 continue
             form.pop('_button', None)
+            form.pop('_next_label', None)
+            fields, seen = [], set()
             for field in form['fields']:
-                field['label'] = self._labels.get(field.pop('id'), '') or field['label'] or field['name']
+                field_id = field.pop('id')
+                field['label'] = (self._labels.get(field_id, '') if field_id else '') or field['label'] or field['name']
+                key = (field['label'].lower(), field['name'], field['type'])
+                if key not in seen:  # a checkbox group ("Volunteer in a Ministry" five times) is one field
+                    seen.add(key)
+                    fields.append(field)
+            form['fields'] = fields
             out.append(form)
         return out
 
