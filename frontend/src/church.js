@@ -45,10 +45,26 @@ export function resolveChurch({ host = '', hash = '', saved = '', base = BASE_DO
   return { slug: DEMO_CHURCH, source: 'demo', route: fromHash.route };
 }
 
-/** The hash for a page of a church. On a church subdomain the church is already in the host. */
+/** The hash for a page of a church: #/c/<slug>/<route>, so a copied address bar or shared link keeps the church
+ * (the demo church too). On a church subdomain the church is already in the host. */
 export function hashFor(slug, route = '', source = '') {
-  if (source === 'subdomain' || slug === DEMO_CHURCH) return '#/' + route;
+  if (source === 'subdomain') return '#/' + route;
   return '#/c/' + slug + (route ? '/' + route : '/');
+}
+
+/** Whether the address bar should be rewritten to name its church: the older giving link (#/give/c/<slug>),
+ * or a plain link (#/serve, no hash) off a church subdomain. A checkout return on /give is left alone. */
+export function needsChurchInHash(hash, source, onGivePath = false) {
+  if (/^#\/?give\/c\//.test(hash || '')) return true;
+  if (source === 'subdomain' || onGivePath) return false;
+  return !/^#\/?c\//.test(hash || '');
+}
+
+/** The church's own address to hand out: the bare origin on its subdomain, its subdomain when the build
+ * has a base domain, else the #/c/<slug>/ link on this origin. */
+export function churchAddress(slug, { host = globalThis.location?.host || '', origin = globalThis.location?.origin || '', base = BASE_DOMAIN } = {}) {
+  if (slugFromHost(host, base) === slug) return origin + '/';
+  return shareLink(slug, '', { origin, base });
 }
 
 /** A full link to share, e.g. on a bulletin. */

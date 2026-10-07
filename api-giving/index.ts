@@ -788,7 +788,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
       if (s.metadata?.belong_church !== c.slug || !customer) return json({ error: 'We could not find that gift.' }, 404);
       if (!c.portal_config_id) await this.#ensurePortal(key, c).catch(() => null);
       const configId = this.#church()!.portal_config_id;
-      const params: Params = [['customer', customer], ['return_url', returnOrigin(request, this.env) + '/#/give']];
+      const params: Params = [['customer', customer], ['return_url', returnOrigin(request, this.env) + '/#/c/' + c.slug + '/give']];
       if (configId) params.push(['configuration', configId]);
       const portal = await stripe(this.env, key, 'POST', '/v1/billing_portal/sessions', params);
       if (!portal.url) return json({ error: 'Stripe did not open the page. Please try again.' }, 502);
@@ -1294,7 +1294,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
         after = list.data[list.data.length - 1].id;
       }
     }
-    const returnUrl = allowedOrigins(this.env)[0] + '/#/give';
+    const returnUrl = allowedOrigins(this.env)[0] + '/#/c/' + c.slug + '/give';
     const params: Params = [
       ['features[subscription_cancel][enabled]', 'true'],
       ['features[subscription_cancel][mode]', 'immediately'],

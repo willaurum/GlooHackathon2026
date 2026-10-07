@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, churchCapabilities, gapi, setApiChurch, startApiPreview, stopApiPreview, whenCapabilitiesKnown } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
-import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, needsChurchInHash, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import Builder from './Builder.jsx';
 import { draftApi } from './builderApi.js';
@@ -162,13 +162,19 @@ function SiteApp({ snapshot }) {
   }, []);
 
   useEffect(() => {
-    const sync = () => setWhere(readLocation());
+    const sync = () => {
+      const next = readLocation();
+      if (needsChurchInHash(window.location.hash, next.source, onGivePath())) window.history.replaceState(null, '', '/' + hashFor(next.slug, next.route, next.source));
+      setWhere(next);
+    };
     const staffChanged = () => setStaffVersion(v => v + 1);
     window.addEventListener('popstate', sync);
     window.addEventListener('hashchange', sync);
     window.addEventListener('belong-staff', staffChanged);
-    // The older giving link (#/give/c/<slug>) becomes the sitewide form (#/c/<slug>/give).
-    if (/^#\/?give\/c\//.test(window.location.hash)) window.history.replaceState(null, '', '/' + hashFor(slug, route, source));
+    // The older giving link (#/give/c/<slug>) becomes the sitewide form (#/c/<slug>/give), and a plain link
+    // (#/serve, or no hash) gains the church it opened, so copying the address bar keeps the church.
+    // A checkout return (/give?session_id=…) keeps its address until the Give page has read it.
+    if (needsChurchInHash(window.location.hash, source, onGivePath())) window.history.replaceState(null, '', '/' + hashFor(slug, route, source));
     return () => {
       window.removeEventListener('popstate', sync);
       window.removeEventListener('hashchange', sync);
