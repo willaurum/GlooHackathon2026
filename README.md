@@ -320,6 +320,22 @@ The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) ta
 - Guardrails: the system prompt keeps the assistant to church and site topics and tells it to decline everything else, and obvious prompt-override attempts ("ignore previous instructions", "system prompt", "developer mode") get a fixed reply without calling the model. These reduce off-topic use; they are not a guarantee.
 - Replies may use **bold** and simple lists, rendered by `frontend/src/chatFormat.js` as React elements (never raw HTML).
 
+#### Which AI does what
+
+On Cloudflare, Gloo answers everything that is language work, and the only model we host is the transcriber:
+
+| Job | Model |
+| --- | --- |
+| Website chat, Find a place | Gloo (`GLOO_MODEL`) |
+| Calendar summaries, blog categories and summaries | Gloo (`GLOO_MODEL`) |
+| Sermon-note questions | Gloo (`GLOO_MODEL`) |
+| Transcribing sermon audio | Workers AI, `@cf/openai/whisper-large-v3-turbo` |
+| Passage embeddings for note search | Workers AI, `@cf/baai/bge-base-en-v1.5` |
+
+Sermon notes pick their engine in `pickEngine` (`api/notes.ts`): Gloo when `GLOO_API_KEY` is set, then Gemini if `GEMINI_API_KEY` is set, then Workers AI when `NOTES_ANSWER_ENGINE=workers-ai`, and otherwise the extractive answerer, which uses no model at all. Asking for `extractive` explicitly always wins, and any model answer that fails the citation check falls back to it.
+
+Whisper stays on Workers AI because Gloo serves chat models, not speech to text. Embeddings stay there for the same reason, and because ingest and questions must use the same embedding model for search to work.
+
 #### Two branches: laptops, or Cloudflare
 
 Nothing in this project depends on a machine that is neither a laptop nor Cloudflare. Two branches keep that honest:
