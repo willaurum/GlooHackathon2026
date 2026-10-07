@@ -94,7 +94,7 @@ The church reviews it all (`POST /api/builder/drafts/{id}/parts`: keep or leave 
 - **Background imports.** `POST /api/builder/drafts` answers **202** with a draft whose status is `importing` and starts a job; the page polls `GET /api/builder/drafts/{id}`, which shows `progress` (pages read and found), until the status is `clarifying`, `review` or `failed`. Polling is also what keeps the Cloudflare container awake. Answers, list edits, previews and apply answer 409 until the import is done. A job lost to a restart shows as failed ("The import was interrupted").
 - **Time budget.** A website import has 180 seconds (`BUILDER_JOB_BUDGET`): page reading stops at half of that, three pages are fetched at a time, AI and image reads run four at a time, and anything still running when time is up is dropped. Uploads and blank drafts still answer in one request within 75 seconds. The draft's `notes` say what was skipped.
 - **Page limit.** 40 pages (`BUILDER_MAX_PAGES`, at most 60).
-- **Rate limits:** 5 imports per IP per hour, 60 per hour overall, 3 at a time (a background import holds its slot until it finishes).
+- **Rate limits:** 200 imports per IP per hour, 500 per hour overall (raised for the demo; `BUILDER_IMPORTS_PER_ADDRESS` and `BUILDER_IMPORTS_PER_HOUR` Worker vars override them), 3 at a time (a background import holds its slot until it finishes).
 - **Drafts:**
   - stored outside every church's data, in the reserved `builder` space, without the page texts (every value keeps its quote);
   - reached only by an unguessable 24-character id;

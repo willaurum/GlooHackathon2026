@@ -1010,15 +1010,40 @@ def _times(sentence):
     return list(dict.fromkeys(clock for _, clock in sorted(found)))
 
 
+def _labeled(text):
+    """(sentence, label) pairs: each sentence with the line above it, which on a sidebar or card is its label
+    ("Youth Group" above "Sundays, 6:00 PM")."""
+    previous = ''
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        for sentence in (s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip()):
+            yield sentence, previous
+            previous = sentence
+
+
 def service_times(text, strict=False):
     """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times. strict (announcement
-    and event pages) needs the sentence to say worship, service or mass."""
+    and event pages) needs the sentence to say worship, service or mass. A sentence that does not say worship
+    takes its label from the line above: "Youth Group" over "Sundays, 6:00 PM" is not a service time. A bulletin's
+    dated heading over "Worship: 10:00 AM" is that Sunday's service time (its quote keeps both lines)."""
     found = {}
     worship = STRICT_WORSHIP if strict else WORSHIP_WORDS
     lines = text.split('\n')
-    for i, sentence in enumerate(_sentences(text)):
+    for sentence, label in _labeled(text):
         days = [d for d in DAYS if DAY_RE[d].search(sentence)]
+        if not days and label and DATED.search(label) and len(sentence) <= 40 and STRICT_WORSHIP.match(sentence) \
+                and not NOT_WORSHIP.search(sentence):
+            day = next((d for d in DAYS if DAY_RE[d].search(label)), None)
+            times = _times(sentence)
+            if day and times:
+                found.setdefault(day, [])
+                found[day] += [(t, f'{label} {sentence}') for t in times if t not in [x for x, _ in found[day]]]
+            continue
         if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
+            continue
+        if not worship.search(sentence) and label and (NOT_WORSHIP.search(label) or NOT_WEEKLY.search(label)):
             continue
         times = _times(sentence)
         if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
@@ -1080,8 +1105,10 @@ def pattern_claims(source):
     separate = source.get('url') is None or source.get('page_type') == 'locations'
     for day, times in service_times(text, strict=source.get('page_type') in STRICT_PAGES).items():
         for clock, quote in times:
+            # A dated bulletin's time is its own answer, so "9:00 on the website, 10:00 in Sunday's bulletin" is asked.
+            group = quote if separate or DATED.search(quote) else None
             claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote,
-                           'source_id': sid, 'method': 'pattern', **({'service_group': quote} if separate else {})})
+                           'source_id': sid, 'method': 'pattern', **({'service_group': group} if group else {})})
     return claims
 
 
@@ -1303,7 +1330,11 @@ def extract_all(sources, complete=None, deadline=None, notes=None):
     failed, list_failed = [], []
     if use_ai:
         tasks = [('info', source) for source in readable]
-        tasks += [(name, source) for source in readable for name in builder_agents.specialists_for(source)][:MAX_SPECIALIST_CALLS]
+        # A home page's sections get a list reader only when no page of the site is about that list.
+        covered = {name for source in readable if source.get('page_type') not in ('home', 'other')
+                   for name in builder_agents.specialists_for(source)}
+        tasks += [(name, source) for source in readable for name in builder_agents.specialists_for(source)
+                  if source.get('page_type') not in ('home', 'other') or name not in covered][:MAX_SPECIALIST_CALLS]
         specialists = [name for name, _ in tasks if name != 'info']
         builder_run.step(f'AI is reading {len(readable)} ' + ('source' if len(readable) == 1 else 'sources')
                          + ' for church details' + (f', with {len(specialists)} specialist readers for '
@@ -1979,10 +2010,10 @@ def _limit(name, default):
         return default
 
 
-# Per rolling hour. A venue or office shares one address, so one address gets room for a room full of people
-# trying the builder; BUILDER_IMPORTS_PER_ADDRESS and BUILDER_IMPORTS_PER_HOUR override these.
-IMPORTS_PER_ADDRESS = _limit('BUILDER_IMPORTS_PER_ADDRESS', 20)
-IMPORTS_PER_HOUR = _limit('BUILDER_IMPORTS_PER_HOUR', 60)
+# Per rolling hour. Raised for the demo, where the team and judges share one venue address and rehearse many
+# imports; BUILDER_IMPORTS_PER_ADDRESS and BUILDER_IMPORTS_PER_HOUR (Worker vars) override these.
+IMPORTS_PER_ADDRESS = _limit('BUILDER_IMPORTS_PER_ADDRESS', 200)
+IMPORTS_PER_HOUR = _limit('BUILDER_IMPORTS_PER_HOUR', 500)
 
 
 class ImportLimiter:
