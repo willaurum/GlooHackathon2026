@@ -4,7 +4,7 @@ import { EmbedError, backfillChurch, comparable, cosine, embedChunks, embedTag, 
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
 type Secrets = {
 	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; YTDLP_COOKIES?: string;
-	GLOO_API_KEY?: string; GLOO_MODEL?: string; GLOO_MATCH_MODEL?: string; GLOO_EMBED_MODEL?: string; GLOO_NOTES_MODEL?: string; GLOO_BUILDER_MODEL?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
+	GLOO_API_KEY?: string; GLOO_MODEL?: string; GLOO_MATCH_MODEL?: string; GLOO_EMBED_MODEL?: string; GLOO_NOTES_MODEL?: string; GLOO_BUILDER_MODEL?: string; BUILDER_IMPORTS_PER_ADDRESS?: string; BUILDER_IMPORTS_PER_HOUR?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
 	// Optional: the team AI bridge (scripts/team-ai-bridge), and which provider the chat tries first.
 	TEAM_AI_URL?: string; TEAM_AI_KEY?: string; TEAM_AI_MODEL?: string; AI_PROVIDER?: string;
 	// Optional: the YouTube helper (scripts/youtube-helper) that downloads YouTube audio from a home connection.

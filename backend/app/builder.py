@@ -1701,10 +1701,10 @@ def _limit(name, default):
         return default
 
 
-# Per rolling hour. A venue or office shares one address, so one address gets room for a room full of people
-# trying the builder; BUILDER_IMPORTS_PER_ADDRESS and BUILDER_IMPORTS_PER_HOUR override these.
-IMPORTS_PER_ADDRESS = _limit('BUILDER_IMPORTS_PER_ADDRESS', 20)
-IMPORTS_PER_HOUR = _limit('BUILDER_IMPORTS_PER_HOUR', 60)
+# Per rolling hour. Raised for the demo, where the team and judges share one venue address and rehearse many
+# imports; BUILDER_IMPORTS_PER_ADDRESS and BUILDER_IMPORTS_PER_HOUR (Worker vars) override these.
+IMPORTS_PER_ADDRESS = _limit('BUILDER_IMPORTS_PER_ADDRESS', 200)
+IMPORTS_PER_HOUR = _limit('BUILDER_IMPORTS_PER_HOUR', 500)
 
 
 class ImportLimiter:

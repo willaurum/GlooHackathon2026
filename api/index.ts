@@ -106,6 +106,9 @@ export class ChurchAPI extends Container<AppEnv> {
 			GLOO_MATCH_MODEL: env.GLOO_MATCH_MODEL ?? '',
 			// Optional. The agentic builder's model; GLOO_MATCH_MODEL (then gloo-anthropic-claude-haiku-4.5) when it is empty.
 			GLOO_BUILDER_MODEL: env.GLOO_BUILDER_MODEL ?? '',
+			// Optional. Builder import limits per rolling hour; the backend's defaults apply when empty.
+			BUILDER_IMPORTS_PER_ADDRESS: env.BUILDER_IMPORTS_PER_ADDRESS ?? '',
+			BUILDER_IMPORTS_PER_HOUR: env.BUILDER_IMPORTS_PER_HOUR ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
