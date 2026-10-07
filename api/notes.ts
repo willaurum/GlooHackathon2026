@@ -1,9 +1,10 @@
-import { DEMO_SLUG, churchHeaders, type Church } from './churches';
+import { DEMO_SLUG, churchHeaders, type Church } from './churches.ts';
+import { EmbedError, backfillChurch, comparable, cosine, embedChunks, embedTag, embedTexts, ensureEmbedColumn, vectorJson, type RunSql } from './embed.ts';
 
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
 type Secrets = {
 	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
-	GLOO_API_KEY?: string; GLOO_MODEL?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
+	GLOO_API_KEY?: string; GLOO_MODEL?: string; GLOO_EMBED_MODEL?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
 	// Optional: the team AI bridge (scripts/team-ai-bridge), and which provider the chat tries first.
 	TEAM_AI_URL?: string; TEAM_AI_KEY?: string; TEAM_AI_MODEL?: string; AI_PROVIDER?: string;
 	YOUVERSION_APP_KEY?: string; YOUVERSION_BIBLE_ID?: string;
@@ -14,19 +15,17 @@ type Secrets = {
 export type AppEnv = Env & Secrets & { GIVING?: Fetcher };
 
 type Statement = { sql: string; params?: (string | number | null)[] };
-type Chunk = { idx: number; start: number; end: number; seg_from: number; seg_to: number; text: string; embedding: string };
+type Chunk = { idx: number; start: number; end: number; seg_from: number; seg_to: number; text: string; embedding: string; embed_model: string };
 type Segment = { idx: number; start: number; end: number; text: string };
-type Scored = Omit<Chunk, 'embedding'> & { score: number };
+type Scored = Omit<Chunk, 'embedding' | 'embed_model'> & { score: number };
 type Citation = { chunk: number; start: number; end: number; timestamp: string; quote: string; url?: string };
 type Answer = { found: boolean; answer: string; citations: Citation[] };
 
+// Transcription is the one model hosted on Workers AI. Embeddings come from Gloo (embed.ts).
 export const ASR_MODEL = '@cf/openai/whisper-large-v3-turbo';
-export const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 // Sermon-note answers go to Gloo, like the chat. Keep in step with backend/app/chat.py.
 const GLOO_BASE_URL = 'https://platform.ai.gloo.com/ai/v2/guarded';
 const GLOO_DEFAULT_MODEL = 'gloo-qwen-3.7-flash';
-// cls pooling must match between ingest (/embed bridge) and questions.
-const POOLING = 'cls';
 const NOT_FOUND = 'Not found in this note.';
 const TOP_K = 5;
 const MAX_JSON_BYTES = 16 * 1024;
@@ -47,6 +46,17 @@ async function sql(env: AppEnv, slug: string, ...batch: Statement[]): Promise<{ 
 	const response = await churchDb(env, slug).fetch('http://church-db/sql', { method: 'POST', body: JSON.stringify({ batch }) });
 	if (!response.ok) throw new Error(await response.text());
 	return (await response.json<{ results: { rows: any[] }[] }>()).results;
+}
+
+const dbFor = (env: AppEnv, slug: string): RunSql => (...batch) => sql(env, slug, ...batch);
+
+// Churches whose chunks table is known to have embed_model, so the check runs about once per isolate.
+const embedColumnReady = new WeakMap<object, Set<string>>();
+
+async function ensureChunkTags(env: AppEnv, slug: string): Promise<void> {
+	const ready = embedColumnReady.get(env.CHURCH_DB) ?? new Set<string>();
+	embedColumnReady.set(env.CHURCH_DB, ready);
+	if (!ready.has(slug) && (await ensureEmbedColumn(dbFor(env, slug)))) ready.add(slug);
 }
 
 /** True while any church has a note queued or being processed; keeps the container awake. */
@@ -131,10 +141,18 @@ export async function aiBridge(request: Request, env: AppEnv): Promise<Response>
 			});
 		}
 		if (request.method === 'POST' && path === '/embed') {
+			// Ingest embeddings, from Gloo. The container tags the chunks with `model`, or saves them unembedded on an error.
 			const { texts } = await request.json<{ texts: unknown }>();
 			if (!Array.isArray(texts) || !texts.length || texts.length > 100 || !texts.every((t) => typeof t === 'string' && t))
 				return new Response('texts must be 1-100 non-empty strings', { status: 400 });
-			return json({ vectors: await embed(env, texts) });
+			try {
+				const { tag, vectors } = await embedTexts(env, texts);
+				return json({ vectors, model: tag });
+			} catch (err) {
+				console.error('gloo embeddings failed:', String(err));
+				const noKey = err instanceof EmbedError && err.code === 'no_key';
+				return new Response(noKey ? 'GLOO_API_KEY is not set' : 'Gloo embeddings failed', { status: noKey ? 503 : 502 });
+			}
 		}
 		if (request.method === 'POST' && path === '/llm') {
 			// Transcript categorization: one window of numbered segments per call.
@@ -160,11 +178,6 @@ function toBase64(buffer: ArrayBuffer): string {
 	let binary = '';
 	for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
 	return btoa(binary);
-}
-
-async function embed(env: AppEnv, texts: string[]): Promise<number[][]> {
-	const out: any = await env.AI.run(EMBED_MODEL as any, { text: texts, pooling: POOLING } as any);
-	return out.data;
 }
 
 // --- Routes the Worker handles itself ---
@@ -195,6 +208,7 @@ export async function handleNotes(request: Request, env: AppEnv, url: URL, conta
 		}
 		return internal(container, church, 'PUT', '/api/internal/config', body);
 	}
+	if (request.method === 'POST' && path === '/api/notes/reembed') return reembed(env, url, church.slug);
 	const ask = path.match(/^\/api\/notes\/([0-9a-f-]{36})\/ask$/);
 	if (request.method === 'POST' && ask) return answer(request, env, url, ask[1], church.slug);
 	const note = path.match(/^\/api\/notes\/([0-9a-f-]{36})$/);
@@ -250,14 +264,32 @@ const normalize = (text: string) =>
 const contentStems = (text: string) =>
 	new Set(normalize(text).split(' ').map((w) => w.replace(/'/g, '')).filter((w) => w.length >= 3 && !STOPWORDS.has(w)).map(stem));
 
-function cosine(a: number[], b: number[]): number {
-	let dot = 0, na = 0, nb = 0;
-	for (let i = 0; i < a.length; i++) {
-		dot += a[i] * b[i];
-		na += a[i] * a[i];
-		nb += b[i] * b[i];
+/** Without vectors: rank passages by how many of the question's topic words they contain. */
+function keywordRank(chunks: Chunk[], questionStems: Set<string>): Scored[] {
+	if (!questionStems.size) return [];
+	return chunks
+		.map(({ embedding, embed_model, ...chunk }) => {
+			const stems = contentStems(chunk.text);
+			return { ...chunk, score: [...questionStems].filter((s) => stems.has(s)).length / questionStems.size };
+		})
+		.filter((c) => c.score > 0)
+		.sort((a, b) => b.score - a.score || a.idx - b.idx)
+		.slice(0, TOP_K);
+}
+
+/** Staff or API key: re-embed this church's chunks that are not on the current Gloo model, one batch per call.
+ * Repeat until `done`; it resumes where the last call stopped. Never re-transcribes. */
+async function reembed(env: AppEnv, url: URL, slug: string): Promise<Response> {
+	if (!env.GLOO_API_KEY) return detail('GLOO_API_KEY is not set on this deploy', 503);
+	const limit = Number(url.searchParams.get('limit') ?? '') || undefined;
+	let result;
+	try {
+		result = await backfillChurch(dbFor(env, slug), env, limit);
+	} catch (err) {
+		console.error('embedding backfill failed:', String(err));
+		return detail('Backfill failed', 500);
 	}
-	return na && nb ? dot / Math.sqrt(na * nb) : 0;
+	return json({ church: slug, ...result }, result.error && !result.embedded ? 502 : 200);
 }
 
 export function timestamp(seconds: number): string {
@@ -278,9 +310,10 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string, s
 
 	let results;
 	try {
+		await ensureChunkTags(env, slug);
 		results = await sql(env, slug,
 			{ sql: 'SELECT status, source_kind, source_url FROM notes WHERE id = ?', params: [noteId] },
-			{ sql: 'SELECT idx, start, "end", seg_from, seg_to, text, embedding FROM chunks WHERE note_id = ? ORDER BY idx', params: [noteId] },
+			{ sql: 'SELECT idx, start, "end", seg_from, seg_to, text, embedding, embed_model FROM chunks WHERE note_id = ? ORDER BY idx', params: [noteId] },
 			{ sql: "SELECT data FROM config WHERE key = 'church'" },
 			{ sql: 'SELECT idx, start, "end", text FROM segments WHERE note_id = ? ORDER BY idx', params: [noteId] });
 	} catch {
@@ -291,24 +324,44 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string, s
 	if (note.status !== 'ready') return detail(`Note is ${note.status}, not ready`, 409);
 	const churchName = config ? JSON.parse(config.data).name : 'the church';
 
-	const [questionVector] = await embed(env, [question]);
 	const questionStems = contentStems(question);
 	const minScore = Number(env.NOTES_MIN_SCORE);
-	const ranked: Scored[] = chunks
-		.map(({ embedding, ...chunk }) => ({ ...chunk, score: cosine(questionVector, JSON.parse(embedding)) }))
-		.sort((a, b) => b.score - a.score)
-		.slice(0, TOP_K);
-	// A passage supports the question only if it is semantically close AND shares a topic word with it.
-	const supported = ranked.filter((c) => c.score >= minScore && [...contentStems(c.text)].some((s) => questionStems.has(s)));
+	const tag = embedTag(env);
+	let ranked: Scored[], retrieval: 'vector' | 'keyword', retrievalReason: string | undefined, reembedded = 0;
+	try {
+		// Chunks embedded by another model (or not at all) are re-embedded from their stored text first.
+		const stale = chunks.filter((c) => c.embed_model !== tag || !c.embedding);
+		if (stale.length) {
+			const out = await embedChunks(dbFor(env, slug), env, stale.map((c) => ({ note_id: noteId, idx: c.idx, text: c.text })));
+			stale.forEach((c, i) => Object.assign(c, { embedding: vectorJson(out.vectors[i]), embed_model: out.tag }));
+			reembedded = out.saved;
+		}
+		const { vectors: [questionVector] } = await embedTexts(env, [question]);
+		ranked = comparable(chunks, tag)
+			.map(({ embedding, embed_model, ...chunk }) => ({ ...chunk, score: cosine(questionVector, JSON.parse(embedding)) }))
+			.sort((a, b) => b.score - a.score)
+			.slice(0, TOP_K);
+		retrieval = 'vector';
+	} catch (err) {
+		// No key or Gloo is down: keyword search over the same passages, never an error and never another model's vectors.
+		retrievalReason = err instanceof EmbedError ? `embeddings_${err.code}` : 'embeddings_failed';
+		if (retrievalReason !== 'embeddings_no_key') console.error('question embedding failed:', String(err));
+		ranked = keywordRank(chunks, questionStems);
+		retrieval = 'keyword';
+	}
+	// A passage supports the question only if it shares a topic word with it AND (with vectors) is semantically close.
+	const sharesTopic = (c: Scored) => [...contentStems(c.text)].some((s) => questionStems.has(s));
+	const supported = ranked.filter((c) => sharesTopic(c) && (retrieval === 'keyword' || c.score >= minScore));
 	const debug = url.searchParams.get('debug') === '1'
-		? { min_score: minScore, question_terms: [...questionStems], top: ranked.map((c) => ({ chunk: c.idx, score: Number(c.score.toFixed(4)), text: c.text.slice(0, 120) })) }
+		? { min_score: minScore, embed_model: tag, reembedded, question_terms: [...questionStems], top: ranked.map((c) => ({ chunk: c.idx, score: Number(c.score.toFixed(4)), text: c.text.slice(0, 120) })) }
 		: undefined;
 
 	const cite = (c: Scored | Segment, quote = c.text, chunk = c.idx): Citation => ({
 		chunk, start: c.start, end: c.end, timestamp: timestamp(c.start), quote,
 		...(note.source_kind === 'youtube' && note.source_url ? { url: `${note.source_url}&t=${Math.floor(c.start)}s` } : {}),
 	});
-	const reply = (result: Answer, engine: string, extra: Record<string, unknown> = {}) => json({ ...result, engine, ...extra, ...(debug ? { debug } : {}) });
+	const reply = (result: Answer, engine: string, extra: Record<string, unknown> = {}) =>
+		json({ ...result, engine, retrieval, ...(retrievalReason ? { retrieval_reason: retrievalReason } : {}), ...extra, ...(debug ? { debug } : {}) });
 
 	if (!supported.length) return reply({ found: false, answer: NOT_FOUND, citations: [] }, 'extractive');
 

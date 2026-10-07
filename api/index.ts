@@ -89,6 +89,9 @@ export class ChurchAPI extends Container<AppEnv> {
 			GLOO_API_KEY: env.GLOO_API_KEY ?? '',
 			// Optional. Which Gloo model to use; the backend's default (gloo-qwen-3.7-flash) applies when it is empty.
 			GLOO_MODEL: env.GLOO_MODEL ?? '',
+			// Optional. The Gloo embedding model (default gloo-baai-bge-base-en-v1.5). Ingest embeds through the Worker's
+			// /embed bridge, which reads the same value, so the chunks are tagged with the model the Worker queries.
+			GLOO_EMBED_MODEL: env.GLOO_EMBED_MODEL ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
