@@ -3131,7 +3131,7 @@ def _file(draft_id, name):
         content = _draft_content(draft, allow_unanswered=True)
         if draft.get('import_kind') == 'json':
             draft = {**draft, 'site': {'calendars': draft.get('json_calendars') or []}}
-            document = builder_json.files(draft, content=content, sources=draft.get('json_sources') or [])[name]
+            document = builder_json.files(draft, content=content, sources=draft.get('json_sources') or {})[name]
         else:
             document = builder_json.files(draft, content=content)[name]
     # Served as a download: the church (or the team) can keep the files Tekton wrote.
