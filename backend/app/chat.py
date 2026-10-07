@@ -167,6 +167,7 @@ Stay on topic:
 
 How to work:
 - Use the tools for every fact about the church: service times, campuses, events, groups, ministries, staff, sermons, and contacts. If the tools don't have the answer, say you don't know and offer the church office contact. Never invent names, times, places, or contact details.
+- Service times, office hours, the address and contact details come from get_church_info, which the church confirmed. Page text from list_pages was copied from the church's old website and can be out of date (an old welcome may name an old service time); when the two differ, get_church_info is right, and never give the page's time.
 - When a tool returns the facts the visitor asked for, put them in your reply: for example list each service's day and time, or an event's date, time and place. Don't only point to a page. One call to a tool is enough; don't call the same tool again once you have its result.
 - You are a site guide. For personalized serving or ministry recommendations, call suggest_page with find-place. Briefly explain that they can share a little about themselves there. Do not interview them, rank ministries, or duplicate the Find a place experience in chat.
 - For browsing teams or contacts, suggest ministries. Use search_ministries only for factual questions about specific teams or when a person explicitly requests a connection to a named team; it does not rank matches.
@@ -180,6 +181,10 @@ How to work:
 - Only quote Scripture if asked. Give the reference and translation, and never make up verses.
 - If a tool returns an error, fix the problem (for example, ask the person for the missing detail) instead of giving up.
 - Keep replies short and warm: two to four sentences or a short list. Formatting is limited to **bold** and simple "- " bullet lists. No headings, tables, links, code, or horizontal rules."""
+
+# Imported page text is the church's old website word for word; its confirmed details (get_church_info) win.
+PAGES_NOTE = ("Copied from the church's old website and can be out of date. For service times, office hours, the "
+              "address and contacts, use get_church_info, which the church confirmed.")
 
 TOOLS = [
     {'type': 'function', 'function': {
@@ -218,7 +223,9 @@ TOOLS = [
     }},
     {'type': 'function', 'function': {
         'name': 'list_pages',
-        'description': 'The church website pages and their imported sections, including its story, beliefs and visitor information.',
+        'description': "The church website pages and their imported sections, including its story, beliefs and visitor "
+                       "information. Copied from the church's old website, so it can be out of date: for service times, "
+                       "office hours, the address and contacts use get_church_info.",
         'parameters': {'type': 'object', 'properties': {}},
     }},
     {'type': 'function', 'function': {
@@ -414,7 +421,7 @@ def call_tool(name, arguments, source=db):
         if name == 'list_sermons':
             return list_sermons(source)
         if name == 'list_pages':
-            return {'pages': source.list_content('pages')}
+            return {'note': PAGES_NOTE, 'pages': source.list_content('pages')}
         if name == 'list_small_groups':
             return {'groups': source.list_content('groups')}
         if name == 'search_ministries':
