@@ -129,7 +129,7 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['POST', /^\/api\/builder\/drafts\/(blank|upload)$/],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/site$`)],
-	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|preview)$`)],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|preview)$`)],
 ];
 
 // Staff work requires a church session, including on the demo church.

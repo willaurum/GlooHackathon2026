@@ -215,7 +215,8 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
     for (const id of ['abc123def', '+1', '01', '1_0', ' 1', 'odd.id']) {
       for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
         ['GET', `/api/builder/drafts/${id}/site`],
-        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/preview`]])
+        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/items`],
+        ['POST', `/api/builder/drafts/${id}/preview`]])
         assert.equal(access(m, p, demo), 'public', m + ' ' + p);
       assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])

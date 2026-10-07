@@ -1,4 +1,4 @@
-// The builder fetch bridge (api/builderfetch.ts). Run: node --test api/test/
+// The builder fetch bridge (api/builderfetch.ts). Run: node --test api/test/*.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BUILDER_FETCH_HOST, builderFetchBridge, builderFetchEnvVars, checkDns, checkUrl, privateIp } from '../builderfetch.ts';
@@ -137,4 +137,21 @@ test('a page that does not answer in time is reported, not hung', async () => {
   };
   const res = await builderFetchBridge(ask('https://slow.org/'), fetcher);
   assert.equal(res.status, 504);
+});
+
+test('feeds (robots.txt, sitemaps, iCal, RSS) are their own kind; an HTML page is not a feed', async () => {
+  const net = internet({ 'church.example.org': ['93.184.216.34'] }, {
+    'https://church.example.org/calendar.ics': () => new Response('BEGIN:VCALENDAR', { headers: { 'Content-Type': 'text/calendar' } }),
+    'https://church.example.org/sitemap.xml': () => new Response('<urlset/>', { headers: { 'Content-Type': 'application/xml' } }),
+    'https://church.example.org/robots.txt': () => new Response('User-agent: *', { headers: { 'Content-Type': 'text/plain' } }),
+    'https://church.example.org/feed': html('<p>a page</p>'),
+  });
+  for (const path of ['calendar.ics', 'sitemap.xml', 'robots.txt']) {
+    const response = await builderFetchBridge(ask(`https://church.example.org/${path}`, 'feed'), net.fetcher);
+    assert.equal(response.status, 200, path);
+  }
+  const page = await builderFetchBridge(ask('https://church.example.org/feed', 'feed'), net.fetcher);
+  assert.equal(page.status, 415);
+  const refused = await builderFetchBridge(ask('http://127.0.0.1/robots.txt', 'feed'), net.fetcher);
+  assert.equal(refused.status, 403);
 });
