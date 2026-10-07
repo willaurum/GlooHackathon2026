@@ -129,7 +129,7 @@ Many churches show a calendar from another service on their site. Forest Baptist
 
 ## Testing
 
-- **Made-up church sites** live in `backend/tests/fixtures/builder/`, with the full set (including a React site) in the separate `synthetic-church-sites` repo and hosted at https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site. Every name, address, phone (555-01xx) and email (example.org) is fictional.
+- **Made-up church sites** live in `backend/tests/fixtures/builder/`, with the complete runnable published set (including the React bundle, data, styles and bulletin image) checked into [`test/synthetic-sites`](../test/synthetic-sites/README.md) and hosted at https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site. Every name, address, phone (555-01xx) and email (example.org) is fictional.
   - **Cedar Hollow:** the happy path. Clean, consistent information.
   - **Harborlight:** the hard path. Two phone numbers, three different service times (home page, news post, bulletin image), no street address, no email, five spellings of the name.
   - **Harvest Point (snappage-like):** shaped like a site on a hosted site builder: dropdown menus with label-only parents and a mobile copy, a sitemap of `http://` addresses, 12 daily posts, robots.txt with `Crawl-delay` and `Disallow: /assets/*`, giving, sign-ups, a livestream and videos on other services, an on-page form with a hidden token and a search box, Elders and Deacons lists, `Dr.`/`Rev.` titles, a role wrapped over two lines, "9:00 & 11:00 am", "Sunday, October 27h", a theme stylesheet on another host, and hidden instructions. Its answer key (`expected.json` `site`) also lists the menu, links by kind, forms and media.

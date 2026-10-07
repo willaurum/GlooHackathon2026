@@ -107,6 +107,31 @@ class CustomizeTests(ChurchTestCase):
         files = self.client.get(self.base + '/site.json').json()
         self.assertEqual(files['site']['layout']['hidden_pages'], ['prayer'])
 
+    def test_removing_an_event_removes_its_calendar_entries_and_undo_restores_them(self):
+        with builder._draft_lock:
+            draft = builder._load(self.base.rsplit('/', 1)[-1])
+            draft['json_content']['events'] = [{'name': 'Choir Practice', 'when': 'Wednesday 7 PM'}]
+            draft['json_content']['calendar'] = [
+                {'title': 'Choir Practice', 'date': '2026-10-14', 'time': '7:00 PM'},
+                {'title': 'Choir Practice', 'date': '2026-10-21', 'time': '7:00 PM'},
+                {'title': 'Family Lunch', 'date': '2026-10-18', 'time': '12:00 PM'},
+            ]
+            builder._save(draft)
+        before = self.site()
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            removed = self.ask('Remove Choir Practice')
+        self.assertEqual(removed.status_code, 200, removed.text)
+        after = self.site()
+        self.assertEqual(after['church']['events'], [])
+        self.assertEqual([event['title'] for event in after['events']], ['Family Lunch'])
+        downloaded = self.client.get(self.base + '/church.json').json()
+        self.assertEqual(downloaded['events'], [])
+        self.assertEqual([event['title'] for event in downloaded['calendar']], ['Family Lunch'])
+        self.assertEqual(self.client.post(self.base + '/customize/undo').status_code, 200)
+        restored = self.site()
+        self.assertEqual(restored['church']['events'], before['church']['events'])
+        self.assertEqual(restored['events'], before['events'])
+
     def test_the_headline_at_the_top_of_home(self):
         # Ben's test case: the wording to replace contains "to", and the new wording is the last quoted part.
         with mock.patch.object(builder, '_ai_available', return_value=False):

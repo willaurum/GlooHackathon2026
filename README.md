@@ -2,13 +2,13 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-Tekton is the base church-site template for a future Agentic Website Builder. The Agentic Website Builder is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton builds church sites from a website, uploaded materials, saved JSON files or answers to questions. Open `#/new` to import, review, customize and preview a site, then create the church with an individual Owner account. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
 - **Serve**: browse ministry teams, see where volunteers are needed, match a member to a team, and review requests from the website chat.
 - **Sermon Notes**: sermons are transcribed on Cloudflare and highlighted (Bible quotes, current events, stories), Bible references open the passage from YouVersion, and questions are answered only from the transcript, with timestamps.
-- **Calendar**: church events and services, with optional AI summaries.
+- **Calendar**: church events and services, with month, category and search filters.
 - **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and staff-managed Stripe setup.
 - **Prayer map**: the countries a church prays for, with dated updates from the field and real news.
 
@@ -270,7 +270,7 @@ node --test api/test/churches.test.mjs frontend/src/church.test.js
 node api/test/sitewide.e2e.mjs                        # both APIs running locally; see the comment at the top
 ```
 
-`api/test/sitewide.e2e.mjs` initializes two made-up churches through localhost-only internal fixtures and checks that public signup stays disabled, staff-only routes need that church session, one church cannot read or change another, and requests with no church still go to Grace Community. Run `api-giving/test/local-worker.mjs` from `api-giving/`, set `GIVING=http://127.0.0.1:8803` and `FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches`, and provide the church API at `API` with its `GIVING` binding connected to the adapter.
+`api/test/sitewide.e2e.mjs` checks public signup and required Owner details, then initializes two made-up churches through localhost-only internal fixtures and checks that staff-only routes need that church session, one church cannot read or change another, and requests with no church still go to Grace Community. Run `api-giving/test/local-worker.mjs` from `api-giving/`, set `GIVING=http://127.0.0.1:8803` and `FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches`, and provide the church API at `API` with its `GIVING` binding connected to the adapter.
 
 ## Keys and access
 

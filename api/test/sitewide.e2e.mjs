@@ -3,7 +3,7 @@
 //   api:        a church API on API (default http://localhost:8789) that can reach the giving Worker
 //   Set GIVING=http://127.0.0.1:8803 and FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches.
 //   node api/test/sitewide.e2e.mjs
-// Uses made-up churches only. Public church signup is disabled.
+// Uses made-up churches only. Public signup creates an individual Owner account.
 const API = process.env.API || 'http://localhost:8789';
 const GIVING = process.env.GIVING || 'http://localhost:8799';
 let failures = 0;
@@ -31,9 +31,12 @@ async function fixtureChurch(name) {
   return data;
 }
 
-console.log('public signup disabled; initialize two internal church fixtures');
-const registration = await call(GIVING, 'POST', '/api/churches', { name: 'Forbidden signup' });
-check(registration.status === 403, 'public church signup stays disabled');
+console.log('public signup; initialize two internal church fixtures');
+const registration = await call(GIVING, 'POST', '/api/churches', { name: 'Signup Chapel ' + suffix,
+  city: 'Testville', ownerName: 'Alex Example', ownerEmail: 'owner@example.org', password: 'a long staff password' });
+check(registration.status === 201 && registration.data.token, 'public signup creates the church Owner');
+const invalidRegistration = await call(GIVING, 'POST', '/api/churches', { name: 'Incomplete signup' });
+check(invalidRegistration.status === 400, 'signup still validates the required Owner details');
 const a = await fixtureChurch('Hope Chapel ' + suffix);
 const b = await fixtureChurch('River Church ' + suffix);
 const A = '/api/churches/' + a.slug, B = '/api/churches/' + b.slug;
