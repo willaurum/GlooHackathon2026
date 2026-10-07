@@ -112,7 +112,7 @@ const matches = (routes: Route[], method: string, path: string) => routes.some((
 const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/(health|church|info|ministries|events|chat\/status|ai\/status|ollama\/status|regions|news)$/],
 	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
-	['GET', /^\/api\/verse$/],
+	['GET', /^\/api\/verse(\/versions)?$/],
 	['GET', /^\/api\/blog(?:\/(categories|\d+))?$/],
 	['GET', /^\/api\/events\/\d+$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],

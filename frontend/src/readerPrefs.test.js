@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_PREFS, PREFS_KEY, TEXT_SIZES, askPlaceholder, canStep, clampSize, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
+import { DEFAULT_PREFS, PREFS_KEY, TEXT_SIZES, askPlaceholder, canStep, clampSize, cleanVersion, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
 
 const memory = (init = {}) => {
   const data = { ...init };
@@ -32,16 +32,32 @@ test('the default transcript size is bigger than the old 15px', () => {
 test('prefs round-trip through storage', () => {
   const s = memory();
   assert.deepEqual(readPrefs(s), DEFAULT_PREFS);
-  assert.equal(writePrefs(s, { size: 3, timestamps: false }), true);
-  assert.deepEqual(JSON.parse(s.data[PREFS_KEY]), { size: 3, timestamps: false });
-  assert.deepEqual(readPrefs(s), { size: 3, timestamps: false });
+  assert.equal(writePrefs(s, { size: 3, timestamps: false, version: '111' }), true);
+  assert.deepEqual(JSON.parse(s.data[PREFS_KEY]), { size: 3, timestamps: false, version: '111' });
+  assert.deepEqual(readPrefs(s), { size: 3, timestamps: false, version: '111' });
+});
+
+test('the Bible version is remembered next to text size and timestamps', () => {
+  const s = memory({ [PREFS_KEY]: '{"size":2,"timestamps":false}' });
+  // Prefs saved before the version picker keep their settings and get the default version.
+  assert.deepEqual(readPrefs(s), { size: 2, timestamps: false, version: '' });
+  writePrefs(s, { ...readPrefs(s), version: 'kjv' });
+  assert.deepEqual(readPrefs(s), { size: 2, timestamps: false, version: 'kjv' });
+  writePrefs(s, { ...readPrefs(s), version: '' });
+  assert.equal(readPrefs(s).version, '');
+});
+
+test('only version ids the API uses are kept', () => {
+  for (const v of ['3034', '1', 'web', 'kjv']) assert.equal(cleanVersion(v), v);
+  for (const v of [3034, '../x', '3034/passages', 'WEB ', '1234567', '', null, undefined, {}, 'a'.repeat(9)]) assert.equal(cleanVersion(v), '');
+  assert.equal(readPrefs(memory({ [PREFS_KEY]: '{"version":"<script>"}' })).version, '');
 });
 
 test('junk or missing storage gives the defaults', () => {
   assert.deepEqual(readPrefs(memory({ [PREFS_KEY]: '{not json' })), DEFAULT_PREFS);
   assert.deepEqual(readPrefs(memory({ [PREFS_KEY]: '42' })), DEFAULT_PREFS);
   assert.deepEqual(readPrefs(memory({ [PREFS_KEY]: '{"size":"big","timestamps":"no"}' })), DEFAULT_PREFS);
-  assert.deepEqual(readPrefs(memory({ [PREFS_KEY]: '{"size":40}' })), { size: TEXT_SIZES.length - 1, timestamps: true });
+  assert.deepEqual(readPrefs(memory({ [PREFS_KEY]: '{"size":40}' })), { size: TEXT_SIZES.length - 1, timestamps: true, version: '' });
   assert.deepEqual(readPrefs(undefined), DEFAULT_PREFS);
   assert.deepEqual(readPrefs({ getItem() { throw new Error('denied'); } }), DEFAULT_PREFS);
   assert.equal(writePrefs({ setItem() { throw new Error('quota'); } }, DEFAULT_PREFS), false);

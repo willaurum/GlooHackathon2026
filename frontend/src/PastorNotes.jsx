@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, apiHeaders, apiUrl, getApiKey, setApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
-import { askPlaceholder, canStep, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
-import { fetchVerse, referenceParts } from './verses.js';
+import { askPlaceholder, canStep, cleanVersion, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
+import { fetchVerse, fetchVersions, pickVersion, referenceParts, versionGroups, versionLabel } from './verses.js';
 import { noteErrorMessage } from './noteErrors.js';
 
 const pending = note => note.status === 'queued' || note.status === 'processing';
@@ -76,15 +76,15 @@ function NewNote({ onCreated }) {
 
 const BIBLE_CATS = new Set(['bible_quote', 'bible_paraphrase']);
 
-// The passage a highlight points at, loaded from YouVersion when tapped.
-function VerseCard({ reference, onClose }) {
+// The passage a highlight points at, loaded from YouVersion when tapped, in the reader's Bible version.
+function VerseCard({ reference, version, onClose }) {
   const [verse, setVerse] = useState(null), [error, setError] = useState('');
   useEffect(() => {
     let live = true;
     setVerse(null); setError('');
-    fetchVerse(reference).then(v => live && setVerse(v), err => live && setError(err.message));
+    fetchVerse(reference, version).then(v => live && setVerse(v), err => live && setError(err.message));
     return () => { live = false; };
-  }, [reference.usfm]);
+  }, [reference.usfm, version]);
   return <div className="verse-card" role="region" aria-label={reference.human}>
     <div className="verse-head">
       <b>{verse?.reference || reference.human}</b>
@@ -94,6 +94,7 @@ function VerseCard({ reference, onClose }) {
     {error ? <p className="pn-error">{error}</p>
       : verse ? <>
           <p className="verse-text">{verse.text}</p>
+          {verse.fallback && <p className="verse-note">The version you picked could not be loaded, so this is the {verse.version.title}.</p>}
           <div className="verse-foot">
             <small>{verse.version.title}{verse.version.copyright ? ', ' + verse.version.copyright : ''}</small>
             <a href={verse.link} target="_blank" rel="noreferrer">Read on YouVersion</a>
@@ -203,21 +204,50 @@ function SermonPicker({ notes, current, onPick }) {
   </div>;
 }
 
-// A- / A+ and the timestamps switch.
+// The Bible versions to offer, loaded once per page.
+function useBibleVersions() {
+  const [list, setList] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetchVersions().then(l => live && setList(l));
+    return () => { live = false; };
+  }, []);
+  return list;
+}
+
+// Which Bible translation passages open in. Picking the site's default saves '' so a later default change applies.
+function VersionPicker({ prefs, setPrefs }) {
+  const list = useBibleVersions(), id = useId();
+  if (!list) return null;
+  const choose = value => setPrefs(p => ({ ...p, version: value === list.default ? '' : cleanVersion(value) }));
+  return <label className="field pn-version" htmlFor={id}>
+    <span>Bible version</span>
+    <select id={id} value={pickVersion(list, prefs.version)} onChange={e => choose(e.target.value)}>
+      {versionGroups(list).map(([name, versions]) => <optgroup key={name} label={name}>
+        {versions.map(v => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+      </optgroup>)}
+    </select>
+  </label>;
+}
+
+// A- / A+, the timestamps switch and the Bible version.
 function ReaderControls({ prefs, setPrefs, disabled }) {
   const step = delta => setPrefs(p => ({ ...p, size: stepSize(p.size, delta) }));
-  return <div className="pn-controls" role="group" aria-label="Reading options">
-    <button type="button" className="pn-ctl" aria-label="Smaller text" title="Smaller text" disabled={disabled || !canStep(prefs.size, -1)} onClick={() => step(-1)}>
-      <span aria-hidden="true">A<span className="pn-ctl-sign">−</span></span>
-    </button>
-    <button type="button" className="pn-ctl pn-ctl-big" aria-label="Larger text" title="Larger text" disabled={disabled || !canStep(prefs.size, 1)} onClick={() => step(1)}>
-      <span aria-hidden="true">A<span className="pn-ctl-sign">+</span></span>
-    </button>
-    <button type="button" className="pn-ctl pn-ctl-ts" aria-pressed={prefs.timestamps} disabled={disabled}
-      onClick={() => setPrefs(p => ({ ...p, timestamps: !p.timestamps }))}>
-      <Icon name="clock" size={16} /><span>Timestamps</span>
-    </button>
-  </div>;
+  return <>
+    <div className="pn-controls" role="group" aria-label="Reading options">
+      <button type="button" className="pn-ctl" aria-label="Smaller text" title="Smaller text" disabled={disabled || !canStep(prefs.size, -1)} onClick={() => step(-1)}>
+        <span aria-hidden="true">A<span className="pn-ctl-sign">−</span></span>
+      </button>
+      <button type="button" className="pn-ctl pn-ctl-big" aria-label="Larger text" title="Larger text" disabled={disabled || !canStep(prefs.size, 1)} onClick={() => step(1)}>
+        <span aria-hidden="true">A<span className="pn-ctl-sign">+</span></span>
+      </button>
+      <button type="button" className="pn-ctl pn-ctl-ts" aria-pressed={prefs.timestamps} disabled={disabled}
+        onClick={() => setPrefs(p => ({ ...p, timestamps: !p.timestamps }))}>
+        <Icon name="clock" size={16} /><span>Timestamps</span>
+      </button>
+    </div>
+    <VersionPicker prefs={prefs} setPrefs={setPrefs} />
+  </>;
 }
 
 // Question, answer and error for "Ask about this sermon".
@@ -273,7 +303,7 @@ function Transcript({ segments, bySegment, activeCats, prefs }) {
           </span>;
         })}</span>}
         <b className="pn-ts">{s.timestamp}</b> {s.text}
-        {openVerse?.key.startsWith(s.idx + ':') && <VerseCard reference={openVerse.ref} onClose={() => setOpenVerse(null)} />}
+        {openVerse?.key.startsWith(s.idx + ':') && <VerseCard reference={openVerse.ref} version={prefs.version} onClose={() => setOpenVerse(null)} />}
       </li>;
     })}</ol>
   </article>;
