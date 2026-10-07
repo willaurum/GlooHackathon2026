@@ -190,15 +190,15 @@ cd frontend && npm test
 - **Copying images** to the church's own storage: images stay on the old site, so they disappear if that site goes away.
 - **Repeating events from page text** are only found by the AI reader; without it, only dated listings, iCal and JSON-LD events are found.
 - **Transcribing sermons on import.** Imported YouTube sermons can be transcribed from Sermon Notes in one step, but nothing is transcribed automatically.
-- **Provisioning:** how a builder draft becomes a real church now that public sign-up is off. For example, a platform key or an invite code.
+- **Provisioning:** anyone can create a church from a finished draft (no invite code), limited per IP and per hour.
 
 ### Start from site JSON files
 
 On `#/new`, choose **Start from JSON files**. Upload the versioned `church.json` and `site.json` from PR #102, or legacy `church.json` (with `info`) and the optional `ministries.json`, `events.json`, `builder.json` or `regions.json`, or the combined JSON from **Download site files (JSON)**. Uploads may total at most 10 MB; the compact site data sent to the API must fit within 2 MB. The public `POST /api/builder/drafts/json` uses the usual import limits and validates through `builder_export.load()`; it does not crawl or call AI. Version 1.0 headers and evidence are validated; newer unsupported versions and overlapping sections are rejected. Versioned source evidence remains available in the preview.
 
-The loaded draft goes straight to Review, preserves all supplied content in the site preview, and creates a church through the existing invite-code and Owner-account flow. Use Ask Tekton in the preview, or change the files and import again, to edit before launch; Church setup remains available after launch. Plain-word extraction edits (`/edits`) are unavailable for JSON drafts. Draft expiry and retrying a failed apply work as usual.
+The loaded draft goes straight to Review, preserves all supplied content in the site preview, and creates a church through the existing Owner-account flow. Use Ask Tekton in the preview, or change the files and import again, to edit before launch; Church setup remains available after launch. Plain-word extraction edits (`/edits`) are unavailable for JSON drafts. Draft expiry and retrying a failed apply work as usual.
 
-Offline verification: `python -m unittest backend.tests.test_builder_json_import` runs the local giving adapter (Node 24 and `api-giving` dependencies required) on an ephemeral port with a generated, test-only invite code. The test checks the real Worker registry lookup and Owner-token gate before applying with its church headers. It skips the integration case if Node or adapter dependencies are missing.
+Offline verification: `python -m unittest backend.tests.test_builder_json_import` runs the local giving adapter (Node 24 and `api-giving` dependencies required) on an ephemeral port. The test checks the real Worker registry lookup and Owner-token gate before applying with its church headers. It skips the integration case if Node or adapter dependencies are missing.
 
 ### Imported site display and page editing
 

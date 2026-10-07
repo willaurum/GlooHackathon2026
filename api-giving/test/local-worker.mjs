@@ -12,7 +12,6 @@ env.STRIPE_KEY_ENCRYPTION_KEY = Buffer.from(crypto.getRandomValues(new Uint8Arra
 env.STRIPE_API_BASE = 'http://127.0.0.1:12111';
 env.ALLOWED_ORIGIN = 'http://localhost:5199';
 env.PUBLIC_ORIGIN = 'http://127.0.0.1:8803';
-if (process.env.TEKTON_INVITE_CODES) env.TEKTON_INVITE_CODES = process.env.TEKTON_INVITE_CODES;
 if (process.env.PLATFORM_KEY) env.PLATFORM_ADMIN_KEY = process.env.PLATFORM_KEY;
 function namespace(Type) {
   const instances = new Map();
