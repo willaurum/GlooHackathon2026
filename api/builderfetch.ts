@@ -33,7 +33,7 @@ const MAX_REDIRECTS = 5;
 const FETCH_TIMEOUT_MS = 10_000;
 const DNS_TIMEOUT_MS = 3_000;
 const DOH_URL = 'https://cloudflare-dns.com/dns-query';
-const USER_AGENT = 'TektonBuilder/0.1 (+church site builder)';
+const USER_AGENT = 'Tekton/0.1 (+church website import)';
 // Names that only mean something inside a network.
 const LOCAL_SUFFIXES = ['localhost', 'local', 'internal', 'intranet', 'lan', 'home', 'corp', 'private', 'arpa', 'test', 'invalid', 'example'];
 

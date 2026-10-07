@@ -10,7 +10,7 @@ import time
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
 
-USER_AGENT = 'TektonBuilder'
+USER_AGENT = 'Tekton'
 MAX_SITEMAPS = 5
 MAX_SITEMAP_URLS = 2000
 MAX_POSTS = 3
@@ -113,7 +113,7 @@ MAX_CRAWL_DELAY = 10.0
 
 
 class Robots:
-    """robots.txt rules for our user agent (RFC 9309). The group naming TektonBuilder applies, else the '*' group;
+    """robots.txt rules for our user agent (RFC 9309). The group naming Tekton applies, else the '*' group;
     rules use '*' and '$' wildcards, the longest matching rule wins and Allow wins a tie. `Crawl-delay` is read
     from the same group. With no robots.txt (missing or 4xx), everything is allowed; `Robots.unreachable()`
     (a 5xx or network error) disallows everything, as RFC 9309 requires."""

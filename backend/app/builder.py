@@ -648,7 +648,7 @@ def _http_fetch_bytes(url):
         if not content_type.startswith('image/') or len(data) > MAX_IMAGE_BYTES:
             raise ValueError('not a small image')
         return content_type, data
-    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
+    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'Tekton/0.1'}) as client:
         response = client.get(url)
         response.raise_for_status()
         content_type = response.headers.get('content-type', '').split(';')[0]
@@ -889,7 +889,7 @@ def _http_fetch(url, kind='page'):
         except LookupError:
             text = data.decode('utf-8', errors='replace')
         return final_url, content_type, text[:MAX_PAGE_BYTES]
-    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
+    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'Tekton/0.1'}) as client:
         response = client.get(url)
         hops = 0
         while response.is_redirect and hops < 5:

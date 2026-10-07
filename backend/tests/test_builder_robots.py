@@ -28,7 +28,7 @@ class RobotsRuleTests(unittest.TestCase):
 
     def test_our_group_replaces_the_star_group(self):
         text = ('User-agent: OtherBot\nDisallow: /\n\nUser-agent: *\nDisallow: /\n\n'
-                'User-agent: TektonBuilder\nUser-agent: SomethingElse\nDisallow: /members\nCrawl-delay: 1.5\n')
+                'User-agent: Tekton\nUser-agent: SomethingElse\nDisallow: /members\nCrawl-delay: 1.5\n')
         robots = Robots(text)
         self.assertTrue(robots.allowed(SITE + '/about'))
         self.assertFalse(robots.allowed(SITE + '/members/list'))

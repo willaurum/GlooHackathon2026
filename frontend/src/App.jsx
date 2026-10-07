@@ -120,15 +120,15 @@ function BuilderPreview() {
     const controller = new AbortController();
     let id;
     try { id = sessionStorage.getItem('tekton-new-draft'); } catch { /* Storage may be unavailable. */ }
-    if (!id) setError('Open the builder and import your website to preview your site.');
+    if (!id) setError('Open Tekton and import your website to preview your site.');
     else draftApi('/' + encodeURIComponent(id) + '/site', { signal: controller.signal })
       .then(data => { if (live) setSnapshot(data); })
-      .catch(err => { if (live) setError(err.status === 404 ? 'This draft has expired or could not be found. Start a new import in the builder.' : err.message); });
+      .catch(err => { if (live) setError(err.status === 404 ? 'This draft has expired or could not be found. Start a new import in Tekton.' : err.message); });
     return () => { live = false; controller.abort(); stopApiPreview(); };
   }, []);
   if (!snapshot) return <div className="standalone-builder">
     <header><Brand /></header>
-    <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to the builder</a></main>
+    <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to Tekton</a></main>
   </div>;
   return <SiteApp snapshot={snapshot} />;
 }
@@ -350,7 +350,7 @@ function SiteApp({ snapshot }) {
 
   return <ChurchContext.Provider value={church}>
     <div className={'app' + (snapshot ? ' site-preview' : '')}>
-      {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to the builder</a></div>}
+      {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to Tekton</a></div>}
       <Sidebar route={route} go={go} savedCount={savedCount} />
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">
