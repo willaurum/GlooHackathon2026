@@ -983,6 +983,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .beacon:hover .beacon-core,.beacon.selected .beacon-core{transform:scale(1.25)}
 .beacon-label{left:24px;top:50%;transform:translateY(-50%);white-space:nowrap;background:#fff;color:var(--green-700);font:700 12px var(--font);padding:3px 8px;border-radius:12px;box-shadow:0 1px 4px #00000026}
 .beacon.selected .beacon-label{background:var(--green-700);color:#fff}.beacon.selected .beacon-ring{background:var(--green-700)}
+.compact-labels .beacon:not(.selected) .beacon-label{display:none}
 @media (prefers-reduced-motion: reduce){.beacon-ring{animation:none;opacity:0}}
 /* Region details: updates from the field and news side by side. */
 .source-columns{display:grid;grid-template-columns:1fr 1fr;margin-top:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}

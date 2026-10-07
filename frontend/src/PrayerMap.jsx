@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
 import { SetUpThis } from './ChurchStates.jsx';
 import countryBorders from './data/countryBorders.json';
+import { compactLabels } from './prayerMapLabels.js';
 
 const dateLabel = iso => new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -19,6 +20,18 @@ function beaconIcon(country, selected) {
     iconSize: [18, 18],
     iconAnchor: [9, 9],
   });
+}
+
+// Marks the map 'compact-labels' when its country labels would overlap (see prayerMapLabels.js).
+function LabelDensity() {
+  const map = useMap();
+  useEffect(() => {
+    const update = () => map.getContainer().classList.toggle('compact-labels', compactLabels(map.getZoom(), map.getContainer().clientWidth));
+    update();
+    map.on('zoomend resize', update);
+    return () => { map.off('zoomend resize', update); };
+  }, [map]);
+  return null;
 }
 
 function FitToBorders({ features }) {
@@ -101,6 +114,7 @@ export default function PrayerMap() {
           maxNativeZoom={16}
         />
         <FitToBorders features={borderFeatures} />
+        <LabelDensity />
         <GeoJSON
           key={`${borderFeatures.length}-${selectedCode}`}
           data={{ type: 'FeatureCollection', features: borderFeatures }}
