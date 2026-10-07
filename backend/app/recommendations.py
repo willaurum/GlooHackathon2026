@@ -40,18 +40,23 @@ Consider interests, experience, preferred ways of serving, availability, and onb
 The server has filtered the catalog by structured availability, service, frequency, requirements, and shift capacity.
 Only the supplied shifts may be suggested. Never invent additional shifts or recommend an excluded shift.
 Use the supplied serving preferences: availability, preferred_service, frequency, earliest_start_date, and unavailable_requirements.
-Structured availability is authoritative; do not treat an interest paragraph as verified schedule data.
+Structured availability (preferences.availability) is what the server filtered on; it is not a verified schedule either.
+The visitor may type their availability instead, in the description as "General availability: ..." (also sent as stated_availability).
+That is the visitor's stated availability: acknowledge it in your own words (for example "You mentioned twice a month on Sunday mornings"),
+use it to choose teams, and say to confirm exact shifts with the team. Never say their availability is blank, missing or unspecified when
+stated_availability or a "General availability" line is present, and never mention internal names such as structured availability or preferences.
 Always include the supplied confirmations in your considerations; these are not verified qualifications.
-Blank or null preferences mean unspecified, not unlimited availability. Preferred service means the service they want to serve at.
+Blank or null preferences mean unspecified, not unlimited availability, unless the visitor typed their availability.
+Preferred service means the service they want to serve at.
 Do not assume that a dated shift repeats weekly or monthly; ask them to confirm recurring opportunities with the team.
 Respect explicit restrictions; do not recommend a schedule the visitor explicitly cannot attend.
 Do not infer skills, identity, availability, or preferences they did not share.
 In each reason, explain the fit using their description and catalog facts.
 In considerations, explain requirements, uncertainties, and details to confirm with the team.
-If availability is unspecified, say to confirm the schedule; never claim it fits.
+If they gave no availability at all (no structured availability and no typed availability), say to confirm the schedule; never claim it fits.
 The goal is to help the visitor contact a person, not complete a placement application.
 If answers are brief or vague, offer a few teams to explore without claiming a personalized fit or asking them to fill out more questions.
-General availability in the answers is context for your suggestions, not a verified schedule. Leave exact scheduling and onboarding to a conversation with the ministry lead.
+Typed general availability guides your suggestions but is not a verified schedule. Leave exact scheduling and onboarding to a conversation with the ministry lead.
 If no ministry fits, return no matches and explain why in summary. Do not force three results.
 Do not invent ministries, contacts, or facts. Do not include contact details in generated text;
 the application supplies verified catalog contacts separately. Address the visitor as 'you'.
@@ -68,6 +73,15 @@ MATCH_MODEL = 'gloo-anthropic-claude-haiku-4.5'
 def match_model(provider, model):
     """The model to use for recommendations: GLOO_MATCH_MODEL (or the fast default) on Gloo."""
     return (os.environ.get('GLOO_MATCH_MODEL') or MATCH_MODEL) if provider == 'gloo' else model
+
+
+GENERAL_AVAILABILITY = re.compile(r'^\s*General availability:\s*(.+?)\s*$', re.IGNORECASE | re.MULTILINE)
+
+
+def stated_availability(description):
+    """What the visitor typed under General availability on the Find a place form (Serve.jsx), or ''."""
+    found = GENERAL_AVAILABILITY.search(description or '')
+    return found.group(1)[:500] if found else ''
 
 
 THINKING = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
@@ -116,7 +130,8 @@ def recommend(description, ministries, clients=None, preferences=None):
         item['confirmations'] = available[item['id']]['confirmations']
     messages = [
         {'role': 'system', 'content': INSTRUCTIONS},
-        {'role': 'user', 'content': json.dumps({'description': description, 'preferences': preferences or {}, 'ministries': catalog})},
+        {'role': 'user', 'content': json.dumps({'description': description, 'stated_availability': stated_availability(description),
+                                                'preferences': preferences or {}, 'ministries': catalog})},
     ]
     try:
         for provider, model, extra_body, client in clients:

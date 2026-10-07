@@ -345,10 +345,18 @@ def _create_tables(seed=True):
     statements.append(('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, location TEXT NOT NULL, ministry_name TEXT, description TEXT NOT NULL, ai_summary TEXT)', ()))
     events_file = Path(__file__).with_name('events.json')
     if events_file.exists():
+        # Each sample event is added once, with a marker per event: an event staff delete stays deleted
+        # across container restarts, and an event added to events.json later still reaches the demo church.
+        # It keeps its id unless staff events already took it, and is skipped if the same event is there.
         for event in json.loads(events_file.read_text(encoding='utf-8')):
-            statements.append(('INSERT OR IGNORE INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
-                 event.get('ministry_name'), event['description'], event.get('ai_summary'))))
+            marker = f"event_seeded:{event['id']}"
+            statements.append(('INSERT INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) '
+                               'SELECT CASE WHEN EXISTS (SELECT 1 FROM events WHERE id = ?) THEN NULL ELSE ? END, ?, ?, ?, ?, ?, ?, ?, ? '
+                               'WHERE NOT EXISTS (SELECT 1 FROM config WHERE key = ?) '
+                               'AND NOT EXISTS (SELECT 1 FROM events WHERE title = ? AND date = ?)',
+                (event['id'], event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
+                 event.get('ministry_name'), event['description'], event.get('ai_summary'), marker, event['title'], event['date'])))
+            statements.append(("INSERT OR IGNORE INTO config VALUES (?, 'true')", (marker,)))
     statements += [("INSERT OR IGNORE INTO ministries VALUES (?, ?)", (m['id'], json.dumps(m))) for m in ministries]
     church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
     statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
@@ -798,6 +806,11 @@ def update_event_summary(event_id, ai_summary):
     return one("""UPDATE events SET ai_summary = ? WHERE id = ?
         RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
                (ai_summary, event_id))
+
+
+def delete_event(event_id):
+    """Remove one calendar event. True if it existed."""
+    return one("DELETE FROM events WHERE id = ? RETURNING id", (event_id,)) is not None
 
 
 def create_event(title, category, date, time, location, description, ministry_name=None, ai_summary=None):

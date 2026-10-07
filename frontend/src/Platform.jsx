@@ -16,9 +16,10 @@ export default function Platform() {
 
   useEffect(() => {
     let live = true;
+    // No request until there is a key: a keyless call can only fail (a 401 in the console).
+    if (!key) { setState('ask'); return () => { live = false; }; }
     setState('loading');
-    const headers = key ? { Authorization: 'Bearer ' + key } : {};
-    gapi('/api/platform/churches', { headers }).then(res => {
+    gapi('/api/platform/churches', { headers: { Authorization: 'Bearer ' + key } }).then(res => {
       if (!live) return;
       setChurches(Array.isArray(res.churches) ? res.churches : []);
       setErr('');
@@ -28,8 +29,8 @@ export default function Platform() {
       if (e.status === 404) return setState('off');
       if (e.status === 401 || e.status === 429) {
         // A wrong key is forgotten, so the next visit asks again.
-        if (key && e.status === 401) setPlatformKey('');
-        setErr(key ? friendly(e) : '');
+        if (e.status === 401) setPlatformKey('');
+        setErr(friendly(e));
         return setState('ask');
       }
       setErr(friendly(e));

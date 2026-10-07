@@ -1,5 +1,6 @@
 """Client for communicating with any OpenAPI / OpenAI compatible or Ollama AI service."""
 
+import datetime
 import os
 import re
 import time
@@ -373,6 +374,26 @@ async def generate_text(
     return result_text
 
 
+def event_timing(event_date: str, today: datetime.date | None = None) -> str:
+    """One line for the summary prompt that says today's date, the event's date, and whether it is past,
+    today or ahead, so the model uses the right tense and never calls a past event "this Sunday"."""
+    today = today or datetime.date.today()
+    today_text = f"Today is {today:%A, %B} {today.day}, {today.year}."
+    try:
+        day = datetime.date.fromisoformat(str(event_date)[:10])
+    except ValueError:
+        return today_text
+    when = f"{day:%A, %B} {day.day}, {day.year}"
+    gap = (day - today).days
+    if gap < 0:
+        status = f"The event was on {when}, {-gap} day{'s' if gap != -1 else ''} ago: it has already happened."
+    elif gap == 0:
+        status = f"The event is today, {when}."
+    else:
+        status = f"The event is on {when}, {gap} day{'s' if gap != 1 else ''} from now."
+    return f"{today_text} {status}"
+
+
 async def summarize_event(
     title: str,
     category: str,
@@ -382,17 +403,22 @@ async def summarize_event(
     location: str,
     model: str = None,
     client: httpx.AsyncClient = None,
+    today: datetime.date | None = None,
 ) -> str:
     """Send an event prompt to the configured AI endpoint to generate an AI summary.
-    
+
     Compatible with any OpenAPI / OpenAI chat completions endpoint
     as well as native Ollama generate/chat endpoints.
     """
     system_prompt = (
         "You are an editor for a church newsletter. Write a warm, inviting 2-sentence bulletin summary "
-        "of this church event for members and visitors. Output ONLY the summary."
+        "of this church event for members and visitors. Use the tense that fits the dates you are given: "
+        "past tense for an event that has already happened, and future tense for one that is ahead. "
+        "Name the day and date instead of relative words like \"this Sunday\" or \"tomorrow\". "
+        "Output ONLY the summary."
     )
     user_prompt = (
+        f"{event_timing(date, today)}\n"
         f"Church Event: {title}\n"
         f"Category: {category}\n"
         f"When & Where: {date} at {time} in {location}\n"

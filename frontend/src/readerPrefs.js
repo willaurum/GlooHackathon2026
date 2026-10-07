@@ -63,3 +63,16 @@ export function pickCurrent(notes, selectedId) {
   if (selectedId) return notes.find(n => n.id === selectedId) || null;
   return notes.find(n => n.status === 'ready') || notes[0] || null;
 }
+
+/** The sermons someone may pick: staff see every one with its status (to retry or delete a failed one);
+ * everyone else sees only the ones ready to read. */
+export const visibleNotes = (notes, staff) => (staff ? notes : notes.filter(n => n.status === 'ready'));
+
+// Words in a sermon title that say nothing about its topic.
+const TITLE_FILLER = /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|morning|evening|service|sermon|message|test|part|week|jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\b|\d{4}-\d{2}-\d{2}/gi;
+
+/** The Ask box's example question: about the sermon's own title when it names a topic, else a generic one. */
+export function askPlaceholder(title) {
+  const topic = String(title || '').replace(TITLE_FILLER, ' ').replace(/^[\s,.:;#\-–]+|[\s,.:;#\-–]+$/g, '').replace(/\s+/g, ' ').trim();
+  return /[a-z]{3}/i.test(topic) && topic.length <= 60 ? `What was said about ${topic}?` : 'What was the main point of this sermon?';
+}
