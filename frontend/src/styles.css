@@ -36,7 +36,7 @@
 
   --font: 'DM Sans', system-ui, -apple-system, sans-serif;
   --display: 'Manrope', system-ui, -apple-system, sans-serif;
-  --sitenav: 52px;
+  --sitenav: 64px;
   --topbar: 56px;
   --tabbar: 64px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -139,21 +139,21 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .search input { border: 0; outline: none; background: none; font-size: 16px; width: 220px; color: var(--ink); min-width: 0; }
 
 /* ---------- App shell ---------- */
-/* Desktop: two header rows. The first holds the church and the account; the second, the main
-   navigation, stays pinned to the top while the page scrolls. */
-.site-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; height: 64px; padding: 0 40px; background: var(--card); }
-.site-account { display: flex; align-items: center; gap: 12px; flex: none; }
-.site-user { text-align: right; }
-.site-user strong { display: block; font-size: 13px; color: var(--ink); }
-.site-user small { display: block; font-size: 12px; }
+/* Desktop: one top bar, pinned while the page scrolls. The church on the left, the main
+   navigation in the middle, staff sign-in on the right. */
 .site-nav {
-  position: sticky; top: 0; z-index: 20; display: flex; justify-content: center; flex-wrap: wrap; gap: 2px;
-  min-height: var(--sitenav); padding: 0 24px; background: rgb(255 255 255 / .94);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px;
+  height: var(--sitenav); padding: 0 28px; background: rgb(255 255 255 / .94);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line);
 }
+.site-nav-links { display: flex; justify-content: center; flex: 1; min-width: 0; height: 100%; }
+.site-account { display: flex; align-items: center; gap: 10px; flex: none; }
+.site-user { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.site-user strong { font-size: 13px; color: var(--ink); }
+.site-staff { gap: 4px; margin-top: 2px; font-size: 12px; white-space: nowrap; }
+.label-short { display: none; }
 .site-nav-item { position: relative; display: flex; }
-.site-nav-link { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: var(--sitenav); padding: 0 14px; color: var(--muted); font-size: 15px; font-weight: 500; white-space: nowrap; }
+.site-nav-link { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 12px; color: var(--muted); font-size: 15px; font-weight: 500; white-space: nowrap; }
 .site-nav-link:hover, .site-nav-item:focus-within > .site-nav-link { color: var(--ink); }
 .site-nav-link.active { color: var(--green-800); font-weight: 700; }
 /* The current section is underlined, flush with the bar's bottom edge. */
@@ -178,6 +178,18 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 .site-nav-menu button:hover, .site-nav-menu button:focus-visible { background: var(--green-50); color: var(--ink); }
 .site-nav-menu button.active { color: var(--green-800); font-weight: 700; }
 html { scroll-padding-top: calc(var(--sitenav) + 16px); }
+/* Narrower desktops: short labels (Notes, Prayer), so the bar stays one row. */
+@media (max-width: 1360px) {
+  .site-nav { gap: 10px; padding: 0 16px; }
+  .site-nav-link { padding: 0 9px; font-size: 14px; }
+  .label-full { display: none; }
+  .label-short { display: inline; }
+  .site-nav .church-name .church small { display: none; }
+}
+@media (max-width: 1024px) {
+  .site-nav-link { padding: 0 7px; }
+  .site-account .avatar { display: none; }
+}
 .church { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); text-align: left; }
 .church > div { flex: 1; min-width: 0; }
 .church strong, .church small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -193,7 +205,6 @@ html { scroll-padding-top: calc(var(--sitenav) + 16px); }
 .nav-children button:hover { color: var(--ink); background: var(--green-50); }
 .nav-children button.active { color: var(--green-800); font-weight: 700; }
 .avatar { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--sand-100); color: var(--sand-700); border: 3px solid var(--sand-50); box-sizing: border-box; font-size: 12px; font-weight: 700; }
-.demo-pill { padding: 6px 12px; border-radius: 999px; background: var(--green-50); color: var(--green-600); font-size: 12px; }
 .topbar, .tabbar, .menu-sheet, .menu-backdrop { display: none; }
 .content { min-width: 0; }
 main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
@@ -590,10 +601,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
-  .site-header { padding: 0 28px; }
-  .site-nav { padding: 0 12px; }
-  .site-nav-link { padding: 0 10px; font-size: 14px; }
-  .site-user { display: none; }
   main { padding: 32px 28px; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero-art { right: -40px; opacity: .6; }
@@ -601,7 +608,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 @media (max-width: 860px) {
-  .site-header, .site-nav { display: none; }
+  .site-nav { display: none; }
   html { scroll-padding-top: calc(var(--topbar) + 16px); }
   #home-service-times, .visit-section { scroll-margin-top: calc(var(--topbar) + 16px); }
   .topbar {
@@ -927,11 +934,12 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 
 /* ---------- Your church: the church this site is for (no picker; churches do not see each other) ---------- */
 .church-name { margin: 22px 0 16px; }
-/* The church sits at the left of the header in place of a site logo, without a box around it. */
-.site-header .church-name { margin: 0; min-width: 0; }
-.site-header .church-name .church { border: 0; padding: 4px 0; }
-.site-header .church-name .church > div { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 10px; }
-.site-header .church-name .church strong { font-family: var(--display); font-size: 17px; }
+/* The church sits at the left of the top bar in place of a site logo, without a box around it. */
+.site-nav .church-name { margin: 0; flex: 0 1 auto; min-width: 0; max-width: 240px; }
+.site-nav .church-name .church { border: 0; padding: 0; background: transparent; }
+.site-nav .church-name .church > span { width: 32px; height: 32px; font-size: 18px; }
+.site-nav .church-name .church strong { font-family: var(--display); font-size: 16px; }
+@media (max-width: 1024px) { .site-nav .church-name { max-width: 150px; } }
 .church-name .church-staff { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-top: 2px; font-size: 12px; font-weight: 600; }
 .church-name.compact { display: none; margin: 0; }
 .church-link { margin-bottom: 18px; }

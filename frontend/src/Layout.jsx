@@ -15,7 +15,7 @@ export const SECTIONS = [
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips']] },
   { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass' },
   { route: 'about', label: 'About', icon: 'info', children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect']] },
-  { route: 'staff', label: 'Church staff', icon: 'lock', staffOnly: true },
+  { route: 'staff', label: 'Church staff', short: 'Staff', icon: 'lock', staffOnly: true },
 ];
 // The sections this visitor can see: staff-only ones are hidden until staff sign in.
 export const visibleSections = staff => SECTIONS.filter(s => staff || !s.staffOnly);
@@ -40,45 +40,47 @@ export function Avatar() {
   return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
 }
 
-// Desktop header, first row: the church in place of a site logo, and who is signed in.
-export function SiteHeader() {
-  const church = useChurch();
-  const user = identity(church.staff);
-  return <header className="site-header">
-    <ChurchName />
-    <div className="site-account">
-      {church.demo ? <span className="demo-pill">● Demo workspace</span> : church.staff && <span className="demo-pill">● Signed in as staff</span>}
-      <div className="site-user"><strong>{user.name}</strong><small>{user.role}</small></div>
-      <Avatar />
-    </div>
-  </header>;
-}
-
-// Desktop header, second row: the main navigation, pinned to the top while scrolling. A section
-// with sub-pages opens them in a dropdown on hover or keyboard focus; the section itself still opens its first page.
+// Desktop top bar, pinned while scrolling: the church in place of a site logo, the main navigation,
+// and staff sign-in. A section with sub-pages opens them in a dropdown on hover or keyboard focus;
+// the section itself still opens its first page.
 export function SiteNav({ route, go, savedCount }) {
-  const { demo, staff } = useChurch();
+  const church = useChurch();
+  const { demo, staff } = church;
   const current = sectionOf(route);
   // Leave the dropdown once a page is picked (focus would otherwise keep it open).
   const pick = (e, next) => { e.currentTarget.blur(); go(next); };
-  return <nav className="site-nav" aria-label="Main">
-    {visibleSections(staff).map(s => {
-      const kids = childrenFor(s, demo);
-      return <div key={s.route} className={'site-nav-item' + (kids.length > 1 ? ' has-menu' : '')}>
-        <button className={'site-nav-link' + (current === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined}
-          aria-haspopup={kids.length > 1 ? 'true' : undefined} onClick={e => pick(e, s.route)}>
-          {s.label}
-          {s.route === 'serve' && savedCount > 0 && <b className="count">{savedCount}</b>}
-          {kids.length > 1 && <svg className="caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-        </button>
-        {kids.length > 1 && <div className="site-nav-menu">
-          {kids.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={e => pick(e, r)}>
-            {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
-          </button>)}
-        </div>}
-      </div>;
-    })}
-  </nav>;
+  return <header className="site-nav">
+    <ChurchName staffLink={false} />
+    <nav className="site-nav-links" aria-label="Main">
+      {visibleSections(staff).map(s => {
+        const kids = childrenFor(s, demo);
+        return <div key={s.route} className={'site-nav-item' + (kids.length > 1 ? ' has-menu' : '')}>
+          <button className={'site-nav-link' + (current === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined}
+            aria-haspopup={kids.length > 1 ? 'true' : undefined} onClick={e => pick(e, s.route)}>
+            {/* Narrower screens use the short label (Notes, Prayer) so the bar stays one row. */}
+            <span className="label-full">{s.label}</span><span className="label-short">{s.short ?? s.label}</span>
+            {s.route === 'serve' && savedCount > 0 && <b className="count">{savedCount}</b>}
+            {kids.length > 1 && <svg className="caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          </button>
+          {kids.length > 1 && <div className="site-nav-menu">
+            {kids.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={e => pick(e, r)}>
+              {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
+            </button>)}
+          </div>}
+        </div>;
+      })}
+    </nav>
+    <div className="site-account">
+      {/* Who is browsing, with the staff sign-in (or Church setup, once signed in) just below. */}
+      <div className="site-user">
+        <strong>{identity(staff).name}</strong>
+        {!church.missing && <button className="link site-staff" onClick={e => pick(e, 'setup')}>
+          <Icon name="lock" size={13} />{staff ? 'Church setup' : 'Staff sign in'}
+        </button>}
+      </div>
+      <Avatar />
+    </div>
+  </header>;
 }
 
 export function TopBar({ onAsk }) {
