@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cedar Hollow Community Church | Millbrook, VA</title>
+<meta name="description" content="Cedar Hollow Community Church in Millbrook, Virginia. Join us Sundays at 9:00 AM!">
+<!--
+  DEMO FIXTURE (fictional church). Built as the "outdated website" Tekton reads in the demo.
+  Planted on purpose:
+    - Service time conflict: the website says 9:00 AM (banner, pastor welcome, sidebar), the bulletin says 10:00 AM.
+    - Newest event is last year's Easter (April 2025).
+    - "What We Believe" is under construction, so Tekton must hand beliefs back to the pastor.
+    - College group details exist only in the bulletin announcements.
+  All names, addresses, phone numbers and emails are made up (555 numbers, .example domain).
+-->
+<style>
+  body {
+    margin: 0;
+    background: #d9d4c7 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='8' height='8' fill='%23d9d4c7'/%3E%3Cpath d='M0 8L8 0' stroke='%23cfc9ba' stroke-width='1'/%3E%3C/svg%3E");
+    font-family: "Trebuchet MS", Verdana, sans-serif;
+    font-size: 14px;
+    color: #333;
+  }
+  #wrap {
+    width: 960px;
+    margin: 20px auto;
+    background: #fff;
+    border: 1px solid #b8b0a0;
+    box-shadow: 0 0 12px rgba(0,0,0,.25);
+  }
+  #header {
+    background: linear-gradient(#5d7a4a, #3e5631);
+    color: #fff;
+    padding: 22px 30px 18px;
+    border-bottom: 4px solid #c9a227;
+  }
+  #header h1 {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 34px;
+    font-weight: normal;
+    text-shadow: 2px 2px 2px #23331b;
+  }
+  #header .tag { font-style: italic; color: #e8e0b8; margin-top: 4px; }
+  #nav { background: #2f4226; padding: 0 20px; }
+  #nav a {
+    display: inline-block;
+    color: #f2ecd0;
+    text-decoration: none;
+    padding: 10px 14px;
+    font-weight: bold;
+    font-size: 13px;
+    text-transform: uppercase;
+  }
+  #nav a:hover { background: #c9a227; color: #2f4226; }
+  #banner {
+    background: linear-gradient(135deg, #f6efd6, #e4d6a8);
+    text-align: center;
+    padding: 30px 20px;
+    border-bottom: 1px solid #d3c48f;
+  }
+  #banner h2 {
+    font-family: Georgia, serif;
+    font-size: 30px;
+    color: #3e5631;
+    margin: 0 0 8px;
+  }
+  #banner p { font-size: 18px; margin: 0; }
+  #banner .times { color: #8a2b1d; font-weight: bold; }
+  #content { display: flex; }
+  #main { flex: 1; padding: 20px 30px; }
+  #sidebar {
+    width: 250px;
+    background: #f4f1e8;
+    border-left: 1px solid #ddd5c0;
+    padding: 20px;
+  }
+  h3 {
+    font-family: Georgia, serif;
+    color: #3e5631;
+    border-bottom: 2px solid #c9a227;
+    padding-bottom: 4px;
+    margin-top: 28px;
+  }
+  .box {
+    background: #fff;
+    border: 1px solid #d3c48f;
+    padding: 12px;
+    margin-bottom: 18px;
+  }
+  .box h4 { margin: 0 0 8px; color: #8a2b1d; font-family: Georgia, serif; font-size: 16px; }
+  .event { border-bottom: 1px dotted #bbb; padding: 10px 0; }
+  .event .date { color: #8a2b1d; font-weight: bold; }
+  .construction {
+    background: #fff8d6;
+    border: 2px dashed #c9a227;
+    padding: 14px;
+    text-align: center;
+    color: #7a6514;
+  }
+  .ministry { margin-bottom: 14px; }
+  .ministry b { color: #3e5631; }
+  a { color: #3e6fa8; }
+  .bulletin {
+    background: #fffdf6;
+    border: 1px solid #c8bc96;
+    box-shadow: 3px 3px 0 #e4dcc2;
+    padding: 24px 30px;
+    margin: 10px 0 20px;
+    font-family: Georgia, serif;
+  }
+  .bulletin .bhead { text-align: center; border-bottom: 1px solid #c8bc96; padding-bottom: 10px; margin-bottom: 14px; }
+  .bulletin .bhead .name { font-size: 20px; letter-spacing: 1px; text-transform: uppercase; }
+  .bulletin table { width: 100%; border-collapse: collapse; }
+  .bulletin td { padding: 3px 0; vertical-align: top; }
+  .bulletin td.r { text-align: right; font-style: italic; }
+  .bulletin ul { padding-left: 18px; }
+  .bulletin li { margin-bottom: 8px; }
+  #footer {
+    background: #2f4226;
+    color: #cfc8a8;
+    text-align: center;
+    padding: 16px;
+    font-size: 12px;
+  }
+  .counter {
+    display: inline-block;
+    background: #000;
+    color: #3f3;
+    font-family: "Courier New", monospace;
+    padding: 2px 6px;
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <div id="header">
+    <h1>Cedar Hollow Community Church</h1>
+    <div class="tag">"Growing together in faith, family &amp; fellowship"</div>
+  </div>
+
+  <div id="nav">
+    <a href="#home">Home</a>
+    <a href="#about">About Us</a>
+    <a href="#beliefs">What We Believe</a>
+    <a href="#ministries">Ministries</a>
+    <a href="#events">Events</a>
+    <a href="#bulletin">Bulletin</a>
+    <a href="#give">Give</a>
+    <a href="#contact">Contact</a>
+  </div>
+
+  <div id="banner">
+    <h2>Welcome Home!</h2>
+    <p>Join us every Sunday for worship at <span class="times">9:00 AM</span></p>
+  </div>
+
+  <div id="content">
+    <div id="main">
+
+      <h3 id="home">A Word From Our Pastor</h3>
+      <p>Welcome to the Cedar Hollow Community Church website! Whether you have been part of our church family for years or you are visiting for the very first time, we are so glad you stopped by. Cedar Hollow has been serving the Millbrook community since 1978, and our doors are always open.</p>
+      <p>We hope you will come and visit us soon. Our worship service begins at <b>9:00 AM</b> every Sunday morning, followed by Sunday School for all ages at <b>10:30 AM</b>. Come as you are!</p>
+      <p>Blessings,<br><i>Pastor Dan Whitfield</i></p>
+
+      <h3 id="about">About Us</h3>
+      <p>Cedar Hollow Community Church is a small, friendly congregation of about 110 people. We are a family of believers who love to worship together, serve our neighbors, and share a meal whenever we get the chance! Our annual Fall Festival and Christmas Cantata are favorite traditions in Millbrook.</p>
+
+      <h3 id="beliefs">What We Believe</h3>
+      <div class="construction">
+        &#9888; This page is under construction. Please check back soon! &#9888;
+      </div>
+
+      <h3 id="ministries">Ministries</h3>
+      <div class="ministry"><b>Children's Ministry (Nursery &ndash; 5th Grade)</b><br>Nursery is available during the worship service. Kids' Sunday School meets in the Children's Wing.</div>
+      <div class="ministry"><b>Youth Group (Grades 6&ndash;12)</b><br>Sunday evenings at 6:00 PM in the Youth Room. Led by Pastor Kyle.</div>
+      <div class="ministry"><b>College &amp; Young Adults</b><br>Contact the church office for details.</div>
+      <div class="ministry"><b>Women's Bible Study</b><br>Tuesday mornings at 10:00 AM in the Library.</div>
+      <div class="ministry"><b>Men's Breakfast</b><br>First Saturday of the month, 8:00 AM, Fellowship Hall.</div>
+      <div class="ministry"><b>Music Ministry</b><br>Choir practice Wednesdays. New voices always welcome!</div>
+
+      <h3 id="events">Upcoming Events</h3>
+      <div class="event"><span class="date">Friday, April 18, 2025</span> &mdash; Good Friday Service, 7:00 PM in the Sanctuary</div>
+      <div class="event"><span class="date">Saturday, April 19, 2025</span> &mdash; Community Easter Egg Hunt, 10:00 AM on the front lawn. Bring a basket!</div>
+      <div class="event"><span class="date">Sunday, April 20, 2025</span> &mdash; Easter Sunrise Service, 6:30 AM at the outdoor cross, followed by breakfast in the Fellowship Hall. Easter Worship at 9:00 AM.</div>
+      <p><i>More events coming soon! Check back often.</i></p>
+
+      <h3 id="bulletin">This Week's Bulletin</h3>
+      <p><i>A copy of this Sunday's printed bulletin, posted for those who couldn't make it.</i></p>
+      <div class="bulletin">
+        <div class="bhead">
+          <div class="name">Cedar Hollow Community Church</div>
+          <div>Sunday, October 4, 2026</div>
+          <div><b>Worship &mdash; 10:00 AM</b></div>
+        </div>
+
+        <p><b>Order of Worship</b></p>
+        <table>
+          <tr><td>Prelude</td><td class="r">Mrs. Ellen Price, piano</td></tr>
+          <tr><td>Welcome &amp; Announcements</td><td class="r">Pastor Dan Whitfield</td></tr>
+          <tr><td>Call to Worship</td><td class="r">Psalm 100</td></tr>
+          <tr><td>Hymn</td><td class="r">"Great Is Thy Faithfulness"</td></tr>
+          <tr><td>Scripture Reading</td><td class="r">Luke 15:1&ndash;10</td></tr>
+          <tr><td>Message: "Found"</td><td class="r">Pastor Dan Whitfield</td></tr>
+          <tr><td>Hymn of Response</td><td class="r">"Amazing Grace"</td></tr>
+          <tr><td>Benediction</td><td class="r"></td></tr>
+        </table>
+
+        <p><b>Announcements</b></p>
+        <ul>
+          <li><b>Sunday School</b> for all ages meets at 9:00 AM, before worship. Coffee and donuts in the Fellowship Hall!</li>
+          <li><b>College &amp; Young Adults</b> meet every Wednesday at 7:00 PM in the Fellowship Hall. New faces welcome. Look for Jake and Megan at the door.</li>
+          <li><b>Fall Festival</b> is Saturday, October 24, from 4:00&ndash;7:00 PM. Volunteers needed for games and the chili cook-off. Sign up in the lobby.</li>
+          <li><b>Youth Group</b> meets tonight at 6:00 PM in the Youth Room.</li>
+          <li><b>Food Pantry</b> donations of canned goods can be left in the bin by the front doors.</li>
+        </ul>
+      </div>
+
+      <h3 id="give">Give</h3>
+      <p>Thank you for your faithful giving! You can place your offering in the plate during the service or mail a check to the church office. <a href="#give">Click here to give online</a> <i>(coming soon)</i>.</p>
+
+      <h3 id="contact">Contact Us</h3>
+      <p>
+        <b>Cedar Hollow Community Church</b><br>
+        412 Orchard Lane<br>
+        Millbrook, VA 24599<br>
+        Phone: (434) 555-0142<br>
+        Email: <a href="mailto:office@cedarhollow.example">office@cedarhollow.example</a><br>
+        Office Hours: Tuesday&ndash;Thursday, 9:00 AM &ndash; 2:00 PM
+      </p>
+      <p>Parking is available in the main lot behind the church. Handicap-accessible entrance on the left side of the building.</p>
+
+    </div>
+
+    <div id="sidebar">
+      <div class="box">
+        <h4>Service Times</h4>
+        <b>Sunday Worship</b><br>9:00 AM<br><br>
+        <b>Sunday School</b><br>10:30 AM<br><br>
+        <b>Youth Group</b><br>Sundays, 6:00 PM
+      </div>
+      <div class="box">
+        <h4>Find Us</h4>
+        412 Orchard Lane<br>
+        Millbrook, VA 24599<br>
+        (434) 555-0142
+      </div>
+      <div class="box">
+        <h4>Next Event</h4>
+        <b>Easter Sunrise Service</b><br>
+        Sunday, April 20, 2025<br>
+        6:30 AM
+      </div>
+      <div class="box">
+        <h4>Verse of the Week</h4>
+        <i>John 3:16</i>
+      </div>
+      <div class="box" style="text-align:center">
+        Visitors since 2014:<br>
+        <span class="counter">008217</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="footer">
+    &copy; 2023 Cedar Hollow Community Church &middot; All Rights Reserved<br>
+    Website last updated: May 2025
+  </div>
+
+</div>
+</body>
+</html>

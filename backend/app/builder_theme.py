@@ -128,6 +128,12 @@ def _first_color(values):
             found = color(part)
             if found:
                 return found
+        # A gradient ("linear-gradient(#5d7a4a, #3e5631)") is the brand color too: take its last, deepest stop.
+        if 'gradient(' in (value or '').lower():
+            stops = [color(m.group(0)) for m in re.finditer(r'#[0-9a-f]{3,6}\b|rgba?\([^)]*\)', value, re.I)]
+            stops = [s for s in stops if s]
+            if stops:
+                return stops[-1]
     return ''
 
 
@@ -151,14 +157,24 @@ def theme(meta, css_texts):
         return ''
 
     primary = (color(meta.get('theme-color', '')) or var_color(PRIMARY_VARS)
-               or _first_color(_declared(rules, variables, {'header', '.site-header', '.header', '#header', 'nav'},
+               or _first_color(_declared(rules, variables, {'header', '.site-header', '.header', '#header', 'nav', '#nav',
+                                                            '.nav', '.navbar', '#navbar', '.topbar', '#topbar'},
                                          ('background-color', 'background')))
-               or _first_color(_declared(rules, variables, {'h1', 'h2', 'h1, h2'}, ('color',))))
+               or _first_color(_declared(rules, variables, {'h1', 'h2', 'h1, h2', 'h3', 'h2, h3', 'h1, h2, h3'}, ('color',))))
+    # A menu's hover color is the site's highlight when it has no buttons; a plain link color is the last resort.
     accent = (var_color(ACCENT_VARS)
               or _first_color(_declared(rules, variables, {'.btn', '.button', 'button', '.btn-primary', '.cta'},
                                         ('background-color', 'background')))
+              or _first_color(_declared(rules, variables, {'#nav a:hover', 'nav a:hover', '.nav a:hover', '#nav a:hover, #nav a:focus',
+                                                           '.navbar a:hover', '#menu a:hover', '.menu a:hover'},
+                                        ('background-color', 'background')))
               or _first_color(_declared(rules, variables, {'a'}, ('color',))))
+    # The page the content sits on: a centered wrapper's background when the body is only a backdrop around it.
+    page = _first_color(_declared(rules, variables, {'#wrap', '#wrapper', '.wrapper', '#container', '.container', '#page',
+                                                     '.page', '#site', '.site'}, ('background-color', 'background')))
     background = _first_color(_declared(rules, variables, {'body', 'html'}, ('background-color', 'background')))
+    if page and _luminance(page) >= 0.6:
+        background = page
     text = _first_color(_declared(rules, variables, {'body', 'html'}, ('color',)))
     body_font = next(filter(None, map(font, _declared(rules, variables, {'body', 'html'}, ('font-family',)))), '')
     heading_font = next(filter(None, map(font, _declared(rules, variables, {'h1', 'h2', 'h1, h2, h3', 'h1, h2'},
