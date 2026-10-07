@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, apiHeaders, apiUrl, getApiKey, setApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
-import { canStep, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, writePrefs } from './readerPrefs.js';
+import { askPlaceholder, canStep, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
 import { fetchVerse, referenceParts } from './verses.js';
 import { noteErrorMessage } from './noteErrors.js';
 
@@ -233,11 +233,11 @@ function useAsk(noteId) {
   return { question, setQuestion, answer, busy, error, ask };
 }
 
-function AskBox({ asker, label = 'Ask about this sermon' }) {
+function AskBox({ asker, title, label = 'Ask about this sermon' }) {
   const { question, setQuestion, answer, busy, error, ask } = asker;
   return <div className="pn-askbox">
     <form className="pn-ask" onSubmit={ask}>
-      <label className="field"><span className="pn-ask-label">{label}</span><input value={question} maxLength={500} onChange={e => setQuestion(e.target.value)} placeholder="What was said about the good Samaritan?" /></label>
+      <label className="field"><span className="pn-ask-label">{label}</span><input value={question} maxLength={500} onChange={e => setQuestion(e.target.value)} placeholder={askPlaceholder(title)} /></label>
       <button className="primary" disabled={busy || !question.trim()}>{busy ? 'Looking…' : 'Ask'}</button>
     </form>
     {error && <p className="pn-error" role="alert">{error}</p>}
@@ -281,7 +281,7 @@ function Transcript({ segments, bySegment, activeCats, prefs }) {
 
 // Ask is a slim bar above the transcript that folds open. Highlights and the reading controls sit in a
 // side panel on wide screens; on narrower ones a button in the Ask bar opens that panel as a sheet.
-function ReaderBody({ asker, toggles, transcript, controls }) {
+function ReaderBody({ asker, title, toggles, transcript, controls }) {
   const [askOpen, setAskOpen] = useState(false), [sheet, setSheet] = useState(false);
   const askId = useId(), sideId = useId(), askRef = useRef(null), side = useRef(null), opener = useRef(null);
   useEffect(() => { if (askOpen) askRef.current?.querySelector('input')?.focus(); }, [askOpen]);
@@ -308,7 +308,7 @@ function ReaderBody({ asker, toggles, transcript, controls }) {
             <span className="pn-aa" aria-hidden="true">Aa</span><span>Highlights<span className="pn-tool-more"> &amp; text size</span></span>
           </button>
         </div>
-        {askOpen && <div id={askId} ref={askRef} className="pn-tools-panel pn-tools-ask"><AskBox asker={asker} /></div>}
+        {askOpen && <div id={askId} ref={askRef} className="pn-tools-panel pn-tools-ask"><AskBox asker={asker} title={title} /></div>}
       </div>
       {transcript}
     </div>
@@ -331,7 +331,7 @@ function ReaderBody({ asker, toggles, transcript, controls }) {
   </div>;
 }
 
-function NoteView({ note, onChange, prefs, setPrefs }) {
+function NoteView({ note, onChange, onDelete, prefs, setPrefs }) {
   const [segments, setSegments] = useState([]), [error, setError] = useState(''), [loading, setLoading] = useState(true),
     [annotations, setAnnotations] = useState([]), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
   const asker = useAsk(note.id);
@@ -362,14 +362,19 @@ function NoteView({ note, onChange, prefs, setPrefs }) {
       <h2>{note.title}</h2>
       <p>{note.status === 'failed' ? noteErrorMessage(note.error) : 'Transcribing… this page updates on its own.'}</p>
       {error && <p className="pn-error" role="alert">{error}</p>}
-      {note.status === 'failed' && <button className="secondary" onClick={() => api(`/notes/${note.id}/retry`, { method: 'POST' }).then(onChange, err => setError(err.message))}>Try again</button>}
+      <div className="pn-state-actions">
+        {note.status === 'failed' && <button className="secondary" onClick={() => api(`/notes/${note.id}/retry`, { method: 'POST' }).then(onChange, err => setError(err.message))}>Try again</button>}
+        {onDelete && note.status !== 'processing' && <button className="ghost" onClick={() => {
+          if (window.confirm(`Delete "${note.title}"?`)) api(`/notes/${note.id}`, { method: 'DELETE' }).then(onDelete, err => setError(err.message));
+        }}>Delete</button>}
+      </div>
     </section>;
   }
   const transcript = error ? <p className="pn-error pn-transcript-msg" role="alert">{error}</p>
     : loading && !segments.length ? <p className="muted pn-transcript-msg">Loading transcript…</p>
     : <Transcript segments={segments} bySegment={bySegment} activeCats={activeCats} prefs={prefs} />;
   const toggles = annotations.length > 0 ? <CategoryToggles counts={counts} active={activeCats} onToggle={toggleCat} /> : null;
-  return <ReaderBody asker={asker} toggles={toggles} transcript={transcript} controls={<ReaderControls prefs={prefs} setPrefs={setPrefs} />} />;
+  return <ReaderBody asker={asker} title={note.title} toggles={toggles} transcript={transcript} controls={<ReaderControls prefs={prefs} setPrefs={setPrefs} />} />;
 }
 
 // The open sermon lives in the route (#/notes/<id>); without one, the newest ready sermon opens.
@@ -395,7 +400,9 @@ export default function PastorNotes({ route, go }) {
     return () => clearTimeout(timer);
   }, [notes]);
   if (!hasKey) return <KeyForm onChange={() => setHasKey(true)} />;
-  const current = pickCurrent(notes, selected);
+  // Visitors see only sermons ready to read; staff also see queued and failed ones, to retry or delete.
+  const shown = visibleNotes(notes, church.staff);
+  const current = pickCurrent(shown, selected);
   // Anyone who can open the notes can add a sermon, as before.
   const canAdd = hasKey;
   return <div className="pn pn-reading">
@@ -405,14 +412,14 @@ export default function PastorNotes({ route, go }) {
         {getApiKey() && <button className="ghost" onClick={() => { setApiKey(''); setHasKey(church.staff); setNotes([]); }}>Forget key</button>}
       </div>
       <div className="pn-head-main">
-        <SermonPicker notes={notes} current={current} onPick={id => { if (id !== current?.id) go('notes/' + id); }} />
+        <SermonPicker notes={shown} current={current} onPick={id => { if (id !== current?.id) go('notes/' + id); }} />
         {canAdd && <button type="button" className="primary pn-add" aria-label="Add sermon" aria-haspopup="dialog" aria-expanded={adding} onClick={() => setAdding(true)}>
           <Icon name="plus" size={18} /><span>Add sermon</span>
         </button>}
       </div>
     </header>
     {error && <div className="banner error" role="alert">{error}</div>}
-    {current ? <NoteView key={current.id} note={current} onChange={load} prefs={prefs} setPrefs={setPrefs} />
+    {current ? <NoteView key={current.id} note={current} onChange={load} onDelete={church.staff ? () => { go('notes'); load(); } : null} prefs={prefs} setPrefs={setPrefs} />
       : <section className="card pn-state pn-empty"><Icon name="book" size={40} />
           <h2>{!loaded ? 'Loading sermons…' : selected ? 'Sermon not found' : 'No sermons yet'}</h2>
           {loaded && <p>{selected ? 'It may have been removed. Pick another from the list above.' : 'Add a YouTube link or upload a file. Once it is transcribed you can read it here and ask questions.'}</p>}

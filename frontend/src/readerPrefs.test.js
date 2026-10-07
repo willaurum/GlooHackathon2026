@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_PREFS, PREFS_KEY, TEXT_SIZES, canStep, clampSize, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, writePrefs } from './readerPrefs.js';
+import { DEFAULT_PREFS, PREFS_KEY, TEXT_SIZES, askPlaceholder, canStep, clampSize, formatNoteDate, pickCurrent, readPrefs, statusLabel, stepSize, textSizePx, visibleNotes, writePrefs } from './readerPrefs.js';
 
 const memory = (init = {}) => {
   const data = { ...init };
@@ -71,4 +71,21 @@ test('the open sermon: route first, then newest ready', () => {
   assert.equal(pickCurrent(notes, 'zzz'), null);
   assert.equal(pickCurrent([{ id: 'a', status: 'failed' }], null).id, 'a');
   assert.equal(pickCurrent([], null), null);
+});
+
+test('visitors see only ready sermons; staff see every one with its status', () => {
+  const notes = [{ id: 'a', status: 'failed' }, { id: 'b', status: 'queued' }, { id: 'c', status: 'ready' }, { id: 'd', status: 'processing' }];
+  assert.deepEqual(visibleNotes(notes, false).map(n => n.id), ['c']);
+  assert.deepEqual(visibleNotes(notes, true).map(n => n.id), ['a', 'b', 'c', 'd']);
+  // A visitor with a link to a failed test note does not see it.
+  assert.equal(pickCurrent(visibleNotes(notes, false), 'a'), null);
+});
+
+test('the Ask placeholder follows the sermon title, or stays generic', () => {
+  assert.equal(askPlaceholder('Sunday, Luke 10'), 'What was said about Luke 10?');
+  assert.equal(askPlaceholder('The Prodigal Son'), 'What was said about The Prodigal Son?');
+  for (const title of ['Sermon test 3', 'Sunday service', '', null, '2026-10-04']) {
+    assert.equal(askPlaceholder(title), 'What was the main point of this sermon?', String(title));
+  }
+  assert.doesNotMatch(askPlaceholder('Sunday, Luke 10'), /Samaritan/);
 });

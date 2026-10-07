@@ -345,6 +345,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .status.queued, .status.processing { color: var(--sand-700); }
 .pn-state { align-items: flex-start; max-width: 720px; }
 .pn-state > .status { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.pn-state-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .pn-empty { align-items: center; text-align: center; max-width: none; padding: 48px 24px !important; color: var(--green-200); }
 .pn-empty p { max-width: 380px; }
 .pn-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
