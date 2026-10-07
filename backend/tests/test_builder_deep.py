@@ -443,6 +443,28 @@ class ReadingFixesTests(unittest.TestCase):
             with self.subTest(dated=dated):
                 self.assertEqual(builder.service_times(dated), {})
 
+    def test_monthly_gatherings_ranges_and_announcement_pages(self):
+        times = lambda text: {day: [t for t, _ in found] for day, found in builder.service_times(text).items()}
+        for monthly in ('Join us in prayer and worship from 6:30 - 7:30 PM on the last Tuesday of every month!',
+                        'Our worship night is held on the first Sunday of each month at 6 pm.',
+                        'Prayer and worship every other Thursday at 7pm.', 'Monthly worship night, Fridays at 7pm.'):
+            with self.subTest(monthly=monthly):
+                self.assertEqual(times(monthly), {})
+        # A range is one service at its start time.
+        self.assertEqual(times('Sunday worship 10:30 am - 12 pm'), {'Sunday': ['10:30']})
+        self.assertEqual(times('Wednesday night service 7pm to 8:30pm'), {'Wednesday': ['19:00']})
+        self.assertEqual(times('Join us this Sunday at 9 & 11 for worship.'), {'Sunday': ['09:00', '11:00']})
+        # Announcement and event pages invite people to special gatherings: there "join us" on a day is not a
+        # service time, but a sentence that says worship still is.
+        page = {'id': 's1', 'kind': 'page', 'url': 'https://crosspoint.test/announcements', 'title': 'Crosspoint Church - Announcements'}
+        invite = 'Come join us on Sunday at 4:00 PM for games, food and trunk or treat for the entire family!'
+        reminder = 'Just a reminder, Sunday worship is at 10:30am.'
+        for kind, text, expected in (('news', invite, []), ('events', invite, []), ('visit', invite, [{'day': 'Sunday', 'time': '16:00'}]),
+                                     ('news', reminder, [{'day': 'Sunday', 'time': '10:30'}])):
+            with self.subTest(page_type=kind, text=text):
+                claims = builder.pattern_claims({**page, 'page_type': kind, 'text': text})
+                self.assertEqual([c['value'] for c in claims if c['field'] == 'services'], expected)
+
     def test_church_name_from_titles_and_site_name(self):
         for title, name in [('Plan a Visit | Cedar Hollow Church', 'Cedar Hollow Church'),
                             ('Harvest Point Church - Home', 'Harvest Point Church'),

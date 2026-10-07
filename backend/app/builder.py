@@ -928,6 +928,18 @@ NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|br
 DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th|h)?\b'
                    r'|\b\d{1,2}(?:st|nd|rd|th)\s+of\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)'
                    r'|\bthe\s+\d{1,2}(?:st|nd|rd|th)\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b', re.I)
+# A monthly or yearly gathering ("the last Tuesday of every month") is an event, not a weekly service time.
+NOT_WEEKLY = re.compile(r'\b(?:first|second|third|fourth|fifth|last|1st|2nd|3rd|4th|5th)\s+(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*'
+                        r'\s+(?:of|in|each|every)\b|\b(?:of|each|every)\s+(?:the\s+)?month\b|\bmonthly\b|\bonce\s+a\s+'
+                        r'(?:month|quarter|year)\b|\bevery\s+other\b|\bbi-?weekly\b|\bquarterly\b|\bannual(?:ly)?\b|'
+                        r'\bonce\s+a\s+year\b', re.I)
+# "6:30 - 7:30 PM", "10am to noon": a service starts at the first time; the end time is not another service.
+RANGE_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?\s*m\.?)?\s*(?:-|–|—|to|until|till)\s*'
+                      r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b', re.I)
+# Announcement, news and event pages invite people to one-off gatherings ("Come join us on Sunday at 4 PM for
+# trunk or treat"), so there a sentence must say worship, service or mass, and "join us" with a day is not enough.
+STRICT_PAGES = ('news', 'events')
+STRICT_WORSHIP = re.compile(r'\b(worship|services?|mass)\b', re.I)
 # "9:00 & 11:00 am": the am/pm after the last time covers the times listed before it.
 SHARED_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+|,)\s*(?=(?:\d{1,2}(?::\d{2})?\s*(?:&|and|\+|,)\s*)*'
                        r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b)', re.I)
@@ -953,8 +965,15 @@ def _sentences(text):
 
 
 def _times(sentence):
-    """Clock times in a sentence, in order, including ones that share a later am/pm."""
-    found = [(m.start(), _clock(*m.groups())) for m in TIME_RE.finditer(sentence)]
+    """Clock times in a sentence, in order, including ones that share a later am/pm. A range ("6:30 - 7:30 PM")
+    counts as its start time only."""
+    found, ends = [], set()
+    for m in RANGE_RE.finditer(sentence):
+        hour, minute, own, last, ampm = m.groups()
+        found.append((m.start(), _clock(hour, minute, own or (ampm if int(hour) % 12 <= int(last) % 12 else None))))
+        ends.add(m.start(4))
+    found += [(m.start(), _clock(*m.groups())) for m in TIME_RE.finditer(sentence)
+              if m.start() not in ends and not any(r.start() <= m.start() < r.end() for r in RANGE_RE.finditer(sentence))]
     for m in SHARED_RE.finditer(sentence):
         hour, minute, last, ampm = m.groups()
         # "11 & 1 pm" does not make 11 pm: the shared am/pm only applies when the order still makes sense.
@@ -962,33 +981,34 @@ def _times(sentence):
     return list(dict.fromkeys(clock for _, clock in sorted(found)))
 
 
-def service_times(text):
-    """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times."""
+def service_times(text, strict=False):
+    """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times. strict (announcement
+    and event pages) needs the sentence to say worship, service or mass."""
     found = {}
+    worship = STRICT_WORSHIP if strict else WORSHIP_WORDS
     lines = text.split('\n')
     for i, sentence in enumerate(_sentences(text)):
         days = [d for d in DAYS if DAY_RE[d].search(sentence)]
-        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence):
+        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
             continue
         times = _times(sentence)
-        if not times and WORSHIP_WORDS.search(sentence) or re.search(r'\bsundays?\b\s+\d', sentence, re.I):
+        if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
             for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
                 times += [_clock(h1, m1, None), _clock(h2, m2, None)]
-        if not times or not (WORSHIP_WORDS.search(sentence) or len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
+        if not times or not (worship.search(sentence) or not strict and len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
             continue
         for day in days[:1]:
             found.setdefault(day, [])
             found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
-    # Tables and footers: a "Sunday" cell or heading followed by times on the next lines.
-    for i, line in enumerate(lines):
+    # Tables and footers: a "Sunday" cell or heading followed by times on the next lines (not on announcement pages).
+    for i, line in enumerate([] if strict else lines):
         day = next((d for d in DAYS if re.fullmatch(rf'{d}s?( services?| worship)?', line.strip(), re.I)), None)
         if not day:
             continue
         for nxt in lines[i + 1:i + 4]:
-            if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
+            if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or NOT_WEEKLY.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
                 break
-            for h, m, ap in TIME_RE.findall(nxt):
-                clock = _clock(h, m, ap)
+            for clock in _times(nxt):
                 found.setdefault(day, [])
                 if clock not in [x for x, _ in found[day]]:
                     found[day].append((clock, f'{line} {nxt}'.strip()))
@@ -1029,7 +1049,7 @@ def pattern_claims(source):
     # Uploads and campus pages list several sets of times; each quote is its own set, so different campuses'
     # times become a question instead of being merged into one list.
     separate = source.get('url') is None or source.get('page_type') == 'locations'
-    for day, times in service_times(text).items():
+    for day, times in service_times(text, strict=source.get('page_type') in STRICT_PAGES).items():
         for clock, quote in times:
             claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote,
                            'source_id': sid, 'method': 'pattern', **({'service_group': quote} if separate else {})})
