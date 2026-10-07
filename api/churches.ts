@@ -115,6 +115,8 @@ const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/verse$/],
 	['GET', /^\/api\/blog(?:\/(categories|\d+))?$/],
 	['GET', /^\/api\/events\/\d+$/],
+	// A page of the church's recreated website (slugs as church_content.SLUG).
+	['GET', /^\/api\/church\/pages\/[a-z0-9][a-z0-9-]{0,79}$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
 ];
@@ -129,7 +131,8 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['POST', /^\/api\/builder\/drafts\/(blank|upload)$/],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/site$`)],
-	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|preview)$`)],
+	['GET', new RegExp(`^/api/builder/drafts/${ID}/pages/${ID}$`)],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|parts|preview)$`)],
 ];
 
 // Staff work requires a church session, including on the demo church.

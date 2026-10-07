@@ -1244,3 +1244,19 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-published ul { display: grid; gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
 .pn-published li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; overflow-wrap: anywhere; }
 .pn-published small { color: var(--muted); }
+
+/* The church's own website, recreated by the site builder (#/p/<slug>) */
+.site-page { max-width: 760px; }
+.site-section { margin-bottom: 28px; overflow-wrap: anywhere; }
+.site-section h2 { font-size: 22px; margin-bottom: 10px; }
+.site-section h3 { font-size: 18px; margin-bottom: 8px; }
+.site-section p { margin: 0 0 10px; line-height: 1.6; }
+.site-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.site-actions a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.site-embed { position: relative; aspect-ratio: 16 / 9; margin: 12px 0; border-radius: 12px; overflow: hidden; background: var(--green-50); }
+.site-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.site-menu { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.site-menu .eyebrow { margin: 0 0 4px 10px; }
+.site-menu a.nav-item { text-decoration: none; }
+.site-menu-child { margin-left: 18px; }
+.site-menu-label { display: block; padding: 8px 10px 2px; color: var(--muted); font-size: 13px; font-weight: 700; }

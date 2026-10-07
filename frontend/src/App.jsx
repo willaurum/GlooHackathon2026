@@ -23,6 +23,8 @@ import Beliefs from './Beliefs.jsx';
 import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
+import SitePage from './SitePages.jsx';
+import { PAGE_ROUTE } from './site.js';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -61,7 +63,7 @@ function readLocation() {
   if (preview) {
     const route = preview[1] || '';
     return { slug: 'builder-preview', source: 'preview',
-      route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) ? route : '', false) };
+      route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) || PAGE_ROUTE.test(route) ? route : '', false) };
   }
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   const back = new URLSearchParams(window.location.search).get('church');
@@ -70,7 +72,7 @@ function readLocation() {
   // keep the old links (#/blog, #/about/blog, #/give/staff, #/start, #/prayer/map) working.
   let route = ['start', 'give/start', 'give/staff'].includes(where.route) ? 'staff'
     : ['blog', 'about/blog'].includes(where.route) ? 'about/news' : where.route === 'prayer/map' ? 'prayer' : where.route;
-  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
+  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route) || PAGE_ROUTE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
   if (where.source === 'link') saveChurch(where.slug);
@@ -140,7 +142,8 @@ function SiteApp({ snapshot }) {
     [apiReady, setApiReady] = useState(null),
     [listing, setListing] = useState(snapshot?.info || null),
     [listingVersion, setListingVersion] = useState(0),
-    [staffVersion, setStaffVersion] = useState(0);
+    [staffVersion, setStaffVersion] = useState(0),
+    [website, setWebsite] = useState(null);
   const { slug, source, route } = where;
   const demo = !snapshot && slug === DEMO_CHURCH;
   if (snapshot) startApiPreview(snapshot);
@@ -276,12 +279,20 @@ function SiteApp({ snapshot }) {
     icon.href = churchIcon(name);
   }, [name, route]);
   const ready = !!snapshot || demo || apiReady === true;
+  // The church's imported website (menu and page list), when the site builder made one.
+  useEffect(() => {
+    let live = true;
+    setWebsite(null);
+    if (ready && !demo) api('/church').then(c => { if (live && c.site) setWebsite({ site: c.site, pages: c.pages || [] }); }).catch(() => {});
+    return () => { live = false; };
+  }, [slug, ready, demo, listingVersion]);
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
+    site: website?.site || null, pages: website?.pages || [],
     // After staff rename the church in Church setup.
     refresh: () => setListingVersion(v => v + 1),
-  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion]);
+  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion, website]);
 
   const section = route.split('/')[0];
   if (section === 'new') return <ChurchContext.Provider value={church}>
@@ -329,6 +340,7 @@ function SiteApp({ snapshot }) {
       <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
       <PrayerMap />
     </div>}
+    {section === 'p' && PAGE_ROUTE.test(route) && <SitePage slug={route.slice(2)} />}
     {section === 'setup' && <div className="page"><ChurchSetup /></div>}
     {section === 'platform' && <div className="page"><Platform /></div>}
   </>;

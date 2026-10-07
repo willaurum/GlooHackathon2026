@@ -1500,6 +1500,8 @@ def build_content(session, *, allow_unanswered=False):
     if faqs:
         content['faqs'] = faqs
     content.update(collection_content(session.get('collections', {})))
+    if session.get('site', {}).get('pages'):
+        content.update(builder_site.content(session['site'], info['name']))
     return church_content.normalize(church_content.ChurchContent(**content))
 
 
@@ -1561,6 +1563,28 @@ def collection_content(collections, today=None):
             limit = next((m.max_length for m in limits[name].metadata if hasattr(m, 'max_length')), None)
             content[name] = entries[:limit] if limit else entries
     return content
+
+
+SITE_PARTS = ('pages', 'links', 'forms', 'media', 'assets')
+
+
+def apply_part(session, part, item_id=None, include=None, rights=None):
+    """Keep or leave out a page, link, form, player or image of the site model (all of that part when item_id is
+    None). `rights` is the church confirming it may use an image from the old site."""
+    entries = session.get('site', {}).get(part) if part in SITE_PARTS else None
+    if entries is None:
+        raise ValueError('Unknown part of the site')
+    targets = entries if item_id is None else [e for e in entries if e.get('id') == item_id]
+    if not targets:
+        raise ValueError('Unknown item')
+    if rights is not None and part != 'assets':
+        raise ValueError('Only images need permission.')
+    for entry in targets:
+        if include is not None:
+            entry['include'] = bool(include)
+        if rights is not None:
+            entry['rights'] = bool(rights)
+    return session
 
 
 def apply_item(session, collection, item_id=None, include=None, value=None):
@@ -1673,21 +1697,55 @@ import_limiter = ImportLimiter()
 STORED_SOURCE_KEYS = ('id', 'kind', 'url', 'title', 'page_type')
 
 
+def _page_key(draft_id, page_id=''):
+    return f'draft:{draft_id}:page:{page_id}'
+
+
+def _without_sections(site):
+    return {**site, 'pages': [{k: v for k, v in p.items() if k != 'sections'} for p in site.get('pages', [])]}
+
+
 def _save(session):
     """Store a draft and drop expired ones; a draft nobody opens again would otherwise stay forever.
-    Page texts are not stored: every value keeps its quote, which is all review and evidence need."""
+    Page texts are not stored: every value keeps its quote, which is all review and evidence need. The site model's
+    page sections (the recreated pages) are stored once, a row per page, when the import finishes."""
     cutoff = datetime.fromtimestamp(time.time() - DRAFT_TTL, timezone.utc).isoformat()
     stored = {**session, 'sources': [{k: s[k] for k in STORED_SOURCE_KEYS if k in s} for s in session['sources']]}
+    statements = []
+    if session.get('site'):
+        stored['site'] = _without_sections(session['site'])
+        statements = [("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+                       (_page_key(session['id'], page['id']),
+                        json.dumps({'created_at': session['created_at'], 'sections': page['sections']})))
+                      for page in session['site'].get('pages', []) if 'sections' in page]
     with db.use_church(DRAFT_SPACE):
         db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
-                ('draft:' + session['id'], json.dumps(stored))),
+                ('draft:' + session['id'], json.dumps(stored))), *statements,
                ("DELETE FROM config WHERE key LIKE 'draft:%' AND json_extract(data, '$.created_at') < ?", (cutoff,)))
     return session
 
 
 def _delete(draft_id):
+    prefix = _page_key(draft_id)
     with db.use_church(DRAFT_SPACE):
-        db.run(('DELETE FROM config WHERE key = ?', ('draft:' + draft_id,)))
+        db.run(('DELETE FROM config WHERE key = ? OR substr(key, 1, ?) = ?', ('draft:' + draft_id, len(prefix), prefix)))
+
+
+def _page_sections(draft_id):
+    """{page id: sections} for a stored draft."""
+    prefix = _page_key(draft_id)
+    with db.use_church(DRAFT_SPACE):
+        rows = db.query('SELECT key, data FROM config WHERE substr(key, 1, ?) = ?', (len(prefix), prefix))
+    return {row['key'][len(prefix):]: json.loads(row['data'])['sections'] for row in rows}
+
+
+def _with_pages(session):
+    """The draft with its pages' sections loaded, for building content."""
+    if not session.get('site', {}).get('pages'):
+        return session
+    sections = _page_sections(session['id'])
+    pages = [{**p, 'sections': sections.get(p['id'], [])} for p in session['site']['pages']]
+    return {**session, 'site': {**session['site'], 'pages': pages}}
 
 
 def _read(draft_id):
@@ -1727,8 +1785,11 @@ def _ready(draft):
 
 def _public(session):
     """The draft for the page, without the full page texts (the evidence quotes are enough)."""
-    return {**session, 'notes': session.get('notes', []), 'collections': session.get('collections', {}),
-            'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title') if k in s} for s in session['sources']]}
+    out = {**session, 'notes': session.get('notes', []), 'collections': session.get('collections', {}),
+           'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title') if k in s} for s in session['sources']]}
+    if session.get('site'):
+        out['site'] = _without_sections(session['site'])
+    return out
 
 
 class ImportBody(BaseModel):
@@ -1746,6 +1807,13 @@ class ItemBody(BaseModel):
     id: str | None = Field(default=None, max_length=40)
     include: bool | None = None
     value: dict | None = None
+
+
+class PartBody(BaseModel):
+    part: str = Field(min_length=1, max_length=20)
+    id: str | None = Field(default=None, max_length=40)
+    include: bool | None = None
+    rights: bool | None = None
 
 
 # ---------------------------------------------------------------- background imports
@@ -1923,9 +1991,32 @@ def item(draft_id: str, body: ItemBody):
         return _public(_save(session))
 
 
+@router.post('/api/builder/drafts/{draft_id}/parts')
+def part(draft_id: str, body: PartBody):
+    """Keep or leave out part of the imported site: a page, link, form, player, or (with permission) an image."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            apply_part(session, body.part, body.id, body.include, body.rights)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+@router.get('/api/builder/drafts/{draft_id}/pages/{page_id}')
+def draft_page(draft_id: str, page_id: str):
+    """One imported page with its sections, for review."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+    page = next((p for p in session.get('site', {}).get('pages', []) if p['id'] == page_id), None)
+    if page is None:
+        raise HTTPException(status_code=404, detail='Page not found')
+    return {**page, 'sections': _page_sections(draft_id).get(page_id, [])}
+
+
 def _content(draft_id):
     try:
-        return build_content(_ready(_load(draft_id)))
+        return build_content(_with_pages(_ready(_load(draft_id))))
     except (ValueError, church_content.ContentError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1939,7 +2030,7 @@ def preview(draft_id: str):
 @router.get('/api/builder/drafts/{draft_id}/site')
 def site(draft_id: str):
     with _draft_lock:
-        return church_content.public_site(build_content(_ready(_load(draft_id)), allow_unanswered=True))
+        return church_content.public_site(build_content(_with_pages(_ready(_load(draft_id))), allow_unanswered=True))
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')

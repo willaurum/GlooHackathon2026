@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
 import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
+import { siteMenu } from './site.js';
 
 // One navigation for every screen size: a sidebar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
@@ -62,6 +63,7 @@ export function Sidebar({ route, go, savedCount }) {
         </div>}
       </div>)}
     </nav>
+    <SiteMenu route={route} go={go} />
     <div className="profile">
       <Avatar />
       <div><strong>{user.name}</strong><small>{user.role}</small></div>
@@ -116,6 +118,7 @@ export function TabBar({ route, go, chatOpen, savedCount }) {
           </div>}
         </div>;
       })}
+      <SiteMenu route={route} go={go} onNavigate={() => setMenuOpen(false)} />
     </div>}
     <nav className="tabbar" aria-label="Main">
       {tabs.map(s => <button key={s.route} className={!chatOpen && !menuOpen && current === s.route ? 'active' : ''} onClick={() => open(s.route)}>
@@ -141,4 +144,23 @@ export function SubNav({ tabs, route, go, counts = {} }) {
       <Icon name={icon} size={18} />{label}{counts[r] > 0 && <b className="count">{counts[r]}</b>}
     </button>)}
   </div>;
+}
+
+// The imported menu, under the app's own sections: the church's pages and its links elsewhere.
+export function SiteMenu({ route, go, onNavigate }) {
+  const church = useChurch();
+  const items = siteMenu(church?.site, church?.pages);
+  if (!items.length) return null;
+  const open = next => { onNavigate?.(); go(next); };
+  const entry = (item, depth) => <div key={item.label + (item.route || item.href || '')} className={depth ? 'site-menu-child' : ''}>
+    {item.route ? <button className={'nav-item' + (route === item.route ? ' active' : '')} aria-current={route === item.route ? 'page' : undefined}
+      onClick={() => open(item.route)}>{item.label}</button>
+      : item.href ? <a className="nav-item" href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a>
+        : <span className="site-menu-label">{item.label}</span>}
+    {item.children.map(child => entry(child, depth + 1))}
+  </div>;
+  return <nav className="site-menu" aria-label="Church website">
+    <div className="eyebrow">Our website</div>
+    {items.map(item => entry(item, 0))}
+  </nav>;
 }

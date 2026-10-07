@@ -5,12 +5,16 @@ dropdown menus with label-only parents, off-site sign-ups and giving, embedded p
 addresses, many daily posts, robots.txt with Crawl-delay and wildcard rules, and hidden instructions.
 """
 import json
+import os
 import unittest
 from datetime import date
 from pathlib import Path
 from unittest import mock
 
-from backend.app import builder, builder_score, builder_site
+from fastapi.testclient import TestClient
+
+from backend.app import builder, builder_score, builder_site, builder_structured, church_content, db, main
+from backend.tests.test_churches import ChurchTestCase
 
 FIXTURE = Path(__file__).resolve().parent / 'fixtures' / 'builder' / 'snappage-like'
 EXPECTED = json.loads((FIXTURE / 'expected.json').read_text(encoding='utf-8'))
@@ -78,7 +82,8 @@ class SnappageFixtureTests(unittest.TestCase):
         session, _ = harvest()
         home = next(p for p in session['site']['pages'] if p['path'] == '/')
         sections = {s['heading']: s for s in home['sections']}
-        self.assertEqual(sections['Welcome Home']['links'], ['https://church.test/visit', 'https://church.test/live'])
+        self.assertEqual(sections['Welcome Home']['links'], [{'text': 'Plan Your Visit', 'url': 'https://church.test/visit'},
+                                                             {'text': 'Watch Live', 'url': 'https://church.test/live'}])
         self.assertEqual(sections['Latest Message']['embeds'], ['https://www.youtube.com/watch?v=HPmsg000001'])
         self.assertNotIn('4410 Orchard Hill Road', json.dumps(home['sections']))  # repeated footer text
         posts = [p for p in session['site']['pages'] if '/blog/' in p['path']]
@@ -137,6 +142,97 @@ class ClassifyTests(unittest.TestCase):
         menu = builder_site.build([source], 'https://church.test/')['navigation']['main']
         self.assertEqual([(m['label'], m['url']) for m in menu],
                          [('Home', 'https://church.test/'), ('Visit', 'https://church.test/visit')])
+
+
+
+class SiteRouteTests(ChurchTestCase):
+    HOPE = {'X-Church': 'hope-chapel', 'X-Church-Name': 'Hope%20Chapel', 'X-Church-City': 'Austin'}
+
+    def setUp(self):
+        super().setUp()
+        self.client = TestClient(main.app)
+        builder.import_limiter.reset()
+        self.addCleanup(builder.import_limiter.reset)
+        fetch, fetch_feed = builder_score.fixture_fetchers(FIXTURE)
+        for patcher in (mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1', 'BUILDER_AI': '0'}),
+                        mock.patch.object(builder, '_http_fetch', fetch),
+                        mock.patch.object(builder, '_http_feed', fetch_feed),
+                        mock.patch.object(builder, '_ai_complete', None),
+                        mock.patch.object(builder, '_ai_describe', None),
+                        mock.patch.object(builder_structured, '_today', lambda: date(2030, 9, 1))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(builder.wait_for_imports)
+
+    def imported(self):
+        response = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
+        self.assertEqual(response.status_code, 202, response.text)
+        builder.wait_for_imports()
+        draft = self.client.get('/api/builder/drafts/' + response.json()['id']).json()
+        self.assertEqual(draft['status'], 'review', draft.get('error'))
+        return draft
+
+    def test_review_pages_and_parts_then_apply_the_site(self):
+        draft = self.imported()
+        sid = draft['id']
+        pages = {p['path']: p for p in draft['site']['pages']}
+        self.assertNotIn('sections', pages['/team'])  # the draft row stays small; sections are their own rows
+        team = self.client.get(f"/api/builder/drafts/{sid}/pages/{pages['/team']['id']}").json()
+        self.assertEqual([s['heading'] for s in team['sections']], ['Our Team', 'Staff', 'Elders', 'Deacons'])
+        self.assertEqual(self.client.get(f'/api/builder/drafts/{sid}/pages/nope').status_code, 404)
+
+        beliefs = pages['/beliefs']['id']
+        evite = next(l['id'] for l in draft['site']['links'] if 'evite' in l['url'])
+        for body in ({'part': 'pages', 'id': beliefs, 'include': False}, {'part': 'links', 'id': evite, 'include': False}):
+            self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/parts', json=body).status_code, 200)
+        for bad in ({'part': 'sources', 'include': False}, {'part': 'pages', 'id': 'zzz', 'include': False},
+                    {'part': 'links', 'id': evite, 'rights': True}):
+            self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/parts', json=bad).status_code, 400, bad)
+
+        content = self.client.post(f'/api/builder/drafts/{sid}/preview').json()['content']
+        slugs = [p['slug'] for p in content['pages']]
+        self.assertIn('team', slugs)
+        self.assertNotIn('beliefs', slugs)
+        self.assertFalse(any(slug.startswith('blog-') for slug in slugs))  # posts are left out unless kept
+        about = next(item for item in content['site']['navigation']['main'] if item['label'] == 'About')
+        self.assertEqual([(c['label'], c['page']) for c in about['children']], [('Who We Are', 'about'), ('Our Team', 'team')])
+        events = next(p for p in content['pages'] if p['slug'] == 'events')
+        self.assertNotIn('evite', json.dumps(events))
+        self.assertEqual(next(p for p in content['pages'] if p['slug'] == 'visit')['title'], 'Plan a Visit')
+
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.HOPE).status_code, 200)
+        church = self.client.get('/api/church', headers=self.HOPE).json()
+        self.assertEqual(church['site']['navigation']['main'][0], {'label': 'Home', 'page': 'home', 'url': '', 'children': []})
+        self.assertIn({'id': 1, 'slug': 'team', 'title': 'Our Team', 'page_type': 'staff'}, church['pages'])
+        self.assertNotIn('sections', json.dumps(church['pages']))
+        team_page = self.client.get('/api/church/pages/team', headers=self.HOPE).json()
+        self.assertEqual(team_page['sections'][2]['text'], 'Tom Baker\nLuis Romero\nGrace Kim')
+        self.assertEqual(self.client.get('/api/church/pages/missing', headers=self.HOPE).status_code, 404)
+        with db.use_church(builder.DRAFT_SPACE):
+            left = db.query("SELECT key FROM config WHERE key LIKE ?", (f'draft:{sid}%',))
+        self.assertEqual(left, [])  # applying consumes the draft and its page rows
+
+
+class ContentModelTests(unittest.TestCase):
+    def test_only_web_addresses_and_valid_theme_values(self):
+        for bad in ({'site': {'links': [{'url': 'javascript:alert(1)'}]}},
+                    {'site': {'media': [{'url': 'data:text/html,hi'}]}},
+                    {'site': {'theme': {'primary': 'red; background:url(x)'}}},
+                    {'site': {'theme': {'body_font': 'x;}body{display:none'}}},
+                    {'pages': [{'slug': '../admin', 'title': 'X'}]},
+                    {'site': {'navigation': {'main': [{'label': 'X', 'url': 'javascript:void(0)'}]}}}):
+            with self.subTest(bad=bad), self.assertRaises(Exception):
+                church_content.ChurchContent(**bad)
+        page = church_content.ChurchContent(pages=[{'slug': 'a', 'title': 'A', 'sections': [
+            {'heading': 'H', 'embeds': ['https://www.youtube.com/watch?v=abcdefghijk', 'javascript:alert(1)']}]}])
+        self.assertEqual(page.pages[0].sections[0].embeds, ['https://www.youtube.com/watch?v=abcdefghijk'])
+        with self.assertRaises(church_content.ContentError):
+            church_content.normalize(church_content.ChurchContent(pages=[{'slug': 'a', 'title': 'A'}, {'slug': 'a', 'title': 'B'}]))
+
+    def test_images_without_permission_are_not_public(self):
+        site = {'assets': [{'url': 'https://cdn.test/a.png', 'rights': False}, {'url': 'https://cdn.test/b.png', 'rights': True}]}
+        public = church_content.public_church({'info': {}, 'site': site})
+        self.assertEqual([a['url'] for a in public['site']['assets']], ['https://cdn.test/b.png'])
 
 
 if __name__ == '__main__':

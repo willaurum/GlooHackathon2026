@@ -231,7 +231,7 @@ class ClaimRequest(BaseModel):
 
 @app.get('/api/church')
 def church():
-    return church_content.public_church({'info': db.get_church_info(),
+    return church_content.public_church({'info': db.get_church_info(), 'site': db.get_site(),
                                          **{kind: db.list_content(kind) for kind in db.CONTENT_KINDS}})
 
 

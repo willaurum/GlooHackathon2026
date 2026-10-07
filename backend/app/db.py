@@ -518,6 +518,16 @@ def get_church_info():
     return _data(one("SELECT data FROM church_content WHERE kind = 'info'"))
 
 
+def get_site():
+    row = one("SELECT data FROM church_content WHERE kind = 'site'")
+    return _data(row) if row else None
+
+
+def get_page(slug):
+    row = one("SELECT data FROM church_content WHERE kind = 'pages' AND json_extract(data, '$.slug') = ?", (slug,))
+    return _data(row) if row else None
+
+
 def list_content(kind):
     return [_data(row) for row in query("SELECT data FROM church_content WHERE kind = ? ORDER BY id", (kind,))]
 
@@ -527,7 +537,7 @@ def list_content(kind):
 # The info fields every church has. A new church starts with these empty except its name and city.
 BLANK_INFO = {'name': '', 'city': '', 'address': '', 'phone': '', 'email': '', 'office_hours': '',
               'services': [], 'about': '', 'first_visit': '', 'care_team': '', 'map_query': ''}
-CONTENT_KINDS = ('faqs', 'events', 'groups', 'staff', 'locations', 'sermons')
+CONTENT_KINDS = ('faqs', 'events', 'groups', 'staff', 'locations', 'sermons', 'pages')
 EVENT_COLUMNS = ('title', 'category', 'date', 'time', 'location', 'ministry_name', 'description', 'ai_summary')
 
 
@@ -540,7 +550,7 @@ def start_church(name, city=''):
 
 def export_content():
     """Everything a church shows, in the import shape (see replace_content and README.md)."""
-    return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS},
+    return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS}, 'site': get_site(),
             'ministries': [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")],
             'calendar': list_events(), 'regions': list_regions()}
 
@@ -557,6 +567,9 @@ def replace_content(content):
              (json.dumps(content['info']),)),
             ("UPDATE config SET data = json_set(data, '$.name', ?) WHERE key = 'church'", (content['info']['name'],)),
         ]
+    if 'site' in content:
+        statements.append(("INSERT INTO church_content VALUES ('site', 0, ?) ON CONFLICT (kind, id) DO UPDATE SET data = excluded.data",
+                           (json.dumps(content['site']),)))
     for kind in CONTENT_KINDS:
         if kind in content:
             statements.append(("DELETE FROM church_content WHERE kind = ?", (kind,)))

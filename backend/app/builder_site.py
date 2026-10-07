@@ -156,13 +156,14 @@ def _boilerplate(sources):
 
 
 def sections(source, boilerplate=frozenset()):
-    """The page's content split at its headings: [{heading, level, text, links}]. `links` are the page's links
-    whose text is a line of that section (buttons and calls to action)."""
+    """The page's content split at its headings: [{heading, level, text, links, embeds}]. `links` ({text, url})
+    are the page's links whose text is in a line of that section (buttons and calls to action); `embeds` are the
+    players and forms embedded there."""
     headings = list(source.get('headings') or [])
     anchors = {}
     for url, text, in_nav in source.get('anchors', []):
         if text and not in_nav and _web(url):
-            anchors.setdefault(_norm(text), url)
+            anchors.setdefault(_norm(text), (url, text))
     embeds = source.get('embeds') or []
 
     def fresh(heading='', level=0):
@@ -185,9 +186,9 @@ def sections(source, boilerplate=frozenset()):
             continue
         current['lines'].append(line)
         found = _norm(line)
-        for text, url in anchors.items():
-            if url not in current['links'] and (text == found or len(text) >= 4 and text in found):
-                current['links'].append(url)
+        for text, (url, label) in anchors.items():
+            if url not in [l['url'] for l in current['links']] and (text == found or len(text) >= 4 and text in found):
+                current['links'].append({'text': label, 'url': url})
     out.append(current)
     result = []
     for section in out:
@@ -276,9 +277,80 @@ def build(sources, start_url):
 
     ordered = sorted(links.values(), key=lambda l: (KIND_ORDER.index(l['kind']), not l['cta'], l['url']))[:MAX_LINKS]
     return {
+        'source_url': start_url if _web(start_url) else '',
         'navigation': menu,
         'pages': site_pages,
         'links': [{'id': f'l{n}', **l, 'include': True} for n, l in enumerate(ordered, 1)],
         'forms': [{'id': f'f{n}', **f, 'include': True} for n, f in enumerate(list(forms.values())[:MAX_FORMS], 1)],
         'media': [{'id': f'm{n}', **m, 'include': True} for n, m in enumerate(list(media.values())[:MAX_MEDIA], 1)],
+    }
+
+
+def slug(path, taken):
+    """A page address on the new site from the old one: "/" is home, "/about-us/" is about-us."""
+    base = re.sub(r'[^a-z0-9]+', '-', urlparse(path).path.lower().removesuffix('.html').removesuffix('.htm')).strip('-')
+    base = (base or 'home')[:70].strip('-') or 'home'
+    name, n = base, 2
+    while name in taken:
+        name, n = f'{base}-{n}', n + 1
+    taken.add(name)
+    return name
+
+
+def page_title(page, church_name=''):
+    """"Plan a Visit - Harvest Point Church" is "Plan a Visit"; a title that is only the church's name falls back
+    to the page's first heading."""
+    from .builder import TITLE_SPLIT, CHURCH_WORDS
+    parts = [p.strip() for p in TITLE_SPLIT.split(page.get('title') or '') if p.strip()]
+    own = [p for p in parts if _norm(p) != _norm(church_name) and not (len(parts) > 1 and CHURCH_WORDS.search(p))]
+    heading = next((s['heading'] for s in page.get('sections', []) if s['heading']), '')
+    title = (own[0] if own else '') or heading or (parts[0] if parts else '') or page.get('path', '/')
+    return 'Home' if page.get('page_type') == 'home' and not own else title[:200]
+
+
+def content(site, church_name=''):
+    """ChurchContent `site` and `pages` sections for what the church kept. Page sections must be loaded."""
+    kept = [p for p in site.get('pages', []) if p.get('include')]
+    taken, slugs = set(), {}
+    for page in kept:
+        slugs[page['id']] = slug(page['path'], taken)
+    dropped = {l['url'] for l in site.get('links', []) if not l.get('include')}
+    left_out = {p['id'] for p in site.get('pages', []) if not p.get('include')}
+
+    def menu(items):
+        out = []
+        for item in items:
+            children = menu(item.get('children', []))
+            page = slugs.get(item.get('page_id', ''), '')
+            url = '' if page else item.get('url', '')
+            if url in dropped or item.get('page_id') in left_out:
+                url = ''  # the church left this page or link out; the menu does not send people back to it
+            if page or url or children:
+                out.append({'label': item['label'], 'page': page, 'url': url, 'children': children})
+        return out
+
+    pages = []
+    for page in kept:
+        sections = [{'heading': s['heading'], 'level': s['level'], 'text': s['text'],
+                     'links': [l for l in s.get('links', []) if l['url'] not in dropped],
+                     'embeds': [e for e in s.get('embeds', []) if e not in dropped]}
+                    for s in page.get('sections', [])]
+        pages.append({'slug': slugs[page['id']], 'title': page_title(page, church_name),
+                      'page_type': page.get('page_type', ''), 'source_url': page['url'], 'sections': sections})
+    forms = [{'action': f['action'], 'name': f['name'], 'fields': f['fields'], 'submit': f['submit'],
+              'provider': f['provider'], 'embedded': f['embedded'],
+              'page': next((slugs[p] for p in f['pages'] if p in slugs), '')}
+             for f in site.get('forms', []) if f.get('include')]
+    navigation = site.get('navigation', {})
+    return {
+        'site': {'navigation': {'main': menu(navigation.get('main', [])),
+                                'footer': menu([{**f, 'children': []} for f in navigation.get('footer', [])])},
+                 'links': [{k: l[k] for k in ('url', 'text', 'kind', 'provider', 'cta', 'context')}
+                           for l in site.get('links', []) if l.get('include')],
+                 'forms': forms,
+                 'media': [{k: m[k] for k in ('url', 'title', 'kind', 'provider')}
+                           for m in site.get('media', []) if m.get('include')],
+                 'theme': site.get('theme', {}), 'assets': site.get('assets', []),
+                 'source_url': site.get('source_url', '')},
+        'pages': pages,
     }

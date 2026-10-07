@@ -903,7 +903,9 @@ class RouteTests(ChurchTestCase):
         sid = self.create()
         with db.use_church(builder.DRAFT_SPACE):
             keys = [row['key'] for row in db.query("SELECT key FROM config WHERE key LIKE 'draft:%'")]
-        self.assertEqual(keys, ['draft:' + sid])
+        # The new draft and its page rows; nothing of the expired one.
+        self.assertIn('draft:' + sid, keys)
+        self.assertTrue(all(key == 'draft:' + sid or key.startswith(f'draft:{sid}:page:') for key in keys), keys)
 
 
 class AiOfflineTests(BuilderTestCase):
