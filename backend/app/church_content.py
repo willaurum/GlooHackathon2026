@@ -8,12 +8,16 @@ The shape is exactly the seed files the demo church starts from:
     {"ministries": [...]}                                            backend/app/ministries.json
     {"calendar": [...]}                                              backend/app/events.json
     {"regions": [...]}                                               backend/app/regions.json
+    {"staff": [...], "locations": [...], "sermons": [...]}           filled by the site builder (builder.py)
+    {"site": {...}, "pages": [...]}                                  the imported website's menu, pages, links,
+                                                                     forms, media and look (builder_site.py)
 
 so anything that can write those files (the Church setup screens today, a site importer
 later) can set up a church. Every section is optional; one that is sent replaces that
 section. Items without an id get one.
 """
 
+import re
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -161,6 +165,161 @@ class Region(Loose):
     updates: list[FieldUpdate] = Field(default_factory=list, max_length=300)
 
 
+class Person(Loose):
+    """A staff or leadership directory entry."""
+    id: int | None = Field(default=None, ge=0)
+    name: str = Field(min_length=1, max_length=120)
+    role: str = Text(120)
+    group: str = Text(80)  # "Elders", "Deacons": the list a leader appears under on the church's site
+    email: str = Text(200)
+    phone: str = Text(60)
+    bio: str = Text(2000)
+    photo: str = Text(500)
+
+
+class Location(Loose):
+    """A campus or meeting place. The church's main address stays in info.address."""
+    id: int | None = Field(default=None, ge=0)
+    name: str = Field(min_length=1, max_length=120)
+    address: str = Text(300)
+    map_query: str = Text(300)
+    service_times: str = Text(300)
+    note: str = Text(500)
+
+
+class Sermon(Loose):
+    """A sermon or message the church has published (a link, not a Sermon Notes transcript)."""
+    id: int | None = Field(default=None, ge=0)
+    title: str = Field(min_length=1, max_length=200)
+    date: str = ''
+    speaker: str = Text(120)
+    series: str = Text(120)
+    scripture: str = Text(120)
+    url: str = Field(default='', max_length=500, pattern=r'^(https?://\S+)?$')
+
+    @field_validator('date')
+    @classmethod
+    def _valid_date(cls, value):
+        return _date(value) if value else value
+
+
+WEB_URL = r'^(https?://[^\s<>"]{1,490})?$'
+WebUrl = lambda: Field(default='', max_length=500, pattern=WEB_URL)  # noqa: E731
+SLUG = r'^[a-z0-9][a-z0-9-]{0,79}$'
+COLOR = r'^(#[0-9a-fA-F]{6})?$'
+
+
+class Strict(BaseModel):
+    # What a church's pages render (addresses, players, colors) keeps only the fields defined here.
+    model_config = ConfigDict(str_strip_whitespace=True, extra='ignore')
+
+
+class PageLink(Strict):
+    text: str = Text(120)
+    url: str = Field(pattern=WEB_URL, min_length=1, max_length=500)
+
+
+class PageSection(Strict):
+    heading: str = Text(200)
+    level: int = Field(default=2, ge=0, le=6)
+    text: str = Text(4000)
+    links: list[PageLink] = Field(default_factory=list, max_length=20)
+    embeds: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator('embeds')
+    @classmethod
+    def _web_embeds(cls, value):
+        return [url for url in value if re.fullmatch(WEB_URL, url) and url]
+
+
+class SitePage(Strict):
+    """A page of the church's own website, recreated as headed sections of text, buttons and players."""
+    id: int | None = Field(default=None, ge=0)
+    slug: str = Field(pattern=SLUG)
+    title: str = Field(min_length=1, max_length=200)
+    page_type: str = Text(30)
+    source_url: str = WebUrl()
+    sections: list[PageSection] = Field(default_factory=list, max_length=40)
+
+
+class MenuItem(Strict):
+    """A menu entry: one of the church's pages (`page`, a slug), an address, or a label over a submenu."""
+    label: str = Field(min_length=1, max_length=80)
+    page: str = Field(default='', pattern=r'^([a-z0-9][a-z0-9-]{0,79})?$')
+    url: str = WebUrl()
+    children: list['MenuItem'] = Field(default_factory=list, max_length=30)
+
+
+class Navigation(Strict):
+    main: list[MenuItem] = Field(default_factory=list, max_length=60)
+    footer: list[MenuItem] = Field(default_factory=list, max_length=60)
+
+
+class SiteLink(Strict):
+    url: str = Field(pattern=WEB_URL, min_length=1, max_length=500)
+    text: str = Text(120)
+    kind: str = Text(20)
+    provider: str = Text(80)
+    cta: bool = False
+    context: str = Text(200)
+
+
+class FormField(Strict):
+    name: str = Text(80)
+    type: str = Text(20)
+    label: str = Text(120)
+    required: bool = False
+
+
+class SiteForm(Strict):
+    """A form on the old site: where it sent answers and what it asked. Recreated as a link, never re-posted."""
+    action: str = WebUrl()
+    name: str = Text(120)
+    fields: list[FormField] = Field(default_factory=list, max_length=30)
+    submit: str = Text(60)
+    provider: str = Text(80)
+    embedded: bool = False
+    page: str = Field(default='', pattern=r'^([a-z0-9][a-z0-9-]{0,79})?$')
+
+
+class SiteMedia(Strict):
+    url: str = Field(pattern=WEB_URL, min_length=1, max_length=500)
+    title: str = Text(200)
+    kind: str = Text(20)
+    provider: str = Text(80)
+
+
+class Theme(Strict):
+    """Colors and fonts read from the site's public styles; the church's pages use them over the defaults."""
+    primary: str = Field(default='', pattern=COLOR)
+    accent: str = Field(default='', pattern=COLOR)
+    background: str = Field(default='', pattern=COLOR)
+    text: str = Field(default='', pattern=COLOR)
+    heading_font: str = Field(default='', max_length=60, pattern=r"^[A-Za-z0-9 '\-]*$")
+    body_font: str = Field(default='', max_length=60, pattern=r"^[A-Za-z0-9 '\-]*$")
+    logo: str = WebUrl()
+    favicon: str = WebUrl()
+
+
+class Asset(Strict):
+    """An image on the old site, referenced by its address (not copied). `rights` is the church confirming it may
+    use it; only confirmed images are shown."""
+    url: str = Field(pattern=WEB_URL, min_length=1, max_length=500)
+    role: str = Text(20)
+    alt: str = Text(200)
+    rights: bool = False
+
+
+class Site(Strict):
+    navigation: Navigation = Field(default_factory=Navigation)
+    links: list[SiteLink] = Field(default_factory=list, max_length=150)
+    forms: list[SiteForm] = Field(default_factory=list, max_length=20)
+    media: list[SiteMedia] = Field(default_factory=list, max_length=40)
+    theme: Theme = Field(default_factory=Theme)
+    assets: list[Asset] = Field(default_factory=list, max_length=40)
+    source_url: str = WebUrl()
+
+
 class ChurchContent(BaseModel):
     model_config = ConfigDict(extra='forbid')
     info: Info | None = None
@@ -170,6 +329,11 @@ class ChurchContent(BaseModel):
     ministries: list[Ministry] | None = Field(default=None, max_length=60)
     calendar: list[CalendarEvent] | None = Field(default=None, max_length=500)
     regions: list[Region] | None = Field(default=None, max_length=60)
+    staff: list[Person] | None = Field(default=None, max_length=200)
+    locations: list[Location] | None = Field(default=None, max_length=30)
+    sermons: list[Sermon] | None = Field(default=None, max_length=200)
+    site: Site | None = None
+    pages: list[SitePage] | None = Field(default=None, max_length=60)
 
 
 class ContentError(ValueError):
@@ -181,7 +345,23 @@ def public_info(content):
 
 
 def public_church(content):
-    return {'info': public_info(content), 'faqs': content.get('faqs', []), 'events': content.get('events', [])}
+    return {'info': public_info(content), 'faqs': content.get('faqs', []), 'events': content.get('events', []),
+            'groups': content.get('groups', []), 'staff': content.get('staff', []),
+            'locations': content.get('locations', []), 'sermons': content.get('sermons', []),
+            'site': public_site_model(content), 'pages': page_summaries(content.get('pages', []))}
+
+
+def public_site_model(content):
+    """The site model without images the church has not confirmed it may use."""
+    site = content.get('site')
+    if not site:
+        return None
+    return {**site, 'assets': [a for a in site.get('assets', []) if a.get('rights')]}
+
+
+def page_summaries(pages):
+    """The menu needs each page's slug and title; a page's sections come from GET /api/church/pages/{slug}."""
+    return [{'id': p['id'], 'slug': p['slug'], 'title': p['title'], 'page_type': p.get('page_type', '')} for p in pages]
 
 
 def public_ministries(content):
@@ -194,9 +374,11 @@ def public_events(content):
 
 
 def public_site(content):
-    """The public site responses, without reading or writing a church database."""
+    """The public site responses, without reading or writing a church database. A preview also carries every
+    page in full, so it can be shown without asking for each page."""
     return {'info': public_info(content), 'church': public_church(content),
-            'ministries': public_ministries(content), 'events': public_events(content)}
+            'ministries': public_ministries(content), 'events': public_events(content),
+            'pages': content.get('pages', [])}
 
 
 def with_ids(items, label):
@@ -221,9 +403,16 @@ def normalize(body):
     if 'info' in content:
         info = content['info']
         info['map_query'] = info['map_query'] or info['address'] or info['city']
-    for kind, label in (('faqs', 'FAQs'), ('events', 'events'), ('groups', 'groups'), ('calendar', 'calendar events')):
+    for kind, label in (('faqs', 'FAQs'), ('events', 'events'), ('groups', 'groups'), ('calendar', 'calendar events'),
+                        ('staff', 'staff members'), ('locations', 'locations'), ('sermons', 'sermons'),
+                        ('pages', 'pages')):
         if kind in content:
             content[kind] = with_ids(content[kind], label)
+    slugs = [p['slug'] for p in content.get('pages', [])]
+    if len(slugs) != len(set(slugs)):
+        raise ContentError('Two pages have the same address.')
+    for location in content.get('locations', []):
+        location['map_query'] = location['map_query'] or location['address']
     if 'regions' in content:
         regions = with_ids(content['regions'], 'regions')
         codes = [r['country_code'] for r in regions]
@@ -243,6 +432,15 @@ def normalize(body):
                 del m['shifts']
         content['ministries'] = ministries
     return content
+
+
+@router.get('/api/church/pages/{slug}')
+def get_page(slug: str):
+    """One page of the church's recreated website."""
+    page = db.get_page(slug)
+    if not page:
+        raise HTTPException(status_code=404, detail='Page not found')
+    return page
 
 
 @router.get('/api/church/content')

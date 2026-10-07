@@ -326,7 +326,7 @@ class BudgetTests(BuilderTestCase):
             links = ''.join(f'<a href="/{i}">Page {i}</a>' for i in range(1, 12))
             return url, 'text/html', f'<p>{url} Sundays 9 & 11</p>{links}'
 
-        with mock.patch.object(builder, '_now', lambda: now[0]):
+        with mock.patch.object(builder, '_now', lambda: now[0]), mock.patch.object(builder, 'CRAWL_WORKERS', 1):
             s = builder.new_session('https://church.test/', fetch=fetch, complete=lambda m, t: None, describe=False)
         self.assertEqual(fetched, ['https://church.test/', 'https://church.test/1', 'https://church.test/2'])
         self.assertEqual(len(s['sources']), 3)
@@ -528,6 +528,8 @@ class RouteTests(ChurchTestCase):
         self.addCleanup(builder.import_limiter.reset)
         for patcher in (mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1', 'BUILDER_AI': '0'}),
                         mock.patch.object(builder, '_http_fetch', site('harborlight-messy')),
+                        # No robots.txt, sitemap or feeds on this site.
+                        mock.patch.object(builder, '_http_feed', mock.Mock(side_effect=FileNotFoundError)),
                         mock.patch.object(builder, '_ai_complete', None),
                         mock.patch.object(builder, '_ai_describe', None)):
             patcher.start()
@@ -538,9 +540,14 @@ class RouteTests(ChurchTestCase):
 
     def create(self, headers=None):
         response = self.client.post('/api/builder/drafts', headers=headers, json={'url': 'https://church.test/'})
-        self.assertEqual(response.status_code, 201, response.text)
-        self.assertNotIn('text', response.json()['sources'][0])
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()['status'], 'importing')
         self.assertEqual(len(response.json()['id']), 24)
+        builder.wait_for_imports()
+        response = self.client.get('/api/builder/drafts/' + response.json()['id'])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn(response.json()['status'], ('clarifying', 'review'))
+        self.assertNotIn('text', response.json()['sources'][0])
         self.assertEqual(response.json()['notes'], [])
         return response.json()['id']
 
@@ -678,6 +685,8 @@ class RouteTests(ChurchTestCase):
                 self.assertEqual(response.json()['fields']['services']['value'], [{'day': 'Sunday', 'time': '10:00'}])
 
     def test_rate_limit_is_shared_by_all_import_paths(self):
+        # Earlier imports from this address, so the five below reach the limit.
+        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(builder.IMPORTS_PER_ADDRESS - 5))
         self.create()
         for _ in range(2):
             self.assertEqual(self.client.post('/api/builder/drafts/blank').status_code, 201)
@@ -734,7 +743,9 @@ class RouteTests(ChurchTestCase):
                          [('Sunday', '9:00 AM'), ('Sunday', '11:00 AM')])
         self.assertEqual(snapshot['church']['info'], snapshot['info'])
         self.assertEqual(snapshot['ministries'], [])
-        self.assertEqual(snapshot['events'], [])
+        # Dated events found on the site (the fish fry, while it is upcoming) are the calendar.
+        self.assertEqual([e['title'] for e in snapshot['events']],
+                         [e['value']['name'] for e in draft['collections'].get('events', []) if e['value'].get('date')])
         self.assertEqual(set(self.fake.seen), {builder.DRAFT_SPACE})
         self.assertEqual(set(self.fake.databases), databases)
         self.assertEqual(builder._load(sid), draft)
@@ -763,6 +774,9 @@ class RouteTests(ChurchTestCase):
         with mock.patch.object(builder, 'build_content', return_value=content):
             snapshot = self.client.get(f'/api/builder/drafts/{sid}/site').json()
             self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope()).status_code, 200)
+        # Applying keeps the city the church signed up with (the draft has none).
+        for info in (snapshot['info'], snapshot['church']['info']):
+            info['city'] = 'Austin'
         for path in ('info', 'church', 'ministries', 'events'):
             self.assertEqual(self.client.get('/api/' + path, headers=self.hope()).json(), snapshot[path])
         self.assertEqual(snapshot['ministries'][0]['total'], 3)
@@ -836,7 +850,7 @@ class RouteTests(ChurchTestCase):
             self.assertIsNone(db.one('SELECT data FROM config WHERE key = ?', ('draft:' + sid,)))
 
     def test_per_ip_limit_and_forwarded_client_ip(self):
-        for _ in range(5):
+        for _ in range(builder.IMPORTS_PER_ADDRESS):
             self.create({'cf-connecting-ip': '192.0.2.1'})
         with mock.patch.object(builder, 'new_session') as importing:
             limited = self.client.post('/api/builder/drafts', headers={'cf-connecting-ip': '192.0.2.1'},
@@ -847,14 +861,14 @@ class RouteTests(ChurchTestCase):
         self.create({'cf-connecting-ip': '192.0.2.2'})
 
     def test_socket_ip_limit_and_rolling_hour(self):
-        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(5))
+        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(builder.IMPORTS_PER_ADDRESS))
         self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'}).status_code, 429)
         builder.import_limiter.reset()
-        builder.import_limiter.starts.extend((time.monotonic() - 3601, 'testclient') for _ in range(5))
+        builder.import_limiter.starts.extend((time.monotonic() - 3601, 'testclient') for _ in range(builder.IMPORTS_PER_ADDRESS))
         self.create()
 
     def test_overall_limit(self):
-        builder.import_limiter.starts.extend((time.monotonic(), f'client-{i}') for i in range(60))
+        builder.import_limiter.starts.extend((time.monotonic(), f'client-{i}') for i in range(builder.IMPORTS_PER_HOUR))
         r = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
         self.assertEqual(r.status_code, 429)
         self.assertIn('hour', r.json()['detail'])
@@ -866,7 +880,13 @@ class RouteTests(ChurchTestCase):
             self.assertIn('already running', r.json()['detail'])
         self.assertEqual(builder.import_limiter.running, 0)
         with mock.patch.object(builder, 'new_session', side_effect=ValueError('No pages')):
-            self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'}).status_code, 400)
+            started = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
+            self.assertEqual(started.status_code, 202)
+            builder.wait_for_imports()
+        failed = self.client.get('/api/builder/drafts/' + started.json()['id']).json()
+        self.assertEqual((failed['status'], failed['error']), ('failed', 'No pages'))
+        self.assertEqual(builder.import_limiter.running, 0)
+        self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'ftp://church.test/'}).status_code, 400)
         self.assertEqual(builder.import_limiter.running, 0)
         self.create()
 
@@ -885,7 +905,9 @@ class RouteTests(ChurchTestCase):
         sid = self.create()
         with db.use_church(builder.DRAFT_SPACE):
             keys = [row['key'] for row in db.query("SELECT key FROM config WHERE key LIKE 'draft:%'")]
-        self.assertEqual(keys, ['draft:' + sid])
+        # The new draft and its page rows; nothing of the expired one.
+        self.assertIn('draft:' + sid, keys)
+        self.assertTrue(all(key == 'draft:' + sid or key.startswith(f'draft:{sid}:page:') for key in keys), keys)
 
 
 class AiOfflineTests(BuilderTestCase):

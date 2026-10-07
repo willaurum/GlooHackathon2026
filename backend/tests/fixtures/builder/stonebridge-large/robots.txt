@@ -1,0 +1,3 @@
+User-agent: *
+Disallow: /members/
+Sitemap: https://church.test/sitemap.xml

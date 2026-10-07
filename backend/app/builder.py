@@ -1,9 +1,13 @@
 """Agentic builder: turn an existing church website into a church profile, with every value traced to its source.
 
-    1. Import   fetch the site (same-site pages) into sources: [{id, url, title, text}]
+    1. Import   fetch the site into sources: [{id, url, title, text}]. robots.txt is obeyed, the sitemap and the
+                navigation are read first, and pages are read most useful first (builder_crawl.py), with iCal and
+                sermon feeds read as their own sources.
     2. Extract  read each source into claims: {field, value, quote, source_id, method}. Pattern rules catch
                 phones, emails, addresses and service times; the AI (when configured) adds the name, prose and
-                FAQs. Every AI claim must quote its source exactly, or it is dropped.
+                FAQs. Every AI claim must quote its source exactly, or it is dropped. Lists (events, staff,
+                ministries, groups, locations, sermons) come from structured data (builder_structured.py) and from
+                specialist readers, one bounded AI call per page (builder_agents.py), checked the same way.
     3. Clarify  plain code compares the claims field by field: one agreeing value is prefilled, different
                 values are a conflict, nothing found for a required field is missing. Nothing is decided by
                 the AI, and a conflict is never resolved without the church's answer.
@@ -11,8 +15,9 @@
     5. Build    the confirmed profile becomes ChurchContent JSON (church_content.py) and can be loaded into a
                 church, whose own site is then the preview.
 
-Public drafts live in the reserved platform space 'builder' as 'draft:<id>', expire after 24 hours,
-and can be applied once by staff into a new church.
+A website import runs in the background: POST answers 202 with a draft whose status is 'importing', and the
+page polls GET until it is 'clarifying', 'review' or 'failed'. Public drafts live in the reserved platform space
+'builder' as 'draft:<id>', expire after 24 hours, and can be applied once by staff into a new church.
 """
 import asyncio
 import io
@@ -28,6 +33,7 @@ import threading
 import time
 import zipfile
 import xml.etree.ElementTree as ET
+import heapq
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -42,12 +48,15 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import church_content, db
+from . import builder_agents, builder_crawl, builder_site, builder_structured, builder_theme, church_content, db
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_PAGES = 12
+MAX_PAGES = max(1, min(60, int(os.environ.get('BUILDER_MAX_PAGES') or 40)))
+CRAWL_WORKERS = 3
+MAX_FEEDS = 4
+MAX_SPECIALIST_CALLS = max(0, int(os.environ.get('BUILDER_MAX_AI_CALLS') or 60) - MAX_PAGES // 2)
 MAX_PAGE_BYTES = 1_000_000
 MAX_SOURCE_CHARS = 20_000
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -56,6 +65,9 @@ MAX_UPLOAD_FILES = 5
 FETCH_TIMEOUT = 10.0
 IMPORT_BUDGET = float(os.environ.get('BUILDER_IMPORT_BUDGET', '75.0'))
 CRAWL_BUDGET = 30.0
+# A website import runs in the background (see import_site), so it can read more than one request allows.
+JOB_BUDGET = float(os.environ.get('BUILDER_JOB_BUDGET') or 180.0)
+JOB_MAX = JOB_BUDGET + 60.0
 DOCUMENT_TIMEOUT = 20.0
 DOCUMENT_MEMORY = 1024 * 1024 * 1024  # address space, which includes the app the child imports
 _WORKERS = ThreadPoolExecutor(max_workers=12, thread_name_prefix='builder')
@@ -106,49 +118,229 @@ def _parallel(items, read, deadline, workers=4):
             future.cancel()
 
 
+# Zero-width and text-direction characters: invisible on the page, so they can only hide or reorder words.
+INVISIBLE_RE = re.compile('[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]')
+VOID_TAGS = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'}
+
+
+def _hidden(attrs):
+    """An element the page marks as not shown (hidden, aria-hidden, display:none, visibility:hidden)."""
+    style = re.sub(r'\s+', '', attrs.get('style') or '').lower()
+    return ('hidden' in attrs or (attrs.get('aria-hidden') or '').strip().lower() == 'true'
+            or 'display:none' in style or 'visibility:hidden' in style)
+
+
 class _PageText(HTMLParser):
-    """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page."""
+    """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page. Also kept for the
+    structured readers: link text and whether a link is in the navigation, JSON-LD blocks, embedded players,
+    feed links and the canonical address. Text the page hides (and comments) is not read: a reader could be told
+    things there that visitors never see. Links inside hidden menus are still followed.
+    For recreating the site (builder_site, builder_theme): the menu as (depth, label, href) per <nav>/<header>
+    block, headings, form fields (never their values), button-styled links, stylesheets, icons and the logo."""
     # Form dropdowns are choices, not content (a "Which service?" list would read as service times).
     SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'select', 'textarea'}
     BLOCK = {'p', 'div', 'br', 'li', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article',
              'header', 'footer', 'nav', 'main', 'aside', 'dt', 'dd', 'table', 'form', 'blockquote', 'label', 'button'}
+    NAV = {'nav', 'header', 'footer'}
+    HEADINGS = {'h1': 1, 'h2': 2, 'h3': 3, 'h4': 4, 'h5': 5, 'h6': 6}
+    FIELD_SKIP = {'hidden', 'submit', 'button', 'image', 'reset', 'password', 'file'}
+    MAX_JSONLD, MAX_FORMS, MAX_FIELDS, MAX_NAV, MAX_CSS = 10, 10, 30, 200, 60_000
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts, self.links, self.images, self.title, self._skip, self._in_title = [], [], [], '', 0, False
+        self.anchors, self.jsonld, self.embeds, self.feeds, self.canonical = [], [], [], [], ''
+        self.meta, self.nav, self.headings, self.forms, self.ctas = {}, [], [], [], []
+        self.styles, self.icons, self.logos, self.css, self.hidden_links = [], [], [], [], []
+        self._nav, self._anchor, self._script, self._hide, self._style = 0, None, None, None, None
+        self._block, self._items, self._heading, self._form, self._label, self._labels = 0, [], None, None, None, {}
+
+    def _nav_start(self, tag, attrs):
+        if tag in ('nav', 'header', 'footer') and not self._nav:
+            self._block += 1
+            self._block_tag = tag
+        if not self._nav or self._hide and tag != 'li':
+            return
+        if tag == 'li' and len(self.nav) < self.MAX_NAV:
+            item = {'block': self._block, 'tag': getattr(self, '_block_tag', 'nav'), 'depth': len(self._items) + 1,
+                    'text': [], 'href': '', 'open': True}
+            self._items.append(item)
+            self.nav.append(item)
+        elif tag in ('ul', 'ol') and self._items:
+            self._items[-1]['open'] = False  # the item's own label is done; its submenu follows
+        elif tag == 'a' and self._items and self._items[-1]['open'] and not self._items[-1]['href']:
+            self._items[-1]['href'] = attrs.get('href') or ''
+
+    def _form_start(self, tag, attrs):
+        if tag == 'form' and len(self.forms) < self.MAX_FORMS:
+            self._form = {'action': attrs.get('action') or '', 'method': (attrs.get('method') or 'get').lower(),
+                          'name': attrs.get('aria-label') or attrs.get('name') or attrs.get('id') or '',
+                          'fields': [], 'submit': '', 'password': False}
+            self.forms.append(self._form)
+        elif self._form is None:
+            return
+        elif tag in ('input', 'select', 'textarea'):
+            kind = (attrs.get('type') or 'text').lower() if tag == 'input' else tag
+            if kind == 'password':
+                self._form['password'] = True
+            if kind in ('submit', 'button') and attrs.get('value') and not self._form['submit']:
+                self._form['submit'] = attrs['value'][:60]
+            if kind in self.FIELD_SKIP or len(self._form['fields']) >= self.MAX_FIELDS:
+                return
+            self._form['fields'].append({
+                'name': (attrs.get('name') or '')[:80], 'type': kind, 'id': attrs.get('id') or '',
+                'label': (attrs.get('aria-label') or attrs.get('placeholder') or '')[:120],
+                'required': 'required' in attrs or (attrs.get('aria-required') or '') == 'true'})
+        elif tag == 'label':
+            self._label = [attrs.get('for') or '', []]
+        elif tag == 'button' and (attrs.get('type') or 'submit').lower() == 'submit':
+            self._form['_button'] = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if self._hide:
+            if tag == self._hide[0]:
+                self._hide[1] += 1
+        elif tag not in VOID_TAGS and _hidden(attrs):
+            self._hide = [tag, 1]
+        self._nav_start(tag, attrs)
+        if not self._hide:
+            self._form_start(tag, attrs)
+            if tag in self.HEADINGS:
+                self._heading = [self.HEADINGS[tag], []]
+        if tag == 'style' and len(''.join(self.css)) < self.MAX_CSS:
+            self._style = []
         if tag in self.SKIP:
             self._skip += 1
+            if tag == 'script' and (attrs.get('type') or '').lower() == 'application/ld+json' and len(self.jsonld) < self.MAX_JSONLD:
+                self._script = []
         elif tag == 'title':
             self._in_title = True
         elif tag == 'a' and attrs.get('href'):
             self.links.append(attrs['href'])
-        elif tag == 'img':
+            self._anchor = [attrs['href'], [], self._nav > 0, attrs.get('aria-label') or attrs.get('title') or '']
+            if self._hide or _hidden(attrs):
+                self.hidden_links.append(attrs['href'])
+            look = f"{attrs.get('class') or ''} {attrs.get('role') or ''}".lower()
+            if not self._hide and re.search(r'\b(btn|button|cta)\b|button', look):
+                self.ctas.append(attrs['href'])
+        elif tag == 'img' and not self._hide and not _hidden(attrs):
             if attrs.get('src'):
                 self.images.append(attrs['src'])
+                look = ' '.join(attrs.get(k) or '' for k in ('class', 'id', 'alt', 'src')).lower()
+                if 'logo' in look or self._nav and not self.logos and self._anchor is not None:
+                    self.logos.append((attrs['src'], attrs.get('alt') or ''))
             if attrs.get('alt'):
                 self.parts.append(f" [image: {attrs['alt']}] ")
+        elif tag == 'meta' and attrs.get('content'):
+            key = (attrs.get('property') or attrs.get('name') or '').strip().lower()
+            if key and key not in self.meta and len(self.meta) < 40:
+                self.meta[key] = ' '.join(INVISIBLE_RE.sub('', attrs['content']).split())[:500]
+        elif tag == 'iframe' and attrs.get('src') and not self._hide:
+            # A marker line, so builder_site can tell which section a player or form sits in.
+            self.parts.append(f'\n[embed {len(self.embeds) + 1}]\n')
+            self.embeds.append((attrs['src'], attrs.get('title') or ''))
+        elif tag == 'link' and attrs.get('href'):
+            rel, kind = (attrs.get('rel') or '').lower(), (attrs.get('type') or '').lower()
+            if rel == 'canonical':
+                self.canonical = attrs['href']
+            elif 'stylesheet' in rel and len(self.styles) < 10:
+                self.styles.append(attrs['href'])
+            elif 'icon' in rel and len(self.icons) < 10:
+                self.icons.append((attrs['href'], rel, attrs.get('sizes') or ''))
+            elif 'alternate' in rel and ('rss' in kind or 'atom' in kind or 'calendar' in kind):
+                self.feeds.append(attrs['href'])
+        if tag in self.NAV:
+            self._nav += 1
         if tag in self.BLOCK:
             self.parts.append('\n')
 
     def handle_endtag(self, tag):
+        if self._hide and tag == self._hide[0]:
+            self._hide[1] -= 1
+            if not self._hide[1]:
+                self._hide = None
+        if tag == 'li' and self._items:
+            self._items.pop()['open'] = False
+        if tag in self.HEADINGS and self._heading:
+            text = ' '.join(''.join(self._heading[1]).split())
+            if text:
+                self.headings.append((self._heading[0], text[:200]))
+            self._heading = None
+        if self._form is not None:
+            if tag == 'label' and self._label:
+                self._labels[self._label[0]] = ' '.join(''.join(self._label[1]).split())[:120]
+                self._label = None
+            elif tag == 'button' and '_button' in self._form:
+                text = ' '.join(''.join(self._form.pop('_button')).split())
+                self._form['submit'] = self._form['submit'] or text[:60]
+            elif tag == 'form':
+                self._form = None
+        if tag == 'style' and self._style is not None:
+            self.css.append(''.join(self._style))
+            self._style = None
         if tag in self.SKIP:
             self._skip = max(0, self._skip - 1)
+            if tag == 'script' and self._script is not None:
+                self.jsonld.append(''.join(self._script)[:MAX_SOURCE_CHARS])
+                self._script = None
         elif tag == 'title':
             self._in_title = False
+        elif tag == 'a' and self._anchor:
+            href, text, in_nav, label = self._anchor
+            text = ' '.join(''.join(text).split()) or ('' if href in self.hidden_links else ' '.join(label.split()))
+            self.anchors.append((href, text[:120], in_nav))
+            self._anchor = None
+        if tag in self.NAV:
+            self._nav = max(0, self._nav - 1)
         if tag in self.BLOCK:
             self.parts.append('\n')
 
     def handle_data(self, data):
-        if self._in_title:
+        if self._style is not None:
+            self._style.append(data)
+        if not self._hide and not self._skip:
+            if self._items and self._items[-1]['open']:
+                self._items[-1]['text'].append(data)
+            if self._heading:
+                self._heading[1].append(data)
+            if self._label:
+                self._label[1].append(data)
+            if self._form is not None and '_button' in self._form:
+                self._form['_button'].append(data)
+        if self._script is not None:
+            self._script.append(data)
+        elif self._in_title:
             self.title += data
-        elif not self._skip:
+        elif not self._skip and not self._hide:
             self.parts.append(data)
+            if self._anchor:
+                self._anchor[1].append(data)
+
+    def menu(self):
+        """[(block, block tag, depth, label, href)] for menu items with a label."""
+        out = []
+        for item in self.nav:
+            label = ' '.join(INVISIBLE_RE.sub('', ''.join(item['text'])).split())[:80]
+            if label:
+                out.append((item['block'], item['tag'], item['depth'], label, item['href']))
+        return out
+
+    def form_list(self):
+        """Forms with their fields' labels; login forms are left out, and no field values are ever kept."""
+        out = []
+        for form in self.forms:
+            if form.pop('password', False):
+                continue
+            form.pop('_button', None)
+            for field in form['fields']:
+                field['label'] = self._labels.get(field.pop('id'), '') or field['label'] or field['name']
+            out.append(form)
+        return out
 
     def text(self):
-        lines = (re.sub(r'[ \t\r\f\v]+', ' ', line).strip() for line in ''.join(self.parts).split('\n'))
+        text = INVISIBLE_RE.sub('', ''.join(self.parts))
+        lines = (re.sub(r'[ \t\r\f\v]+', ' ', line).strip() for line in text.split('\n'))
         return '\n'.join(line for line in lines if line)
 
 
@@ -156,7 +348,11 @@ def parse_html(html):
     page = _PageText()
     page.feed(html)
     page.close()
-    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links, 'images': page.images}
+    return {'title': ' '.join(INVISIBLE_RE.sub('', page.title).split()), 'text': page.text(), 'links': page.links, 'images': page.images,
+            'anchors': page.anchors, 'jsonld': page.jsonld, 'embeds': page.embeds, 'feeds': page.feeds,
+            'canonical': page.canonical, 'meta': page.meta, 'nav': page.menu(), 'headings': page.headings,
+            'forms': page.form_list(), 'ctas': page.ctas, 'styles': page.styles, 'icons': page.icons,
+            'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS], 'hidden_links': page.hidden_links}
 
 
 class FetchRefused(ValueError):
@@ -186,8 +382,51 @@ def _check_public(url):
             raise ValueError('That address is on a private network and cannot be imported.')
 
 
-def crawl(start_url, fetch=None, max_pages=MAX_PAGES, deadline=None, notes=None):
-    """Breadth-first over same-site HTML pages. `fetch(url) -> (final_url, content_type, text)` can be injected."""
+def _fetch_each(urls, fetch, deadline, workers):
+    """One result per url, in order: ('ok', value), ('error', exception), or None for work cut off by the deadline."""
+    def read(url):
+        try:
+            return 'ok', fetch(url)
+        except Exception as error:  # one broken page must not stop the import
+            return 'error', error
+    values, _ = _parallel(urls, read, deadline, workers=workers)
+    return values
+
+
+class _Late(Exception):
+    """A fetch that would start after the deadline because the site asked for a pause between requests."""
+
+
+def host_policy(fetch_feed, deadline):
+    """robots.txt rules and Crawl-delay pacing for every host the import touches (builder_crawl.HostPolicy)."""
+    return builder_crawl.HostPolicy(
+        fetch_feed, lambda urls, f: _fetch_each(urls, f, min(deadline, _now() + FETCH_TIMEOUT + 5), 1), now=_now)
+
+
+def polite(fetch, policy, deadline):
+    """`fetch` that skips addresses robots.txt disallows and waits out each host's Crawl-delay."""
+    def go(url, *args):
+        if not policy.allowed(url):
+            raise PermissionError(f'robots.txt disallows {url}')
+        if not policy.wait(url, deadline):
+            raise _Late(url)
+        return fetch(url, *args)
+    return go
+
+
+ROBOTS_UNREACHABLE = ('This website\'s robots.txt could not be read right now, so it cannot be imported safely. '
+                      'Try again later, or upload your church materials instead.')
+ROBOTS_REFUSED = ('This website asks automated tools not to read it (robots.txt), so it cannot be imported. '
+                  'Upload your church materials instead.')
+
+
+def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetch_feed=None, feeds=None, progress=None,
+          policy=None):
+    """Same-site HTML pages, most useful first (builder_crawl.score). `fetch(url) -> (final_url, content_type, text)`
+    can be injected. With `fetch_feed` (used for robots.txt and sitemaps), robots.txt is obeyed for every host, its
+    Crawl-delay paces the reading, and the sitemap's pages join the queue. Feed links (iCal, RSS) found on the way
+    are appended to `feeds`. `progress(read, found)` is called after each batch of pages."""
+    max_pages = max_pages or MAX_PAGES
     start_url = urldefrag(start_url.strip())[0]
     deadline = deadline if deadline is not None else _now() + min(CRAWL_BUDGET, IMPORT_BUDGET)
     _, skipped = _parallel([start_url], _check_public, deadline, workers=1)
@@ -196,44 +435,142 @@ def crawl(start_url, fetch=None, max_pages=MAX_PAGES, deadline=None, notes=None)
             notes.append('Stopped reading before the first page to stay within the time limit.')
         return []
     origin = urlparse(start_url).netloc
-    fetch = fetch or _http_fetch
-    queue, seen, sources = [start_url], {start_url}, []
-    while queue and len(sources) < max_pages:
-        if _now() >= deadline:
+    policy = policy or (host_policy(fetch_feed, deadline) if fetch_feed is not None else builder_crawl.HostPolicy())
+    fetch = polite(fetch or _http_fetch, policy, deadline)
+    workers = CRAWL_WORKERS
+    feeds = feeds if feeds is not None else []
+    order, queue, seen, sources = 0, [], {start_url}, []
+
+    def push(url, value):
+        nonlocal order
+        order += 1
+        heapq.heappush(queue, (-value, order, url))
+
+    def add_feed(url):
+        url = builder_crawl.feed_url(url)
+        if url not in feeds and urlparse(url).scheme in ('http', 'https'):
+            feeds.append(url)
+
+    paced = False
+    if fetch_feed is not None:
+        robots = policy.rules(start_url)
+        if robots.disallow_all:
+            raise ValueError(ROBOTS_UNREACHABLE)
+        if not robots.allowed(start_url):
+            raise ValueError(ROBOTS_REFUSED)
+        delay = robots.crawl_delay()
+        if delay:
+            # One page at a time, with the pause the site asked for; what fits in the time is all that is read.
+            workers, paced = 1, True
+            max_pages = max(1, min(max_pages, int(max(0.0, deadline - _now()) * 0.8 / delay)))
+        # Sitemaps get at most a fifth of the reading time.
+        found_by = _now() + max(0.0, deadline - _now()) * 0.2
+        mapped = builder_crawl.discover(start_url, robots, polite(fetch_feed, policy, found_by),
+                                        lambda urls, f: _fetch_each(urls, f, found_by, workers))
+        for url in mapped:
+            if url not in seen and not builder_crawl.skippable(url):
+                seen.add(url)
+                push(url, builder_crawl.score(url))
+    push(start_url, float('inf'))
+    posts, stopped = 0, False
+    while queue and len(sources) < max_pages and _now() < deadline and not stopped:
+        wave = []
+        while queue and len(wave) < min(workers, max_pages - len(sources)):
+            url = heapq.heappop(queue)[2]
+            if url != start_url and (not policy.allowed(url) or builder_crawl.is_post(url) and posts >= builder_crawl.MAX_POSTS):
+                continue
+            posts += url != start_url and builder_crawl.is_post(url)
+            wave.append(url)
+        if not wave:
             break
-        url = queue.pop(0)
-        try:
-            results, skipped = _parallel([url], fetch, deadline, workers=1)
-            if skipped:
-                queue.insert(0, url)
-                break
-            final_url, content_type, body = results[0]
-        except FetchRefused:
-            if url == start_url:
-                raise  # "That address is on a private network" says more than "no pages could be read".
-            continue
-        except Exception as error:  # one broken page must not stop the import
-            log.info('builder: skipped %s (%s)', url, error)
-            continue
-        if 'html' not in content_type:
-            continue
-        page = parse_html(body)
-        # The same page under two addresses ("/" and "/index.html") is one source, or it would count twice.
-        if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] for s in sources):
-            continue
-        images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
-        sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
-                        'text': page['text'][:MAX_SOURCE_CHARS],
-                        'images': [i for i in images if urlparse(i).netloc == origin and IMAGE_RE.search(i)]})
-        for href in page['links']:
-            link = urldefrag(urljoin(final_url, href))[0]
-            if urlparse(link).netloc == origin and link not in seen and not re.search(r'\.(pdf|jpe?g|png|gif|zip|docx?)$', link, re.I):
-                seen.add(link)
-                queue.append(link)
-    if queue and len(sources) < max_pages and notes is not None:
+        for url, result in zip(wave, _fetch_each(wave, fetch, deadline, workers)):
+            if result is None or result[0] == 'error' and isinstance(result[1], _Late):
+                push(url, float('inf'))  # read first next time; counted as not read in the note below
+                stopped = True
+                continue
+            status, value = result
+            if status == 'error':
+                if isinstance(value, FetchRefused) and url == start_url:
+                    raise value  # "That address is on a private network" says more than "no pages could be read".
+                log.info('builder: skipped %s (%s)', url, value)
+                continue
+            final_url, content_type, body = value
+            if 'html' not in content_type:
+                continue
+            page = parse_html(body)
+            canonical = urldefrag(urljoin(final_url, page['canonical']))[0] if page['canonical'] else ''
+            # The same page under two addresses ("/" and "/index.html") is one source, or it would count twice.
+            if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] or canonical and s['url'] == canonical for s in sources):
+                continue
+            images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
+            anchors = [(urldefrag(urljoin(final_url, href))[0], text, nav) for href, text, nav in page['anchors']
+                       if not href.lower().startswith(('mailto:', 'tel:', 'javascript:'))][:300]
+            sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
+                            'text': page['text'][:MAX_SOURCE_CHARS],
+                            'images': [i for i in images if urlparse(i).netloc == origin and IMAGE_RE.search(i)],
+                            'page_type': builder_crawl.page_type(final_url, page['title']),
+                            'links': list(dict.fromkeys(a[0] for a in anchors)),
+                            'anchors': anchors, 'jsonld': page['jsonld'],
+                            'site_name': page['meta'].get('og:site_name') or page['meta'].get('application-name', ''),
+                            'meta': page['meta'], 'headings': page['headings'],
+                            'nav': [(b, tag, depth, label, urldefrag(urljoin(final_url, href))[0] if href else '')
+                                    for b, tag, depth, label, href in page['nav']],
+                            'forms': [{**f, 'action': urljoin(final_url, f['action']) if f['action'] else final_url}
+                                      for f in page['forms']],
+                            'ctas': list(dict.fromkeys(urldefrag(urljoin(final_url, h))[0] for h in page['ctas']))[:30],
+                            'styles': [urljoin(final_url, h) for h in page['styles']],
+                            'icons': [(urljoin(final_url, h), rel, sizes) for h, rel, sizes in page['icons']],
+                            'logos': [(urljoin(final_url, src), alt) for src, alt in page['logos']],
+                            'css': page['css'],
+                            'hidden_links': list({urldefrag(urljoin(final_url, h))[0] for h in page['hidden_links']}),
+                            'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']]})
+            for href in page['feeds']:
+                add_feed(urljoin(final_url, href))
+            for link, text, nav in anchors:
+                if builder_crawl.is_feed(link):
+                    add_feed(link)
+                elif builder_crawl.same_site(link, origin) and link not in seen and not builder_crawl.skippable(link):
+                    seen.add(link)
+                    push(link, builder_crawl.score(link, text, nav))
+            for href in page['links']:
+                if href.lower().startswith('webcal:'):
+                    add_feed(href)
+        if progress:
+            progress(len(sources), len(sources) + len(queue))
+    if paced and notes is not None:
+        notes.append(f'This website asks automated tools to pause {delay:g} seconds between pages, so the builder '
+                     'read one page at a time.')
+    if queue and notes is not None:
         total = min(max_pages, len(sources) + len(queue))
-        notes.append(f'Stopped reading after {len(sources)} of {total} pages to stay within the time limit.')
+        if len(sources) < max_pages:
+            notes.append(f'Stopped reading after {len(sources)} of {total} pages to stay within the time limit.')
+        else:
+            notes.append(f'Read the {len(sources)} most useful pages of {len(sources) + len(queue)} found; '
+                         'older posts and archive pages were skipped.')
     return sources
+
+
+def read_feeds(feeds, fetch_feed, first_id, deadline, notes=None, policy=None):
+    """Calendar (iCal) and sermon (RSS, podcast) feeds as sources of kind 'feed'. Calendars are read first. Feeds
+    on any host follow that host's robots.txt."""
+    if not feeds or fetch_feed is None or _now() >= deadline:
+        return []
+    policy = policy or host_policy(fetch_feed, deadline)
+    ranked = sorted(dict.fromkeys(feeds), key=lambda u: (not re.search(r'\.ics|calendar', u, re.I),
+                                                         not re.search(r'sermon|podcast|message', u, re.I)))
+    ranked = [u for u in ranked if policy.allowed(u)][:MAX_FEEDS]
+    out = []
+    for url, result in zip(ranked, _fetch_each(ranked, polite(fetch_feed, policy, deadline), deadline, CRAWL_WORKERS)):
+        if not result or result[0] != 'ok':
+            continue
+        final_url, _, body = result[1]
+        body = body if isinstance(body, str) else body.decode('utf-8', errors='replace')
+        calendar = 'BEGIN:VCALENDAR' in body[:2000]
+        if not calendar and not re.search(r'<(rss|feed)\b', body[:2000]):
+            continue
+        out.append({'id': f's{first_id + len(out)}', 'kind': 'feed', 'url': final_url,
+                    'title': 'Calendar feed' if calendar else 'News or podcast feed', 'text': '', 'feed': body[:MAX_PAGE_BYTES]})
+    return out
 
 
 IMAGE_RE = re.compile(r'\.(png|jpe?g|gif|webp)$', re.I)
@@ -241,7 +578,7 @@ MAX_IMAGES = 5
 MAX_IMAGE_BYTES = 4_000_000
 
 
-def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=None):
+def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=None, policy=None):
     """Image sources: a bulletin or flyer often holds the only copy of a service time. Each same-site image
     (at most MAX_IMAGES) is transcribed by a vision model into text that the same rules then read. With no
     vision model, images are skipped."""
@@ -249,7 +586,7 @@ def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=N
     if not describe:
         return []
     deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
-    fetch_bytes = fetch_bytes or _http_fetch_bytes
+    fetch_bytes = polite(fetch_bytes or _http_fetch_bytes, policy or builder_crawl.HostPolicy(), deadline)
     out, seen, images = [], set(), []
     for page in sources:
         for url in page.get('images', []):
@@ -311,7 +648,7 @@ def _http_fetch_bytes(url):
         if not content_type.startswith('image/') or len(data) > MAX_IMAGE_BYTES:
             raise ValueError('not a small image')
         return content_type, data
-    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
+    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'Tekton/0.1'}) as client:
         response = client.get(url)
         response.raise_for_status()
         content_type = response.headers.get('content-type', '').split(';')[0]
@@ -538,17 +875,21 @@ def read_files(files, describe=None, deadline=None, notes=None):
     return sources
 
 
-def _http_fetch(url):
+FEED_TYPES = re.compile(r'xml|rss|atom|calendar|text/plain', re.I)
+
+
+def _http_fetch(url, kind='page'):
+    """(final_url, content_type, text). kind 'feed' is for robots.txt, sitemaps and iCal/RSS feeds."""
     _check_public(url)
     if _fetch_bridge():
-        final_url, content_type, data = _bridge_fetch(url, 'page')
+        final_url, content_type, data = _bridge_fetch(url, kind)
         charset = re.search(r'charset=([\w.-]+)', content_type)
         try:
             text = data.decode(charset.group(1) if charset else 'utf-8', errors='replace')
         except LookupError:
             text = data.decode('utf-8', errors='replace')
         return final_url, content_type, text[:MAX_PAGE_BYTES]
-    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
+    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'Tekton/0.1'}) as client:
         response = client.get(url)
         hops = 0
         while response.is_redirect and hops < 5:
@@ -557,7 +898,20 @@ def _http_fetch(url):
             response = client.get(url)
             hops += 1
         response.raise_for_status()
-        return str(response.url), response.headers.get('content-type', ''), response.text[:MAX_PAGE_BYTES]
+        content_type = response.headers.get('content-type', '')
+        if kind == 'feed' and not FEED_TYPES.search(content_type):
+            raise ValueError('not a feed')
+        if kind == 'css' and not re.match(r'text/css\b', content_type, re.I):
+            raise ValueError('not a stylesheet')
+        return str(response.url), content_type, response.text[:MAX_PAGE_BYTES]
+
+
+def _http_feed(url):
+    return _http_fetch(url, 'feed')
+
+
+def _http_css(url):
+    return _http_fetch(url, 'css')
 
 
 # ---------------------------------------------------------------- 2. Extract
@@ -570,7 +924,25 @@ BARE_TIMES_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+)\s*(\d{1,2})
 WORSHIP_WORDS = re.compile(r'\b(worship|service|services|gathering|mass|traditional|contemporary|join us)\b', re.I)
 NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry)\b', re.I)
 # A calendar date ("Sunday, November 1, 2026") is a one-off event, not a weekly service time.
-DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b', re.I)
+# Ordinals and their typos ("October 15th", "Oct 25h"), numeric dates ("10/25") and ISO dates count too.
+DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th|h)?\b'
+                   r'|\b\d{1,2}(?:st|nd|rd|th)\s+of\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)'
+                   r'|\bthe\s+\d{1,2}(?:st|nd|rd|th)\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b', re.I)
+# A monthly or yearly gathering ("the last Tuesday of every month") is an event, not a weekly service time.
+NOT_WEEKLY = re.compile(r'\b(?:first|second|third|fourth|fifth|last|1st|2nd|3rd|4th|5th)\s+(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*'
+                        r'\s+(?:of|in|each|every)\b|\b(?:of|each|every)\s+(?:the\s+)?month\b|\bmonthly\b|\bonce\s+a\s+'
+                        r'(?:month|quarter|year)\b|\bevery\s+other\b|\bbi-?weekly\b|\bquarterly\b|\bannual(?:ly)?\b|'
+                        r'\bonce\s+a\s+year\b', re.I)
+# "6:30 - 7:30 PM", "10am to noon": a service starts at the first time; the end time is not another service.
+RANGE_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?\s*m\.?)?\s*(?:-|–|—|to|until|till)\s*'
+                      r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b', re.I)
+# Announcement, news and event pages invite people to one-off gatherings ("Come join us on Sunday at 4 PM for
+# trunk or treat"), so there a sentence must say worship, service or mass, and "join us" with a day is not enough.
+STRICT_PAGES = ('news', 'events')
+STRICT_WORSHIP = re.compile(r'\b(worship|services?|mass)\b', re.I)
+# "9:00 & 11:00 am": the am/pm after the last time covers the times listed before it.
+SHARED_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+|,)\s*(?=(?:\d{1,2}(?::\d{2})?\s*(?:&|and|\+|,)\s*)*'
+                       r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b)', re.I)
 
 
 def _digits(phone):
@@ -592,37 +964,71 @@ def _sentences(text):
         yield from (s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip())
 
 
-def service_times(text):
-    """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times."""
+def _times(sentence):
+    """Clock times in a sentence, in order, including ones that share a later am/pm. A range ("6:30 - 7:30 PM")
+    counts as its start time only."""
+    found, ends = [], set()
+    for m in RANGE_RE.finditer(sentence):
+        hour, minute, own, last, ampm = m.groups()
+        found.append((m.start(), _clock(hour, minute, own or (ampm if int(hour) % 12 <= int(last) % 12 else None))))
+        ends.add(m.start(4))
+    found += [(m.start(), _clock(*m.groups())) for m in TIME_RE.finditer(sentence)
+              if m.start() not in ends and not any(r.start() <= m.start() < r.end() for r in RANGE_RE.finditer(sentence))]
+    for m in SHARED_RE.finditer(sentence):
+        hour, minute, last, ampm = m.groups()
+        # "11 & 1 pm" does not make 11 pm: the shared am/pm only applies when the order still makes sense.
+        found.append((m.start(), _clock(hour, minute, ampm if int(hour) % 12 <= int(last) % 12 else None)))
+    return list(dict.fromkeys(clock for _, clock in sorted(found)))
+
+
+def service_times(text, strict=False):
+    """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times. strict (announcement
+    and event pages) needs the sentence to say worship, service or mass."""
     found = {}
+    worship = STRICT_WORSHIP if strict else WORSHIP_WORDS
     lines = text.split('\n')
     for i, sentence in enumerate(_sentences(text)):
         days = [d for d in DAYS if DAY_RE[d].search(sentence)]
-        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence):
+        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
             continue
-        times = [_clock(h, m, ap) for h, m, ap in TIME_RE.findall(sentence)]
-        if not times and WORSHIP_WORDS.search(sentence) or re.search(r'\bsundays?\b\s+\d', sentence, re.I):
+        times = _times(sentence)
+        if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
             for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
                 times += [_clock(h1, m1, None), _clock(h2, m2, None)]
-        if not times or not (WORSHIP_WORDS.search(sentence) or len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
+        if not times or not (worship.search(sentence) or not strict and len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
             continue
         for day in days[:1]:
             found.setdefault(day, [])
             found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
-    # Tables and footers: a "Sunday" cell or heading followed by times on the next lines.
-    for i, line in enumerate(lines):
+    # Tables and footers: a "Sunday" cell or heading followed by times on the next lines (not on announcement pages).
+    for i, line in enumerate([] if strict else lines):
         day = next((d for d in DAYS if re.fullmatch(rf'{d}s?( services?| worship)?', line.strip(), re.I)), None)
         if not day:
             continue
         for nxt in lines[i + 1:i + 4]:
-            if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
+            if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or NOT_WEEKLY.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
                 break
-            for h, m, ap in TIME_RE.findall(nxt):
-                clock = _clock(h, m, ap)
+            for clock in _times(nxt):
                 found.setdefault(day, [])
                 if clock not in [x for x, _ in found[day]]:
                     found[day].append((clock, f'{line} {nxt}'.strip()))
     return found
+
+
+TITLE_SPLIT = re.compile(r'\s+[|\-–—·:]\s+')
+CHURCH_WORDS = re.compile(r'\b(church|chapel|parish|cathedral|fellowship|assembly|congregation|tabernacle|ministries|'
+                          r'temple|abbey|basilica|mission|community)\b', re.I)
+
+
+def title_name(title):
+    """The church's name from a page title: "Plan a Visit | Cedar Hollow Church", "Grace Chapel - Home". The part
+    that says church (chapel, parish...) wins; otherwise the part after the last " | ", where most sites put it.
+    ("HLC - Welcome!!" names nothing.)"""
+    parts = [p.strip() for p in TITLE_SPLIT.split(title or '') if p.strip()]
+    churchy = [p for p in parts if CHURCH_WORDS.search(p)]
+    if len(parts) > 1 and len(churchy) == 1:
+        return churchy[0]
+    return title.rsplit(' | ', 1)[1].strip() if ' | ' in (title or '') else ''
 
 
 def pattern_claims(source):
@@ -634,14 +1040,19 @@ def pattern_claims(source):
         claims.append({'field': 'phone', 'value': _digits(match), 'quote': match, 'source_id': sid, 'method': 'pattern'})
     for match in sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(text.replace('\n', ', ')))):
         claims.append({'field': 'address', 'value': match, 'quote': match, 'source_id': sid, 'method': 'pattern'})
-    title = source.get('title', '')
-    if source.get('kind', 'page') == 'page' and ' | ' in title:  # "Plan a Visit | Cedar Hollow Community Church"
-        name = title.rsplit(' | ', 1)[1].strip()
-        claims.append({'field': 'name', 'value': name, 'quote': title, 'source_id': sid, 'method': 'pattern'})
-    for day, times in service_times(text).items():
+    if source.get('kind', 'page') == 'page':
+        name, quote = title_name(source.get('title', '')), source.get('title', '')
+        if source.get('site_name') and CHURCH_WORDS.search(source['site_name']):
+            name, quote = source['site_name'], source['site_name']
+        if name:
+            claims.append({'field': 'name', 'value': name, 'quote': quote, 'source_id': sid, 'method': 'pattern'})
+    # Uploads and campus pages list several sets of times; each quote is its own set, so different campuses'
+    # times become a question instead of being merged into one list.
+    separate = source.get('url') is None or source.get('page_type') == 'locations'
+    for day, times in service_times(text, strict=source.get('page_type') in STRICT_PAGES).items():
         for clock, quote in times:
             claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote,
-                           'source_id': sid, 'method': 'pattern', **({'service_group': quote} if source.get('url') is None else {})})
+                           'source_id': sid, 'method': 'pattern', **({'service_group': quote} if separate else {})})
     return claims
 
 
@@ -689,10 +1100,7 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
     """Claims from the AI. `complete(messages, tools) -> tool arguments dict` can be injected for tests.
     Any claim whose quote is not found in the source is dropped: the AI can propose, never invent.
     A failed call is appended to `errors`; each real call is limited to the time left before `deadline`."""
-    if complete is None and _ai_complete is not None and deadline is not None:
-        remaining = max(1.0, deadline - _now())
-        complete = lambda messages, tools: _ai_complete(messages, tools, timeout=remaining)  # noqa: E731
-    complete = complete or _ai_complete
+    complete = _completer(complete, deadline)
     if not complete:
         return []
     fields = '\n'.join(f'- {k}: {v}' for k, v in AI_FIELDS.items())
@@ -723,27 +1131,52 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
     return claims
 
 
+def _completer(complete, deadline):
+    """The call one AI task makes: an injected `complete`, or the real model limited to the time left."""
+    if complete is None and _ai_complete is not None and deadline is not None:
+        remaining = max(1.0, deadline - _now())
+        return lambda messages, tools: _ai_complete(messages, tools, timeout=remaining)  # noqa: E731
+    return complete or _ai_complete
+
+
+def _tool_arguments(text):
+    """Tool arguments as a dict. Some models wrap the JSON in prose or a code fence; take the outer object."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        start, end = text.find('{'), text.rfind('}')
+        return json.loads(text[start:end + 1]) if 0 <= start < end else None
+
+
 def _ai_complete_impl(messages, tools, timeout=None):
+    """Force the first tool. If the first configured provider fails, the next one (AI_FALLBACK) gets one try."""
     import openai
     from . import chat
     clients = chat.make_clients()
     if not clients:
         return None
-    name, model, extra_body, client = clients[0]
-    model = builder_model(name, model)
-    if timeout is not None:  # never outlive the import that asked
-        client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
-    forced = {'type': 'function', 'function': {'name': 'record_church_facts'}}
-    extra = {'extra_body': extra_body} if extra_body else {}
-    try:
-        response = client.chat.completions.create(model=model, messages=messages, tools=tools,
-                                                  tool_choice=forced, temperature=0, **extra)
-    except openai.BadRequestError:
-        # Some endpoints and models accept tools but not a forced choice.
-        response = client.chat.completions.create(model=model, messages=messages, tools=tools,
-                                                  tool_choice='auto', temperature=0, **extra)
-    calls = response.choices[0].message.tool_calls or []
-    return json.loads(calls[0].function.arguments) if calls else None
+    forced = {'type': 'function', 'function': {'name': tools[0]['function']['name']}}
+    error = None
+    for name, model, extra_body, client in clients[:2]:
+        model = builder_model(name, model)
+        if timeout is not None:  # never outlive the import that asked
+            client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
+        extra = {'extra_body': extra_body} if extra_body else {}
+        try:
+            try:
+                response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                                          tool_choice=forced, temperature=0, **extra)
+            except openai.BadRequestError:
+                # Some endpoints and models accept tools but not a forced choice.
+                response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                                          tool_choice='auto', temperature=0, **extra)
+        except Exception as failure:
+            log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
+            error = failure
+            continue
+        calls = response.choices[0].message.tool_calls or []
+        return _tool_arguments(calls[0].function.arguments) if calls else None
+    raise error
 
 
 def _ai_available():
@@ -766,33 +1199,137 @@ AI_MISSING_NOTE = ('No AI model is set up, so only details found by plain rules 
 
 
 def extract(sources, complete=None, deadline=None, notes=None):
-    claims = []
+    """Claims for the profile fields (see extract_all for the lists)."""
+    return extract_all(sources, complete, deadline, notes)[0]
+
+
+def feed_items(source):
+    try:
+        if 'BEGIN:VCALENDAR' in source['feed'][:2000]:
+            return builder_structured.ics_events(source, source['feed'])
+        return builder_structured.feed_sermons(source, source['feed'])
+    except (ET.ParseError, ValueError) as error:
+        log.info('builder: skipped feed %s (%s)', source.get('url'), error)
+        return []
+
+
+def extract_all(sources, complete=None, deadline=None, notes=None):
+    """(claims, items). The orchestrator: every page, image and file gets the info reader; pages of a known type also
+    get specialist readers (builder_agents.ROUTES), at most MAX_SPECIALIST_CALLS of them. All AI work shares one
+    deadline and four workers. Structured data and feeds are read by plain code."""
+    claims, items = [], []
     use_ai = complete is not None or (_ai_complete is not None and _ai_available())
     deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
-    results = [None] * len(sources)
-    failed = []
+    readable = [s for s in sources if s.get('kind', 'page') != 'feed']
+    results = [None] * len(readable)
+    failed, list_failed = [], []
     if use_ai:
-        results, skipped = _parallel(sources, lambda source: ai_claims(source, complete, deadline, failed), deadline)
-        answered = len(sources) - skipped
-        if sources and not answered and notes is not None:
+        tasks = [('info', source) for source in readable]
+        tasks += [(name, source) for source in readable for name in builder_agents.specialists_for(source)][:MAX_SPECIALIST_CALLS]
+
+        def run(task):
+            name, source = task
+            if name == 'info':
+                return ai_claims(source, complete, deadline, failed)
+            return builder_agents.run(name, source, _completer(complete, deadline), list_failed)
+
+        done, _ = _parallel(tasks, run, deadline)
+        results, lists = done[:len(readable)], done[len(readable):]
+        skipped = sum(r is None for r in results)
+        answered = len(readable) - skipped
+        explained = False
+        if readable and not answered and notes is not None:
             notes.append(AI_SLOW_NOTE)
+            explained = True
         elif skipped and notes is not None:
             subject = '1 source was' if skipped == 1 else f'{skipped} sources were'
             notes.append(f'{subject} read without AI because it took too long.')
         if answered and failed and notes is not None:
             if len(failed) >= answered:
                 notes.append(AI_OFFLINE_NOTE)
+                explained = True
             else:
                 subject = '1 source was' if len(failed) == 1 else f'{len(failed)} sources were'
                 notes.append(f'{subject} read without AI because the AI reader returned an error.')
-    elif sources and complete is None and _ai_complete is not None and notes is not None:
+        unfinished = sum(r is None for r in lists) + len(list_failed)
+        if unfinished and not explained and notes is not None:
+            subject = '1 page' if unfinished == 1 else f'{unfinished} pages'
+            notes.append(f'{subject} of events, staff, ministries or sermons could not be read in time. '
+                         'Check those lists in the review.')
+        for found in lists:
+            items += found or []
+    elif readable and complete is None and _ai_complete is not None and notes is not None:
         notes.append(AI_MISSING_NOTE)
-    for source, result in zip(sources, results):
+    for source, result in zip(readable, results):
         claims += pattern_claims(source)
+        if source.get('kind', 'page') == 'page':
+            info, found = builder_structured.page_items(source)
+            claims += info
+            items += found
         claims += result or []
+    for source in sources:
+        if source.get('kind') == 'feed':
+            items += feed_items(source)
     for i, claim in enumerate(claims, 1):
         claim['id'] = f'c{i}'
-    return claims
+    return claims, items
+
+
+METHOD_RANK = {'structured': 0, 'pattern': 1, 'ai': 2}
+COLLECTION_LIMITS = {'events': 100, 'staff': 100, 'ministries': 60, 'groups': 100, 'locations': 30, 'sermons': 100}
+COLLECTION_LABELS = {'events': 'Events', 'staff': 'Staff and leaders', 'ministries': 'Ministries', 'groups': 'Small groups',
+                     'locations': 'Locations', 'sermons': 'Sermons'}
+
+
+def _item_key(collection, value):
+    name = re.sub(r'[^a-z0-9]', '', str(value.get('name') or value.get('title') or '').lower())
+    if collection == 'events':
+        return f"{name}|{value.get('date', '')}"
+    if collection == 'sermons':
+        return value.get('url') or f"{name}|{value.get('date', '')}"
+    if collection == 'locations':
+        return re.sub(r'[^a-z0-9]', '', str(value.get('address', '')).lower())[:24] or name
+    return name
+
+
+def collect(items, sources):
+    """{collection: [entry]}: the same item found on several pages (or by several readers) is one entry, its fields
+    taken from the most reliable reader first (structured data, then page patterns, then AI). Each entry keeps its
+    evidence and starts included, except staff: a person is only included by default when two pages, or the site's
+    structured data, name them, because their name and email will be public."""
+    by_id = {s['id']: s for s in sources}
+    grouped = {}
+    for item in sorted(items, key=lambda i: METHOD_RANK.get(i['method'], 3)):
+        key = _item_key(item['collection'], item['value'])
+        if key.strip('|'):
+            grouped.setdefault(item['collection'], {}).setdefault(key, []).append(item)
+    out = {}
+    for collection in builder_structured.COLLECTIONS:
+        entries = []
+        for found in grouped.get(collection, {}).values():
+            value, evidence, seen = {}, [], set()
+            for item in found:
+                for field, v in item['value'].items():
+                    value.setdefault(field, v)
+                if (item['source_id'], item['quote']) not in seen:
+                    seen.add((item['source_id'], item['quote']))
+                    source = by_id.get(item['source_id'], {})
+                    evidence.append({'source_id': item['source_id'], 'url': source.get('url'),
+                                     'title': source.get('title', ''), 'quote': item['quote']})
+            methods = sorted({i['method'] for i in found}, key=lambda m: METHOD_RANK.get(m, 3))
+            pages = {i['source_id'] for i in found}
+            include = len(pages) >= 2 or 'structured' in methods if collection == 'staff' else True
+            entries.append({'value': value, 'evidence': evidence[:5], 'methods': methods, 'include': include})
+        if collection == 'events':
+            entries.sort(key=lambda e: (e['value'].get('date') or '9999', e['value'].get('name', '').lower()))
+        elif collection == 'sermons':
+            entries.sort(key=lambda e: e['value'].get('date') or '', reverse=True)
+        entries = entries[:COLLECTION_LIMITS[collection]]
+        for n, entry in enumerate(entries, 1):
+            entry['id'] = f'{collection}-{n}'
+        if entries:
+            out[collection] = entries
+    return out
 
 
 # ---------------------------------------------------------------- 3. Clarify
@@ -813,8 +1350,8 @@ def _candidate(field, value, claims):
 
 def reconcile(claims, source_count):
     """{field: {status, value, candidates}}. Plain rules, no AI:
-    - email/phone: a value on more than half the pages that mention one is the church's (staff addresses on a
-      single page are not); otherwise different values are a conflict.
+    - email/phone/address: a value on more than half the pages that mention one is the church's (staff addresses
+      on a single page, or a second campus on the locations page, are not); otherwise different values are a conflict.
     - services: per day, each page's set of times; if one page's set contains all the others it is used, else
       the different sets are a conflict ("9 & 11" on one page, "10:30" on another).
     - anything else: one distinct value is prefilled, more than one is a conflict.
@@ -834,7 +1371,7 @@ def reconcile(claims, source_count):
             groups.setdefault(_key(field, claim['value']), []).append(claim)
         candidates = [_candidate(field, g[0]['value'], g) for g in groups.values()]
         candidates.sort(key=lambda c: -len(c['source_ids']))
-        if field in ('email', 'phone') and len(candidates) > 1:
+        if field in ('email', 'phone', 'address') and len(candidates) > 1:
             pages = len({c['source_id'] for c in items})
             if len(candidates[0]['source_ids']) * 2 > pages and len(candidates[0]['source_ids']) > len(candidates[1]['source_ids']):
                 candidates = candidates[:1]
@@ -992,28 +1529,162 @@ def build_content(session, *, allow_unanswered=False):
     content = {'info': info}
     if faqs:
         content['faqs'] = faqs
+    content.update(collection_content(session.get('collections', {})))
+    if session.get('site', {}).get('pages'):
+        content.update(builder_site.content(session['site'], info['name']))
     return church_content.normalize(church_content.ChurchContent(**content))
 
 
-def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None):
-    started, notes = _now(), []
-    deadline = started + IMPORT_BUDGET
-    sources = crawl(url, fetch, deadline=min(deadline, started + CRAWL_BUDGET), notes=notes)
+ITEM_FIELDS = {
+    'events': ('name', 'date', 'time', 'when', 'location', 'description'),
+    'staff': ('name', 'role', 'group', 'email', 'phone', 'bio'),
+    'ministries': ('name', 'description', 'when', 'where', 'leader', 'email', 'audience'),
+    'groups': ('name', 'description', 'when', 'where', 'leader', 'email', 'audience'),
+    'locations': ('name', 'address', 'service_times'),
+    'sermons': ('title', 'date', 'speaker', 'series', 'scripture', 'url'),
+}
+
+
+def _valid(model, item):
+    try:
+        return model(**item).model_dump(exclude_none=True)
+    except Exception as error:  # pydantic.ValidationError: one bad item is left out, not the whole site
+        log.info('builder: left out %s item %s (%s)', model.__name__, item.get('name') or item.get('title'), error)
+        return None
+
+
+def collection_content(collections, today=None):
+    """Included list entries as ChurchContent sections. Dated events in the future go to the calendar; repeating
+    or undated ones are event highlights. Sections with nothing included are left out, so applying a draft never
+    empties a section the church already has."""
+    today = (today or builder_structured._today()).isoformat()
+    cc = church_content
+    included = {name: [e['value'] for e in collections.get(name, []) if e.get('include')] for name in ITEM_FIELDS}
+    out = {'calendar': [], 'events': [], 'groups': [], 'ministries': [], 'staff': [], 'locations': [], 'sermons': []}
+    for v in included['events']:
+        if v.get('date'):
+            if v['date'] >= today:
+                out['calendar'].append(_valid(cc.CalendarEvent, {
+                    'title': v.get('name', ''), 'date': v['date'], 'time': v.get('time', '')[:100],
+                    'location': v.get('location', '')[:200], 'description': v.get('description', '')[:4000]}))
+        else:
+            out['events'].append(_valid(cc.Highlight, {
+                'name': v.get('name', ''), 'when': (v.get('when') or v.get('time', ''))[:200], 'where': v.get('location', '')[:200],
+                'description': v.get('description', '')[:2000]}))
+    for v in included['groups']:
+        # A group has no leader field, so its leader and contact stay in its description.
+        led = ' '.join(filter(None, ('Led by ' + v['leader'] if v.get('leader') else '', f"({v['email']})" if v.get('email') else '')))
+        out['groups'].append(_valid(cc.Highlight, {
+            'name': v.get('name', ''), 'when': v.get('when', '')[:200], 'where': v.get('where', '')[:200],
+            'description': '\n'.join(filter(None, (v.get('description', ''), led + '.' if led else '')))[:2000],
+            'audience': v.get('audience', '')[:100]}))
+    for v in included['ministries']:
+        # Where it meets and who it is for become the ministry's note.
+        note = '. '.join(filter(None, (v.get('where', ''), 'For ' + v['audience'] if v.get('audience') else '')))
+        out['ministries'].append(_valid(cc.Ministry, {
+            'name': v.get('name', '')[:120], 'description': v.get('description', '')[:2000], 'day': v.get('when', '')[:120],
+            'head': v.get('leader', '')[:120], 'email': v.get('email', '')[:200], 'note': note[:500]}))
+    for v in included['staff']:
+        out['staff'].append(_valid(cc.Person, {k: v.get(k, '') for k in ITEM_FIELDS['staff']}))
+    for v in included['locations']:
+        out['locations'].append(_valid(cc.Location, {k: v.get(k, '') for k in ITEM_FIELDS['locations']}))
+    for v in included['sermons']:
+        out['sermons'].append(_valid(cc.Sermon, {k: v.get(k, '') for k in ITEM_FIELDS['sermons']}))
+    limits = cc.ChurchContent.model_fields
+    content = {}
+    for name, entries in out.items():
+        entries = [e for e in entries if e]
+        if entries:
+            limit = next((m.max_length for m in limits[name].metadata if hasattr(m, 'max_length')), None)
+            content[name] = entries[:limit] if limit else entries
+    return content
+
+
+SITE_PARTS = ('pages', 'links', 'forms', 'media', 'assets')
+
+
+def apply_part(session, part, item_id=None, include=None, rights=None):
+    """Keep or leave out a page, link, form, player or image of the site model (all of that part when item_id is
+    None). `rights` is the church confirming it may use an image from the old site."""
+    entries = session.get('site', {}).get(part) if part in SITE_PARTS else None
+    if entries is None:
+        raise ValueError('Unknown part of the site')
+    targets = entries if item_id is None else [e for e in entries if e.get('id') == item_id]
+    if not targets:
+        raise ValueError('Unknown item')
+    if rights is not None and part != 'assets':
+        raise ValueError('Only images need permission.')
+    for entry in targets:
+        if include is not None:
+            entry['include'] = bool(include)
+        if rights is not None:
+            entry['rights'] = bool(rights)
+    return session
+
+
+def apply_item(session, collection, item_id=None, include=None, value=None):
+    """Include, leave out or edit a list entry (all entries of the list when item_id is None)."""
+    entries = session.get('collections', {}).get(collection)
+    if collection not in ITEM_FIELDS or entries is None:
+        raise ValueError('Unknown list')
+    targets = entries if item_id is None else [e for e in entries if e['id'] == item_id]
+    if not targets:
+        raise ValueError('Unknown item')
+    if value is not None:
+        if item_id is None or not isinstance(value, dict):
+            raise ValueError('Edit one item at a time.')
+        entry = targets[0]
+        edited = {**entry['value'], **{k: ' '.join(str(v).split()) for k, v in value.items() if k in ITEM_FIELDS[collection] and v is not None}}
+        edited = {k: v for k, v in edited.items() if v != ''}
+        if not collection_content({collection: [{'value': edited, 'include': True}]}):
+            raise ValueError('Check this item: it needs a name, and dates must be written as YYYY-MM-DD and not be in the past.')
+        entry['value'], entry['edited'] = edited, True
+    if include is not None:
+        for entry in targets:
+            entry['include'] = bool(include)
+    return session
+
+
+def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None, fetch_feed=None, budget=None,
+                crawl_budget=None, progress=None, fetch_css=None):
+    """Import a website. With no injected `fetch`, robots.txt, sitemaps, feeds and stylesheets are read too (or
+    with `fetch_feed`, `fetch_css`). `progress(stage, pages_read, pages_found)` reports how far it got."""
+    started, notes, feeds = _now(), [], []
+    deadline = started + (IMPORT_BUDGET if budget is None else budget)
+    crawl_budget = CRAWL_BUDGET if crawl_budget is None else crawl_budget
+    if fetch is None:
+        fetch_feed = fetch_feed or _http_feed
+        fetch_css = fetch_css or _http_css
+    report = (lambda read, found: progress('reading', read, found)) if progress else None
+    policy = host_policy(fetch_feed, deadline) if fetch_feed is not None else builder_crawl.HostPolicy()
+    sources = crawl(url, fetch, deadline=min(deadline, started + crawl_budget), notes=notes, fetch_feed=fetch_feed,
+                    feeds=feeds, progress=report, policy=policy)
     if not sources:
         raise ValueError('No pages could be read from that address.')
     if describe is not None or (_ai_describe is not None and _ai_available()):
-        sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes)
-    return session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+        sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes, policy=policy)
+    sources += read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes, policy)
+    look = None
+    if fetch_css is not None and _now() < deadline:
+        paced = polite(fetch_css, policy, min(deadline, _now() + 15))
+        look = builder_theme.read(sources[0], lambda u: paced(u)[2], policy.allowed, notes)
+    if progress:
+        progress('extracting', len([s for s in sources if s.get('kind') == 'page']), len(sources))
+    session = session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+    look = look or builder_theme.read(sources[0])
+    session['site'].update(theme=look[0], assets=look[1])
+    return session
 
 
 def session_from_sources(url, sources, complete=None, deadline=None, notes=None):
     notes = notes if notes is not None else []
-    claims = extract(sources, complete, deadline=deadline, notes=notes)
+    claims, items = extract_all(sources, complete, deadline=deadline, notes=notes)
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
     return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(),
             'url': url, 'status': 'clarifying' if qs else 'review',
-            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes}
+            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes,
+            'collections': collect(items, sources), 'site': builder_site.build(sources, url or '')}
 
 
 # ---------------------------------------------------------------- storage and routes
@@ -1021,6 +1692,19 @@ def session_from_sources(url, sources, complete=None, deadline=None, notes=None)
 DRAFT_SPACE = 'builder'
 DRAFT_TTL = 24 * 60 * 60
 _draft_lock = threading.RLock()
+
+
+def _limit(name, default):
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+# Per rolling hour. A venue or office shares one address, so one address gets room for a room full of people
+# trying the builder; BUILDER_IMPORTS_PER_ADDRESS and BUILDER_IMPORTS_PER_HOUR override these.
+IMPORTS_PER_ADDRESS = _limit('BUILDER_IMPORTS_PER_ADDRESS', 20)
+IMPORTS_PER_HOUR = _limit('BUILDER_IMPORTS_PER_HOUR', 60)
 
 
 class ImportLimiter:
@@ -1037,61 +1721,131 @@ class ImportLimiter:
 
     @contextmanager
     def importing(self, ip):
+        self.acquire(ip)
+        try:
+            yield
+        finally:
+            self.release()
+
+    def acquire(self, ip):
+        """Count one import against the limits; every successful acquire needs one release()."""
         with self.lock:
             now = time.monotonic()
             while self.starts and self.starts[0][0] <= now - 3600:
                 self.starts.popleft()
-            if sum(client == ip for _, client in self.starts) >= 5:
+            if sum(client == ip for _, client in self.starts) >= IMPORTS_PER_ADDRESS:
                 raise HTTPException(status_code=429, detail='Too many imports from this address. Try again in an hour.')
-            if len(self.starts) >= 60:
+            if len(self.starts) >= IMPORTS_PER_HOUR:
                 raise HTTPException(status_code=429, detail='Too many imports this hour. Please try again later.')
             if self.running >= 3:
                 raise HTTPException(status_code=429, detail='Three imports are already running. Please try again shortly.')
             self.starts.append((now, ip))
             self.running += 1
-        try:
-            yield
-        finally:
-            with self.lock:
-                self.running -= 1
+
+    def release(self):
+        with self.lock:
+            self.running = max(0, self.running - 1)
 
 
 import_limiter = ImportLimiter()
 
 
+STORED_SOURCE_KEYS = ('id', 'kind', 'url', 'title', 'page_type')
+
+
+def _page_key(draft_id, page_id=''):
+    return f'draft:{draft_id}:page:{page_id}'
+
+
+def _without_sections(site):
+    return {**site, 'pages': [{k: v for k, v in p.items() if k != 'sections'} for p in site.get('pages', [])]}
+
+
 def _save(session):
-    """Store a draft and drop expired ones; a draft nobody opens again would otherwise stay forever."""
+    """Store a draft and drop expired ones; a draft nobody opens again would otherwise stay forever.
+    Page texts are not stored: every value keeps its quote, which is all review and evidence need. The site model's
+    page sections (the recreated pages) are stored once, a row per page, when the import finishes."""
     cutoff = datetime.fromtimestamp(time.time() - DRAFT_TTL, timezone.utc).isoformat()
+    stored = {**session, 'sources': [{k: s[k] for k in STORED_SOURCE_KEYS if k in s} for s in session['sources']]}
+    statements = []
+    if session.get('site'):
+        stored['site'] = _without_sections(session['site'])
+        statements = [("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+                       (_page_key(session['id'], page['id']),
+                        json.dumps({'created_at': session['created_at'], 'sections': page['sections']})))
+                      for page in session['site'].get('pages', []) if 'sections' in page]
     with db.use_church(DRAFT_SPACE):
         db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
-                ('draft:' + session['id'], json.dumps(session))),
+                ('draft:' + session['id'], json.dumps(stored))), *statements,
                ("DELETE FROM config WHERE key LIKE 'draft:%' AND json_extract(data, '$.created_at') < ?", (cutoff,)))
     return session
 
 
 def _delete(draft_id):
+    prefix = _page_key(draft_id)
     with db.use_church(DRAFT_SPACE):
-        db.run(('DELETE FROM config WHERE key = ?', ('draft:' + draft_id,)))
+        db.run(('DELETE FROM config WHERE key = ? OR substr(key, 1, ?) = ?', ('draft:' + draft_id, len(prefix), prefix)))
+
+
+def _page_sections(draft_id):
+    """{page id: sections} for a stored draft."""
+    prefix = _page_key(draft_id)
+    with db.use_church(DRAFT_SPACE):
+        rows = db.query('SELECT key, data FROM config WHERE substr(key, 1, ?) = ?', (len(prefix), prefix))
+    return {row['key'][len(prefix):]: json.loads(row['data'])['sections'] for row in rows}
+
+
+def _with_pages(session):
+    """The draft with its pages' sections loaded, for building content."""
+    if not session.get('site', {}).get('pages'):
+        return session
+    sections = _page_sections(session['id'])
+    pages = [{**p, 'sections': sections.get(p['id'], [])} for p in session['site']['pages']]
+    return {**session, 'site': {**session['site'], 'pages': pages}}
+
+
+def _read(draft_id):
+    with db.use_church(DRAFT_SPACE):
+        row = db.one('SELECT data FROM config WHERE key = ?', ('draft:' + draft_id,))
+    return json.loads(row['data']) if row else None
+
+
+INTERRUPTED = 'The import was interrupted. Please try again.'
 
 
 def _load(draft_id):
     if not re.fullmatch(r'[A-Za-z0-9_-]{24}', draft_id):
         raise HTTPException(status_code=404, detail='Builder draft not found')
-    with db.use_church(DRAFT_SPACE):
-        row = db.one('SELECT data FROM config WHERE key = ?', ('draft:' + draft_id,))
-    if not row:
+    draft = _read(draft_id)
+    if not draft:
         raise HTTPException(status_code=404, detail='Builder draft not found')
-    draft = json.loads(row['data'])
-    if (datetime.now(timezone.utc) - datetime.fromisoformat(draft['created_at'])).total_seconds() >= DRAFT_TTL:
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(draft['created_at'])).total_seconds()
+    if age >= DRAFT_TTL:
         _delete(draft_id)
         raise HTTPException(status_code=404, detail='Builder draft not found')
+    if draft.get('status') == 'importing' and (not _job_alive(draft_id) or age > JOB_MAX):
+        # The container restarted (or the job hung): say so instead of showing "importing" forever.
+        draft = {**draft, 'status': 'failed', 'error': INTERRUPTED}
+        _save(draft)
+    return draft
+
+
+def _ready(draft):
+    """Answers, lists, previews and apply need a finished import."""
+    if draft.get('status') == 'importing':
+        raise HTTPException(status_code=409, detail='This draft is still being imported.')
+    if draft.get('status') == 'failed':
+        raise HTTPException(status_code=409, detail=draft.get('error') or 'This import failed. Please start a new one.')
     return draft
 
 
 def _public(session):
     """The draft for the page, without the full page texts (the evidence quotes are enough)."""
-    return {**session, 'notes': session.get('notes', []),
-            'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title')} for s in session['sources']]}
+    out = {**session, 'notes': session.get('notes', []), 'collections': session.get('collections', {}),
+           'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title') if k in s} for s in session['sources']]}
+    if session.get('site'):
+        out['site'] = _without_sections(session['site'])
+    return out
 
 
 class ImportBody(BaseModel):
@@ -1104,16 +1858,97 @@ class AnswerBody(BaseModel):
     value: str | list | dict
 
 
-@router.post('/api/builder/drafts', status_code=201)
-def import_site(body: ImportBody, request: Request):
-    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
-    with import_limiter.importing(ip):
-        try:
-            session = new_session(body.url)
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
+class ItemBody(BaseModel):
+    collection: str = Field(min_length=1, max_length=20)
+    id: str | None = Field(default=None, max_length=40)
+    include: bool | None = None
+    value: dict | None = None
+
+
+class PartBody(BaseModel):
+    part: str = Field(min_length=1, max_length=20)
+    id: str | None = Field(default=None, max_length=40)
+    include: bool | None = None
+    rights: bool | None = None
+
+
+# ---------------------------------------------------------------- background imports
+
+_JOBS = ThreadPoolExecutor(max_workers=3, thread_name_prefix='builder-import')
+_running = {}  # draft id -> Future of its import
+_running_lock = threading.Lock()
+
+
+def _job_alive(draft_id):
+    with _running_lock:
+        future = _running.get(draft_id)
+    return future is not None and not future.done()
+
+
+def wait_for_imports(timeout=10.0):
+    """Wait for running imports (tests and shutdown)."""
+    with _running_lock:
+        futures = list(_running.values())
+    wait(futures, timeout=timeout)
+
+
+def _importing_draft(url):
+    return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(), 'url': url,
+            'status': 'importing', 'progress': {'stage': 'starting', 'pages_read': 0, 'pages_found': 0},
+            'sources': [], 'claims': [], 'fields': {}, 'questions': [], 'notes': [], 'collections': {}}
+
+
+def _run_import(draft):
+    """The import job. Progress is saved at most every 2 seconds; the finished draft replaces it."""
+    last = [0.0]
+
+    def progress(stage, read, found):
+        if stage == 'reading' and _now() - last[0] < 2:
+            return
+        last[0] = _now()
         with _draft_lock:
-            return _public(_save(session))
+            current = _read(draft['id'])
+            if current and current.get('status') == 'importing':
+                _save({**current, 'progress': {'stage': stage, 'pages_read': read, 'pages_found': found}})
+
+    try:
+        try:
+            session = new_session(draft['url'], budget=JOB_BUDGET, crawl_budget=JOB_BUDGET / 2, progress=progress)
+            session.update(id=draft['id'], created_at=draft['created_at'])
+        except ValueError as error:
+            session = {**draft, 'status': 'failed', 'error': str(error)}
+        except Exception:
+            log.exception('builder: import %s failed', draft['id'])
+            session = {**draft, 'status': 'failed', 'error': 'The import failed. Please try again.'}
+        with _draft_lock:
+            if _read(draft['id']):  # an expired or consumed draft is not brought back
+                _save(session)
+    finally:
+        import_limiter.release()
+
+
+@router.post('/api/builder/drafts', status_code=202)
+def import_site(body: ImportBody, request: Request):
+    """Start a website import. The draft answers 'importing' until the job finishes; poll GET for the result."""
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    import_limiter.acquire(ip)
+    try:
+        url = urldefrag(body.url.strip())[0]
+        _check_public(url)
+        draft = _importing_draft(url)
+        with _draft_lock:
+            _save(draft)
+        with _running_lock:
+            for done in [key for key, future in _running.items() if future.done()]:
+                del _running[done]
+            _running[draft['id']] = _JOBS.submit(_run_import, draft)
+    except ValueError as error:
+        import_limiter.release()
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except BaseException:
+        import_limiter.release()
+        raise
+    return _public(draft)
 
 
 @router.post('/api/builder/drafts/blank', status_code=201)
@@ -1192,7 +2027,7 @@ def get_draft(draft_id: str):
 @router.post('/api/builder/drafts/{draft_id}/answers')
 def answer(draft_id: str, body: AnswerBody):
     with _draft_lock:
-        session = _load(draft_id)
+        session = _ready(_load(draft_id))
         try:
             apply_answer(session, body.field, body.value)
         except ValueError as error:
@@ -1200,9 +2035,44 @@ def answer(draft_id: str, body: AnswerBody):
         return _public(_save(session))
 
 
+@router.post('/api/builder/drafts/{draft_id}/items')
+def item(draft_id: str, body: ItemBody):
+    """Include, leave out or edit an imported list entry (events, staff, ministries, groups, locations, sermons)."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            apply_item(session, body.collection, body.id, body.include, body.value)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+@router.post('/api/builder/drafts/{draft_id}/parts')
+def part(draft_id: str, body: PartBody):
+    """Keep or leave out part of the imported site: a page, link, form, player, or (with permission) an image."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            apply_part(session, body.part, body.id, body.include, body.rights)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+@router.get('/api/builder/drafts/{draft_id}/pages/{page_id}')
+def draft_page(draft_id: str, page_id: str):
+    """One imported page with its sections, for review."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+    page = next((p for p in session.get('site', {}).get('pages', []) if p['id'] == page_id), None)
+    if page is None:
+        raise HTTPException(status_code=404, detail='Page not found')
+    return {**page, 'sections': _page_sections(draft_id).get(page_id, [])}
+
+
 def _content(draft_id):
     try:
-        return build_content(_load(draft_id))
+        return build_content(_with_pages(_ready(_load(draft_id))))
     except (ValueError, church_content.ContentError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1216,7 +2086,7 @@ def preview(draft_id: str):
 @router.get('/api/builder/drafts/{draft_id}/site')
 def site(draft_id: str):
     with _draft_lock:
-        return church_content.public_site(build_content(_load(draft_id), allow_unanswered=True))
+        return church_content.public_site(build_content(_with_pages(_ready(_load(draft_id))), allow_unanswered=True))
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')
@@ -1226,6 +2096,11 @@ def apply(draft_id: str):
         content = _content(draft_id)
         if db.current_church() == db.DEMO_CHURCH:
             raise HTTPException(status_code=403, detail='The demo church cannot be replaced. Sign up a church to build into.')
+        existing = db.get_church_info()
+        info = content['info']
+        # The draft has no city or care team; keep the ones the church signed up with.
+        info.update({key: info.get(key) or existing.get(key, '') for key in ('city', 'care_team')})
+        info['map_query'] = info['map_query'] or info['city']
         db.replace_content(content)
         _delete(draft_id)
         return {'content': content, 'church': db.current_church()}

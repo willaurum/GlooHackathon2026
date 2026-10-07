@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
+import { signupLinks } from './churchSite.js';
 import Icon from './Icon.jsx';
 import connect from './data/connect.json';
 const CONNECT_INTERESTS = connect.interests;
@@ -11,13 +13,19 @@ const PATHS = [
 ];
 
 export default function Connect({ go, onAsk }) {
-  const [info, setInfo] = useState(null);
+  const church = useChurch();
+  const [info, setInfo] = useState(null), [groups, setGroups] = useState([]);
   const [name, setName] = useState(''), [contact, setContact] = useState(''), [interest, setInterest] = useState(CONNECT_INTERESTS[0]), [message, setMessage] = useState('');
-  useEffect(() => { api('/info').then(setInfo).catch(() => {}); }, []);
+  useEffect(() => {
+    api('/info').then(setInfo).catch(() => {});
+    api('/church').then(c => setGroups(Array.isArray(c.groups) ? c.groups : [])).catch(() => {});
+  }, []);
+  // Registration and sign-up forms the church already uses, from its imported website.
+  const signups = signupLinks(church.site);
 
   const to = info?.email || '';
   // There is no inbox behind this form yet, so it opens the visitor's own email app.
-  const mailto = `mailto:${to}?subject=${encodeURIComponent('Connecting with Grace Community: ' + interest)}&body=${encodeURIComponent(`${message}\n\n${name}${contact ? '\n' + contact : ''}`.trim())}`;
+  const mailto = `mailto:${to}?subject=${encodeURIComponent(`Connecting with ${info?.name || church.name || 'the church'}: ${interest}`)}&body=${encodeURIComponent(`${message}\n\n${name}${contact ? '\n' + contact : ''}`.trim())}`;
   const ready = to && name.trim();
 
   return <div className="connect">
@@ -29,6 +37,24 @@ export default function Connect({ go, onAsk }) {
         <span className="link">Go<Icon name="arrow" size={16} /></span>
       </button>)}
     </div>
+
+    {groups.length > 0 && <section className="card about-block" id="connect-groups">
+      <div className="eyebrow">Groups</div>
+      <h2>Find your people</h2>
+      <ul className="connect-list">{groups.map(g => <li key={g.id ?? g.name}>
+        <strong>{g.name}</strong>
+        <small>{[g.when, g.where, g.audience].filter(Boolean).join(' · ')}</small>
+        {g.description && <span>{g.description}</span>}
+      </li>)}</ul>
+    </section>}
+
+    {signups.length > 0 && <section className="card about-block" id="connect-sign-ups">
+      <div className="eyebrow">Sign up</div>
+      <h2>Register for what’s next</h2>
+      <div className="about-actions">
+        {signups.map(link => <a key={link.url} className="btn secondary" href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<Icon name="link" size={14} /></a>)}
+      </div>
+    </section>}
 
     <div className="connect-grid">
       <section className="card about-block">

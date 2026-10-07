@@ -29,6 +29,12 @@ function previewResponse(path, options) {
   if ((options.method || 'GET').toUpperCase() !== 'GET') throw new Error(PREVIEW_ERROR);
   const key = path.split('?')[0].slice(1);
   if (['info', 'church', 'ministries', 'events'].includes(key)) return structuredClone(preview[key]);
+  const page = /^church\/pages\/([a-z0-9-]+)$/.exec(key);
+  if (page) {
+    const found = (preview.pages || []).find(p => p.slug === page[1]);
+    if (!found) throw Object.assign(new Error('Page not found'), { status: 404 });
+    return structuredClone(found);
+  }
   if (['connections', 'requests', 'regions', 'news', 'notes', 'blog', 'blog/categories'].includes(key)) return [];
   throw new Error(PREVIEW_ERROR);
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './api.js';
+import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import STAFF from './data/staff.json';
 
@@ -15,15 +16,20 @@ function Person({ name, role, email, note }) {
 }
 
 export default function Directory() {
+  const { demo } = useChurch();
   const [info, setInfo] = useState(null), [ministries, setMinistries] = useState([]), [error, setError] = useState(''), [q, setQ] = useState('');
+  // A church's own staff list (from Church setup or Tekton); only the demo church falls back to the sample list.
+  const [people, setPeople] = useState(null);
   useEffect(() => {
     api('/info').then(setInfo).catch(() => {});
+    const sample = demo ? STAFF : [];
+    api('/church').then(church => setPeople(church.staff?.length ? church.staff.map(p => ({ ...p, note: p.bio })) : sample)).catch(() => setPeople(sample));
     api('/ministries').then(setMinistries).catch(() => setError('Could not load ministry leaders. Refresh to try again.'));
   }, []);
 
   const needle = q.trim().toLowerCase();
   const match = (...parts) => !needle || parts.some(p => (p || '').toLowerCase().includes(needle));
-  const staff = useMemo(() => STAFF.filter(s => match(s.name, s.role, s.note)), [needle]);
+  const staff = useMemo(() => (people || []).filter(s => match(s.name, s.role, s.note)), [people, needle]);
   const leads = useMemo(() => ministries.filter(m => match(m.name, m.head, m.category, m.description)), [ministries, needle]);
 
   return <div className="directory">
@@ -53,7 +59,7 @@ export default function Directory() {
       <div className="people">{leads.map(m => <Person key={m.id} name={m.head} role={'Leads ' + m.name} email={m.email} note={m.description} />)}</div>
     </section>}
 
-    {staff.length === 0 && leads.length === 0 && !error && <div className="card empty"><p>No one matches “{q}”. Try a ministry name or a first name.</p></div>}
-    <small>Demo directory. All names and addresses are fictional.</small>
+    {staff.length === 0 && leads.length === 0 && !error && people && <div className="card empty"><p>{needle ? <>No one matches “{q}”. Try a ministry name or a first name.</> : 'No staff are listed yet. The church office can point you to the right person.'}</p></div>}
+    {people === STAFF && <small>Demo directory. All names and addresses are fictional.</small>}
   </div>;
 }
