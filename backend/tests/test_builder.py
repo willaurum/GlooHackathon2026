@@ -6,6 +6,7 @@ complete and consistent. The AI step is replaced by a fake so the tests are dete
 
     python -m unittest backend.tests.test_builder
 """
+import asyncio
 import io
 import os
 import threading
@@ -40,12 +41,16 @@ def pdf_bytes(text='Sunday worship at 9am'):
     return data + f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
 
 
-def docx_bytes(text='Sunday worship at 9am'):
+def docx_bytes(text='Sunday worship at 9am', prefix=''):
     data = io.BytesIO()
     with zipfile.ZipFile(data, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        archive.writestr('word/document.xml', prefix + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
                          f'<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>')
     return data.getvalue()
+
+
+def hung_document(connection, data, content_type):
+    time.sleep(30)
 
 
 def site(name):
@@ -205,8 +210,66 @@ class ImageTests(BuilderTestCase):
 
 
 class BudgetTests(BuilderTestCase):
+    def test_abandoned_work_is_bounded_by_the_shared_pool(self):
+        release, saturated, drained = threading.Event(), threading.Event(), threading.Event()
+        lock = threading.Lock()
+        running, peak, calls = 0, 0, 0
+        limit = builder._WORKERS._max_workers
+
+        def read(item):
+            nonlocal running, peak, calls
+            with lock:
+                running += 1
+                calls += 1
+                peak = max(peak, running)
+                if running == limit:
+                    saturated.set()
+            try:
+                release.wait(2)
+            finally:
+                with lock:
+                    running -= 1
+                    if not running:
+                        drained.set()
+            return item
+
+        try:
+            for _ in range(4):
+                values, skipped = builder._parallel(list(range(8)), read, time.monotonic() + 0.08)
+                self.assertEqual(values, [None] * 8)
+                self.assertEqual(skipped, 8)
+            self.assertTrue(saturated.is_set())
+            self.assertEqual(peak, limit)
+            self.assertEqual(calls, limit)
+        finally:
+            release.set()
+            self.assertTrue(drained.wait(1))
+
+    def test_later_import_uses_capacity_while_abandoned_work_runs(self):
+        release, started, finished = threading.Event(), threading.Event(), threading.Event()
+
+        def read(item):
+            started.set()
+            try:
+                release.wait(2)
+            finally:
+                finished.set()
+            return item
+
+        try:
+            self.assertEqual(builder._parallel(['slow'], read, time.monotonic() + 0.08), ([None], 1))
+            self.assertTrue(started.is_set())
+            self.assertFalse(finished.is_set())
+            session = self.session('cedar-hollow-static')
+            self.assertEqual(session['status'], 'review')
+            self.assertEqual(session['notes'], [])
+            self.assertFalse(finished.is_set())
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(1))
+
     def test_ai_calls_run_with_four_workers(self):
-        sources = [{'id': f's{i}', 'url': f'https://church.test/{i}', 'text': f'Page {i}'} for i in range(4)]
+        sources = [{'id': f's{i}', 'url': f'https://church.test/{i}', 'text': f'Page {i}'} for i in range(8)]
         lock = threading.Lock()
         running, peak = 0, 0
 
@@ -215,7 +278,7 @@ class BudgetTests(BuilderTestCase):
             with lock:
                 running += 1
                 peak = max(peak, running)
-            time.sleep(0.3)
+            time.sleep(0.05)
             with lock:
                 running -= 1
             return {'facts': [{'field': 'about', 'value': 'A test page.', 'quote': messages[1]['content'].split('\n')[-1]}]}
@@ -369,6 +432,72 @@ class BudgetTests(BuilderTestCase):
                 self.assertEqual(s['notes'], [])
 
 
+class DocumentTests(unittest.TestCase):
+    def test_docx_declarations_are_rejected_before_xml_parsing(self):
+        for prefix in ('<!DOCTYPE w:document [<!ENTITY example "expanded">]>',
+                       '<!doctype w:document>', '<!EnTiTy example "expanded">'):
+            with self.subTest(prefix=prefix), mock.patch.object(builder.ET, 'fromstring') as parse:
+                with self.assertRaisesRegex(ValueError, '^That Word document is not supported\\.$'):
+                    builder._docx_text(docx_bytes('&example;', prefix))
+                parse.assert_not_called()
+
+    def test_docx_text_is_capped(self):
+        self.assertEqual(builder._docx_text(docx_bytes('x' * (builder.MAX_SOURCE_CHARS + 100))),
+                         'x' * builder.MAX_SOURCE_CHARS)
+
+    def test_child_limits_memory_and_caps_its_reply(self):
+        connection, resource = mock.Mock(), mock.Mock()
+        with mock.patch.dict('sys.modules', {'resource': resource}), \
+                mock.patch.object(builder, '_document_text', return_value='x' * (builder.MAX_SOURCE_CHARS + 100)):
+            builder._document_child(connection, b'document', 'application/pdf')
+        resource.setrlimit.assert_called_once_with(resource.RLIMIT_AS,
+                                                   (builder.DOCUMENT_MEMORY, builder.DOCUMENT_MEMORY))
+        connection.send.assert_called_once_with(('ok', 'x' * builder.MAX_SOURCE_CHARS))
+        connection.close.assert_called_once()
+
+    def test_hung_document_processes_are_killed_and_files_skipped(self):
+        context = builder.multiprocessing.get_context('spawn')
+        make_process = context.Process
+        processes, exits = [], []
+
+        def process(*args, **kwargs):
+            child = make_process(*args, **kwargs)
+            proxy = mock.Mock(wraps=child)
+
+            def close():
+                exits.append(child.exitcode)
+                child.close()
+
+            proxy.close.side_effect = close
+            processes.append(proxy)
+            return proxy
+
+        started, notes = time.monotonic(), []
+        with mock.patch.object(builder, '_document_child', hung_document), \
+                mock.patch.object(builder, 'DOCUMENT_TIMEOUT', 0.1), \
+                mock.patch.object(context, 'Process', side_effect=process):
+            sources = builder.read_files([('slow.pdf', pdf_bytes()), ('slow.docx', docx_bytes()),
+                                          ('good.txt', b'Sunday worship at 9am')], describe=False,
+                                         deadline=started + 1, notes=notes)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual([s['title'] for s in sources], ['good.txt'])
+        self.assertEqual(notes, ['slow.pdf was skipped because it took too long to read.',
+                                 'slow.docx was skipped because it took too long to read.'])
+        self.assertEqual(len(processes), 2)
+        for child in processes:
+            child.terminate.assert_called_once()
+            child.close.assert_called_once()
+        self.assertTrue(all(code is not None and code != 0 for code in exits))
+
+    def test_failed_parse_skips_only_its_file(self):
+        notes = []
+        with mock.patch.object(builder, '_parse_document', return_value=('failed', None)):
+            sources = builder.read_files([('bad.pdf', pdf_bytes()), ('good.txt', b'Sunday worship at 9am')],
+                                         describe=False, notes=notes)
+        self.assertEqual([s['title'] for s in sources], ['good.txt'])
+        self.assertEqual(notes, ['bad.pdf was skipped because it could not be read.'])
+
+
 class SafetyTests(unittest.TestCase):
     def test_private_and_local_addresses_are_refused(self):
         with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '0'}):
@@ -461,6 +590,38 @@ class RouteTests(ChurchTestCase):
         self.assertEqual(response.status_code, 201, response.text)
         self.assertEqual(response.json()['fields']['services']['value'], [{'day': 'Sunday', 'time': '09:00'}])
         self.assertEqual(response.json()['sources'][0]['title'], 'bulletin.bin')
+
+    def test_upload_save_runs_off_the_event_loop_and_reserves_time(self):
+        save, upload_session = builder._save, builder._upload_session
+        deadlines = []
+
+        def checked_save(session):
+            with self.assertRaises(RuntimeError):
+                asyncio.get_running_loop()
+            return save(session)
+
+        def checked_session(files, deadline):
+            deadlines.append(deadline)
+            return upload_session(files, deadline)
+
+        started = time.monotonic()
+        with mock.patch.object(builder, '_save', side_effect=checked_save) as saved, \
+                mock.patch.object(builder, '_upload_session', side_effect=checked_session):
+            response = self.upload('bulletin.txt', b'Sunday worship at 9am')
+        self.assertEqual(response.status_code, 201, response.text)
+        saved.assert_called_once()
+        self.assertGreaterEqual(deadlines[0], started + builder.IMPORT_BUDGET - 5)
+        self.assertLessEqual(deadlines[0], time.monotonic() + builder.IMPORT_BUDGET - 5)
+
+    def test_docx_entities_and_invalid_documents_return_400(self):
+        files = [('entities.docx', docx_bytes('&example;', '<!DOCTYPE w:document [<!ENTITY example "expanded">]>')),
+                 ('broken.docx', docx_bytes('<broken>')), ('broken.pdf', b'%PDF-1.4\nnot a PDF')]
+        for filename, data in files:
+            with self.subTest(filename=filename):
+                response = self.upload(filename, data)
+                self.assertEqual(response.status_code, 400, response.text)
+                if filename == 'entities.docx':
+                    self.assertEqual(response.json()['detail'], 'That Word document is not supported.')
 
     def test_docx_and_html_are_read_by_content(self):
         for filename, data in [('welcome.bin', docx_bytes()),

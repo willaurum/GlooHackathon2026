@@ -19,6 +19,7 @@ import io
 import ipaddress
 import json
 import logging
+import multiprocessing
 import os
 import re
 import secrets
@@ -28,7 +29,7 @@ import time
 import zipfile
 import xml.etree.ElementTree as ET
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -55,6 +56,9 @@ MAX_UPLOAD_FILES = 5
 FETCH_TIMEOUT = 10.0
 IMPORT_BUDGET = float(os.environ.get('BUILDER_IMPORT_BUDGET', '75.0'))
 CRAWL_BUDGET = 30.0
+DOCUMENT_TIMEOUT = 20.0
+DOCUMENT_MEMORY = 1024 * 1024 * 1024  # address space, which includes the app the child imports
+_WORKERS = ThreadPoolExecutor(max_workers=12, thread_name_prefix='builder')
 _now = time.monotonic
 # Fields the builder asks about when nothing is found. Optional fields are simply left empty.
 REQUIRED = ('name', 'address', 'phone', 'email', 'services')
@@ -79,18 +83,27 @@ def _parallel(items, read, deadline, workers=4):
         value = read(item)
         return value, _now()
 
-    pool = ThreadPoolExecutor(max_workers=workers)
+    values, pending, pos, skipped = [None] * len(items), {}, 0, len(items)
     try:
-        futures = [pool.submit(run, item) for item in items]
-        done, _ = wait(futures, timeout=max(0.0, deadline - _now()))
-        values, skipped = [], 0
-        for future in futures:
-            value, finished = future.result() if future in done else (None, deadline + 1)
-            skipped += finished > deadline
-            values.append(value if finished <= deadline else None)
+        while pending or pos < len(items):
+            while pos < len(items) and len(pending) < min(workers, 4) and _now() < deadline:
+                pending[_WORKERS.submit(run, items[pos])] = pos
+                pos += 1
+            if not pending:
+                break
+            done, _ = wait(pending, timeout=max(0.0, deadline - _now()), return_when=FIRST_COMPLETED)
+            for future in done:
+                index = pending.pop(future)
+                value, finished = future.result()
+                if finished <= deadline:
+                    values[index] = value
+                    skipped -= 1
+            if not done or _now() >= deadline:
+                break
         return values, skipped
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        for future in pending:
+            future.cancel()
 
 
 class _PageText(HTMLParser):
@@ -332,9 +345,95 @@ def _docx_text(data):
             xml = document.read(MAX_FILE_BYTES + 1)
         if len(xml) > MAX_FILE_BYTES:
             raise ValueError('The Word document expands beyond the 5 MB limit.')
+    declarations = xml.upper().replace(b'\x00', b'')
+    if b'<!DOCTYPE' in declarations or b'<!ENTITY' in declarations:
+        raise ValueError('That Word document is not supported.')
     root = ET.fromstring(xml)
     ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-    return '\n'.join(''.join(t.text or '' for t in p.iter(ns + 't')) for p in root.iter(ns + 'p'))
+    parts, size = [], 0
+    for p in root.iter(ns + 'p'):
+        if parts and size < MAX_SOURCE_CHARS:
+            parts.append('\n')
+            size += 1
+        for t in p.iter(ns + 't'):
+            part = (t.text or '')[:MAX_SOURCE_CHARS - size]
+            parts.append(part)
+            size += len(part)
+            if size >= MAX_SOURCE_CHARS:
+                break
+        if size >= MAX_SOURCE_CHARS:
+            break
+    return ''.join(parts)
+
+
+def _document_text(data, content_type):
+    if content_type != 'application/pdf':
+        return _docx_text(data)
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+    try:
+        parts, size = [], 0
+        for page in PdfReader(io.BytesIO(data)).pages:
+            if size >= MAX_SOURCE_CHARS:
+                break
+            parts.append((page.extract_text() or '')[:MAX_SOURCE_CHARS - size])
+            size += len(parts[-1]) + 1
+        return '\n'.join(parts)[:MAX_SOURCE_CHARS]
+    except PdfReadError as error:
+        raise ValueError('Upload a valid, unlocked PDF file.') from error
+
+
+def _document_child(connection, data, content_type):
+    try:
+        try:
+            import resource
+        except ImportError:  # Windows development.
+            pass
+        else:
+            resource.setrlimit(resource.RLIMIT_AS, (DOCUMENT_MEMORY, DOCUMENT_MEMORY))
+        text = _document_text(data, content_type)
+        connection.send(('ok', text[:MAX_SOURCE_CHARS]))
+    except ValueError as error:
+        connection.send(('invalid', str(error)))
+    except (ET.ParseError, zipfile.BadZipFile, KeyError):
+        connection.send(('invalid', 'Upload a valid, unlocked file.'))
+    except Exception:
+        connection.send(('failed', None))
+    finally:
+        connection.close()
+
+
+def _parse_document(data, content_type, deadline):
+    """Only the child touches document parsers; bound its memory and lifetime."""
+    timeout = min(DOCUMENT_TIMEOUT, max(0.0, deadline - _now()))
+    if not timeout:
+        return 'timeout', None
+    context = multiprocessing.get_context('spawn')
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=_document_child, args=(sender, data, content_type))
+    stop = _now() + timeout
+    try:
+        process.start()
+        sender.close()
+        if not receiver.poll(max(0.0, stop - _now())):
+            return 'timeout', None
+        result = receiver.recv()
+        process.join(max(0.0, stop - _now()))
+        return result if not process.is_alive() else ('timeout', None)
+    except Exception as error:
+        log.info('builder: document parser failed (%s)', error)
+        return 'failed', None
+    finally:
+        sender.close()
+        receiver.close()
+        if process.pid is not None:
+            if process.is_alive():
+                process.terminate()
+                process.join(0.2)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
+            process.close()
 
 
 def read_files(files, describe=None, deadline=None, notes=None):
@@ -348,17 +447,13 @@ def read_files(files, describe=None, deadline=None, notes=None):
         title, data, content_type = item
         kind = 'file'
         try:
-            if content_type == 'application/pdf':
-                from pypdf import PdfReader
-                parts, size = [], 0
-                for page in PdfReader(io.BytesIO(data)).pages:
-                    if size >= MAX_SOURCE_CHARS or _now() >= deadline:
-                        break
-                    parts.append((page.extract_text() or '')[:MAX_SOURCE_CHARS - size])
-                    size += len(parts[-1]) + 1
-                text = '\n'.join(parts)
-            elif content_type.endswith('document'):
-                text = _docx_text(data)
+            if content_type == 'application/pdf' or content_type.endswith('document'):
+                status, text = _parse_document(data, content_type, deadline)
+                if status == 'invalid':
+                    raise ValueError(text)
+                if status != 'ok':
+                    reason = 'it took too long to read' if status == 'timeout' else 'it could not be read'
+                    return None, f'{title} was skipped because {reason}.'
             elif content_type.startswith('text/'):
                 text = data.decode('utf-8', errors='replace')
                 if content_type == 'text/html':
@@ -975,18 +1070,22 @@ def _upload_session(files, deadline):
     return session_from_sources(None, sources, deadline=deadline, notes=notes)
 
 
+def _save_upload(session):
+    with _draft_lock:
+        return _public(_save(session))
+
+
 @router.post('/api/builder/drafts/upload', status_code=201)
 async def import_upload(request: Request):
     ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
     with import_limiter.importing(ip):
-        deadline = _now() + IMPORT_BUDGET
+        deadline = _now() + max(0.0, IMPORT_BUDGET - 5.0)
         try:
             files = await _uploaded_files(request, deadline)
             session = await run_in_threadpool(_upload_session, files, deadline)
         except (ValueError, MultiPartException) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
-        with _draft_lock:
-            return _public(_save(session))
+        return await run_in_threadpool(_save_upload, session)
 
 
 @router.get('/api/builder/drafts/{draft_id}')
