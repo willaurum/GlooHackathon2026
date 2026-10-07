@@ -4,7 +4,8 @@ Keys contain single-answer field values, plus lists of `conflicts` and `missing`
 and an optional `label`. Only keyed fields are scored. FAQ claims are not reconcile() fields.
 An optional `lists` key ({collection: [names]}) scores the imported lists (events, staff, ministries,
 groups, locations, sermons) by precision and recall on normalized names; `today` pins the date
-dated fixtures are read on.
+dated fixtures are read on. An optional `site` key scores the site model (menu, links by kind, forms, media)
+by recall.
 Prose is compared literally after the builder's whitespace/case normalization, not semantically.
 
     python -m backend.app.builder_score backend/tests/fixtures/builder/cedar-hollow-static
@@ -42,7 +43,7 @@ def score(draft, expected):
     Every expected field contributes one check to overall accuracy, including conflicts and gaps.
     """
     conflicts, missing = set(expected.get('conflicts', [])), set(expected.get('missing', []))
-    values = {f: v for f, v in expected.items() if f not in ('label', 'conflicts', 'missing', 'lists', 'today')}
+    values = {f: v for f, v in expected.items() if f not in ('label', 'conflicts', 'missing', 'lists', 'today', 'site')}
     if conflicts & missing or (conflicts | missing) & values.keys():
         raise ValueError('Each expected field must have exactly one value, conflict, or missing designation.')
     questions = {}
@@ -100,15 +101,51 @@ def score_lists(draft, expected):
     return out
 
 
+def _menu_paths(items, parent=''):
+    for item in items:
+        path = f"{parent}/{item['label']}" if parent else item['label']
+        yield path
+        yield from _menu_paths(item.get('children', []), path)
+
+
+def _recall(found, wanted):
+    wanted = set(wanted)
+    return {'expected': len(wanted), 'matched': len(wanted & set(found)),
+            'recall': len(wanted & set(found)) / len(wanted) if wanted else 0.0}
+
+
+def score_site(draft, expected):
+    """Recall of the site model against an answer key's "site": menu paths ("About/Our Team"), links by kind,
+    form actions and media addresses."""
+    site, key = draft.get('site') or {}, expected.get('site') or {}
+    out = {}
+    if 'menu' in key:
+        out['menu'] = _recall(list(_menu_paths(site.get('navigation', {}).get('main', []))), key['menu'])
+    for kind, urls in key.get('links', {}).items():
+        out[f'links:{kind}'] = _recall([l['url'] for l in site.get('links', []) if l['kind'] == kind], urls)
+    if 'forms' in key:
+        out['forms'] = _recall([f['action'] for f in site.get('forms', [])], key['forms'])
+    if 'media' in key:
+        out['media'] = _recall([m['url'] for m in site.get('media', [])], key['media'])
+    return out
+
+
 FEED_TYPES = {'.txt': 'text/plain', '.xml': 'application/xml', '.ics': 'text/calendar'}
+ASSET_TYPES = {'.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml'}
 
 
 def fixture_fetchers(fixture_dir):
-    """(fetch, fetch_feed) serving one fixture directory as https://church.test/."""
+    """(fetch, fetch_feed) serving one fixture directory as https://church.test/. Other hosts (an asset CDN) are
+    served from `_hosts/<host>/`. "/about" is read from about.html, as sites without extensions serve it."""
     root = Path(fixture_dir).resolve()
 
     def path_of(url, suffixes):
-        path = (root / (urlparse(url).path.lstrip('/') or 'index.html')).resolve()
+        parsed = urlparse(url)
+        base = root if parsed.hostname == 'church.test' else root / '_hosts' / (parsed.hostname or '_')
+        relative = parsed.path.lstrip('/') or 'index.html'
+        path = (base / relative).resolve()
+        if not path.suffix and '.html' in suffixes:
+            path = path.with_suffix('.html')
         if not path.is_relative_to(root) or path.suffix not in suffixes or not path.is_file():
             raise FileNotFoundError(url)
         return path
@@ -119,6 +156,11 @@ def fixture_fetchers(fixture_dir):
     def fetch_feed(url):
         path = path_of(url, tuple(FEED_TYPES))
         return url, FEED_TYPES[path.suffix], path.read_text(encoding='utf-8')
+
+    def fetch_asset(url):
+        path = path_of(url, tuple(ASSET_TYPES))
+        return url, ASSET_TYPES[path.suffix], path.read_bytes()
+    fetch.asset = fetch_asset
     return fetch, fetch_feed
 
 
@@ -157,6 +199,11 @@ def main():
         print(f"\n{'List':<12} Found  Expected  Matched  Precision  Recall")
         for name, r in lists.items():
             print(f"{name:<12} {r['found']:>5}  {r['expected']:>8}  {r['matched']:>7}  {r['precision']:>9.0%}  {r['recall']:>6.0%}")
+    site = score_site(draft, expected)
+    if site:
+        print(f"\n{'Site part':<16} Matched  Recall")
+        for name, r in site.items():
+            print(f"{name:<16} {r['matched']:>3}/{r['expected']:<3}  {r['recall']:>6.0%}")
 
 
 if __name__ == '__main__':

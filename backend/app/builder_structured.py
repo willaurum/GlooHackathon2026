@@ -17,8 +17,32 @@ COLLECTIONS = ('events', 'staff', 'ministries', 'groups', 'locations', 'sermons'
 MAX_FEED_ITEMS = 50
 EVENT_HORIZON_DAYS = 183
 MONTHS = ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')
-MONTH_DATE_RE = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?'
+MONTH_DATE_RE = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th|h)?'
                            r'(?:,?\s+(\d{4}))?\b', re.I)
+WEEKDAY_RE = re.compile(r'\b(mon|tue|wed|thu|fri|sat|sun)(?:day|s|nes|rs|ur|urday)?[a-z]*\b\.?', re.I)
+WEEKDAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+
+
+def infer_date(month, day, text, today, year=None):
+    """The date for "October 25" as of `today`: a stated year is used as is; otherwise this year, or next year once
+    it has passed. When `text` names a weekday ("Sunday, October 25"), the year must agree with it (this year or
+    the next two), and a date no year agrees with is None: better no date than a wrong one."""
+    try:
+        if year:
+            return date(year, month, day)
+        date(2000, month, day)  # a real day of the year (29 February included)
+    except ValueError:
+        return None
+    weekday = WEEKDAY_RE.search(text or '')
+    wanted = WEEKDAYS.index(weekday.group(1).lower()) if weekday else None
+    for y in (today.year, today.year + 1, today.year + 2):
+        try:
+            when = date(y, month, day)
+        except ValueError:
+            continue
+        if when >= today and (wanted is None or when.weekday() == wanted):
+            return when
+    return None
 TIME_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\b', re.I)
 ROLE_RE = re.compile(r'\b(pastor|minister|director|coordinator|elder|deacon|administrator|manager|assistant|leader|'
                      r'secretary|bishop|priest|rector|vicar|chaplain|staff|ministry|ministries|worship|youth|children|'
@@ -297,7 +321,16 @@ GROUP_ROLES = {'elders': 'Elder', 'deacons': 'Deacon', 'deaconesses': 'Deaconess
 WRAPPED_ROLE = re.compile(r'(?:\b(?:of|and|for|the|to)|[&,/–-])$', re.I)
 
 
+# Capitalized lines that are headings or places, not people ("Service Times", "Harvest Point Church").
+NOT_NAME_RE = re.compile(r'\b(church|chapel|parish|fellowship|campus|times?|services?|ministr(y|ies)|team|welcome|about|'
+                         r'contact|events?|sermons?|groups?|our|the|of|and|for|worship|staff|elders|deacons|kids|youth|'
+                         r'students?|visit|give|giving|road|street|avenue|sundays?|mondays?|tuesdays?|wednesdays?|'
+                         r'thursdays?|fridays?|saturdays?)\b', re.I)
+
+
 def _person(line):
+    if NOT_NAME_RE.search(re.sub(r'^(?i:rev|reverend|pastor|dr|mr|mrs|ms|fr|father|elder|deacon|bishop)\.?\s+', '', line)):
+        return False
     return bool(NAME_RE.match(line)) and (not ROLE_RE.search(line)
                                          or bool(re.match(r'(?i)(rev|pastor|dr|father|elder|deacon|bishop)\b', line)))
 
@@ -313,7 +346,7 @@ def staff_cards(source):
         if i >= len(lines):
             return '', 0
         role = lines[i]
-        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role):
+        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role) or re.search(r'\d|[.!?]$', role):
             return '', 0
         if WRAPPED_ROLE.search(role) and i + 1 < len(lines) and len(role) + len(lines[i + 1]) <= 90 \
                 and not EMAIL_RE.search(lines[i + 1]) and not _person(lines[i + 1]):
@@ -364,14 +397,9 @@ def dated_events(source, today=None):
         if len(title) > 80 or MONTH_DATE_RE.search(title) or TIME_RE.search(title) or title.endswith(('.', ':')):
             continue
         month = MONTHS.index(match.group(1)[:3].lower()) + 1
-        year = int(match.group(3)) if match.group(3) else today.year
-        try:
-            when = date(year, month, int(match.group(2)))
-        except ValueError:
-            continue
-        if not match.group(3) and when < today:
-            when = date(year + 1, month, int(match.group(2)))
-        if not _upcoming(when.isoformat(), today):
+        when = infer_date(month, int(match.group(2)), line[:match.start()], today,
+                          int(match.group(3)) if match.group(3) else None)
+        if when is None or not _upcoming(when.isoformat(), today):
             continue
         clock = TIME_RE.search(line)
         hour = int(clock.group(1)) % 12 + (12 if clock and clock.group(3).lower() == 'p' else 0) if clock else 0

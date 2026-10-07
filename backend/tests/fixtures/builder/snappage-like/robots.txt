@@ -1,0 +1,5 @@
+User-agent: *
+Crawl-delay: 0.02
+Disallow: /assets/*
+Disallow: /data/*
+Sitemap: https://church.test/sitemap.xml

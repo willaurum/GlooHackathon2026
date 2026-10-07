@@ -17,6 +17,8 @@ MAX_POSTS = 3
 
 # Page types, most specific first. A page's type is the first that matches its address, then its title.
 PAGE_TYPES = (
+    ('news', r'announcements?|news|bulletins?|weekly|this-?week|e-?news|newsletters?|whats-?happening'),
+    ('connect', r'connect|next-?steps?|get-?(involved|connected)|forms?|register|registration|sign-?ups?|prayer-?requests?'),
     ('staff', r'staff|team|leadership|leaders|pastors?|elders|deacons|our-?people|directory|meet-?(the|our)'),
     ('events', r'events?|calendar|happenings|upcoming|whats-?on'),
     ('sermons', r'sermons?|messages?|watch|media|podcasts?|teachings?|listen|livestream|series'),
@@ -30,7 +32,7 @@ PAGE_TYPES = (
     ('give', r'give|giving|donate|tithe'),
 )
 _TYPE_RE = [(name, re.compile(rf'(?<![a-z]){pattern}(?![a-z])', re.I)) for name, pattern in PAGE_TYPES]
-WEIGHTS = {'staff': 9, 'events': 9, 'ministries': 8, 'groups': 8, 'sermons': 8, 'locations': 8, 'visit': 9,
+WEIGHTS = {'news': 7, 'connect': 6, 'staff': 9, 'events': 9, 'ministries': 8, 'groups': 8, 'sermons': 8, 'locations': 8, 'visit': 9,
            'about': 6, 'contact': 6, 'give': 1}
 # Blog, news and archive pages: a few are read (they can mention service changes), most are noise.
 POST_RE = re.compile(r'/(blog|news|posts?|articles?|stories|updates)/.+|/\d{4}/\d{2}/', re.I)
@@ -254,7 +256,9 @@ def discover(start_url, robots, fetch_feed, run):
                 found, nested = sitemap_urls(result[1][2])
             except (ET.ParseError, ValueError):
                 continue
-            pages += [clean(u) for u in found if same_site(u, parsed.netloc)]
+            # Sitemaps often still list http:// addresses for an https site: read them as the site serves them.
+            pages += [clean(u.replace('http://', 'https://', 1) if parsed.scheme == 'https'
+                            and urlparse(u).scheme == 'http' else u) for u in found if same_site(u, parsed.netloc)]
             queue += [u for u in nested if same_site(u, parsed.netloc) and u not in seen]
     return list(dict.fromkeys(pages))[:MAX_SITEMAP_URLS]
 

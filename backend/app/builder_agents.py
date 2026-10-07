@@ -15,7 +15,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from . import builder_structured
+from . import builder_crawl, builder_structured
 from .builder_structured import EMAIL_RE, _upcoming
 
 log = logging.getLogger(__name__)
@@ -144,11 +144,16 @@ SPECIALISTS = {
 }
 # Which specialists read which page types (builder_crawl.page_type). Other pages get only the info reader.
 ROUTES = {'staff': ('staff',), 'about': ('staff',), 'events': ('events',), 'ministries': ('ministries',),
-          'groups': ('ministries',), 'sermons': ('sermons',), 'locations': ('locations',), 'visit': ('locations',)}
+          'groups': ('ministries',), 'sermons': ('sermons',), 'locations': ('locations',), 'visit': ('locations',),
+          'news': ('events',)}
 
 
 def specialists_for(source):
-    return ROUTES.get(source.get('page_type'), ()) if source.get('kind', 'page') == 'page' else ()
+    if source.get('kind', 'page') != 'page':
+        return ()
+    if source.get('page_type') == 'news' and builder_crawl.is_post(source.get('url', '')):
+        return ()  # one announcements page is worth reading for events; thirty blog posts are not
+    return ROUTES.get(source.get('page_type'), ())
 
 
 def messages(name, source):
@@ -197,7 +202,11 @@ def check(name, raw, source, today=None):
             day = str(int(value['date'][8:]))
             if not re.search(rf'(?<!\d){day}(?!\d)', item.quote):
                 value['date'] = ''
-            elif name == 'events' and not _upcoming(value['date'], today):
+            elif name == 'events' and value['date'][:4] not in item.quote:
+                # The page gave no year, so the model guessed one: the page's weekday (if any) decides instead.
+                when = builder_structured.infer_date(int(value['date'][5:7]), int(day), item.quote, today)
+                value['date'] = when.isoformat() if when else ''
+            if name == 'events' and value['date'] and not _upcoming(value['date'], today):
                 continue  # a past event is not imported
         collection = spec['collection']
         if name == 'ministries':

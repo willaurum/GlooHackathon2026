@@ -48,7 +48,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import builder_agents, builder_crawl, builder_structured, church_content, db
+from . import builder_agents, builder_crawl, builder_site, builder_structured, church_content, db
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -134,20 +134,67 @@ class _PageText(HTMLParser):
     """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page. Also kept for the
     structured readers: link text and whether a link is in the navigation, JSON-LD blocks, embedded players,
     feed links and the canonical address. Text the page hides (and comments) is not read: a reader could be told
-    things there that visitors never see. Links inside hidden menus are still followed."""
+    things there that visitors never see. Links inside hidden menus are still followed.
+    For recreating the site (builder_site, builder_theme): the menu as (depth, label, href) per <nav>/<header>
+    block, headings, form fields (never their values), button-styled links, stylesheets, icons and the logo."""
     # Form dropdowns are choices, not content (a "Which service?" list would read as service times).
     SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'select', 'textarea'}
     BLOCK = {'p', 'div', 'br', 'li', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article',
              'header', 'footer', 'nav', 'main', 'aside', 'dt', 'dd', 'table', 'form', 'blockquote', 'label', 'button'}
     NAV = {'nav', 'header', 'footer'}
-    MAX_JSONLD = 10
+    HEADINGS = {'h1': 1, 'h2': 2, 'h3': 3, 'h4': 4, 'h5': 5, 'h6': 6}
+    FIELD_SKIP = {'hidden', 'submit', 'button', 'image', 'reset', 'password', 'file'}
+    MAX_JSONLD, MAX_FORMS, MAX_FIELDS, MAX_NAV, MAX_CSS = 10, 10, 30, 200, 60_000
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts, self.links, self.images, self.title, self._skip, self._in_title = [], [], [], '', 0, False
         self.anchors, self.jsonld, self.embeds, self.feeds, self.canonical = [], [], [], [], ''
-        self.meta = {}
-        self._nav, self._anchor, self._script, self._hide = 0, None, None, None
+        self.meta, self.nav, self.headings, self.forms, self.ctas = {}, [], [], [], []
+        self.styles, self.icons, self.logos, self.css = [], [], [], []
+        self._nav, self._anchor, self._script, self._hide, self._style = 0, None, None, None, None
+        self._block, self._items, self._heading, self._form, self._label, self._labels = 0, [], None, None, None, {}
+
+    def _nav_start(self, tag, attrs):
+        if tag in ('nav', 'header', 'footer') and not self._nav:
+            self._block += 1
+            self._block_tag = tag
+        if not self._nav or self._hide and tag != 'li':
+            return
+        if tag == 'li' and len(self.nav) < self.MAX_NAV:
+            item = {'block': self._block, 'tag': getattr(self, '_block_tag', 'nav'), 'depth': len(self._items) + 1,
+                    'text': [], 'href': '', 'open': True}
+            self._items.append(item)
+            self.nav.append(item)
+        elif tag in ('ul', 'ol') and self._items:
+            self._items[-1]['open'] = False  # the item's own label is done; its submenu follows
+        elif tag == 'a' and self._items and self._items[-1]['open'] and not self._items[-1]['href']:
+            self._items[-1]['href'] = attrs.get('href') or ''
+
+    def _form_start(self, tag, attrs):
+        if tag == 'form' and len(self.forms) < self.MAX_FORMS:
+            self._form = {'action': attrs.get('action') or '', 'method': (attrs.get('method') or 'get').lower(),
+                          'name': attrs.get('aria-label') or attrs.get('name') or attrs.get('id') or '',
+                          'fields': [], 'submit': '', 'password': False}
+            self.forms.append(self._form)
+        elif self._form is None:
+            return
+        elif tag in ('input', 'select', 'textarea'):
+            kind = (attrs.get('type') or 'text').lower() if tag == 'input' else tag
+            if kind == 'password':
+                self._form['password'] = True
+            if kind in ('submit', 'button') and attrs.get('value') and not self._form['submit']:
+                self._form['submit'] = attrs['value'][:60]
+            if kind in self.FIELD_SKIP or len(self._form['fields']) >= self.MAX_FIELDS:
+                return
+            self._form['fields'].append({
+                'name': (attrs.get('name') or '')[:80], 'type': kind, 'id': attrs.get('id') or '',
+                'label': (attrs.get('aria-label') or attrs.get('placeholder') or '')[:120],
+                'required': 'required' in attrs or (attrs.get('aria-required') or '') == 'true'})
+        elif tag == 'label':
+            self._label = [attrs.get('for') or '', []]
+        elif tag == 'button' and (attrs.get('type') or 'submit').lower() == 'submit':
+            self._form['_button'] = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -156,6 +203,13 @@ class _PageText(HTMLParser):
                 self._hide[1] += 1
         elif tag not in VOID_TAGS and _hidden(attrs):
             self._hide = [tag, 1]
+        self._nav_start(tag, attrs)
+        if not self._hide:
+            self._form_start(tag, attrs)
+            if tag in self.HEADINGS:
+                self._heading = [self.HEADINGS[tag], []]
+        if tag == 'style' and len(''.join(self.css)) < self.MAX_CSS:
+            self._style = []
         if tag in self.SKIP:
             self._skip += 1
             if tag == 'script' and (attrs.get('type') or '').lower() == 'application/ld+json' and len(self.jsonld) < self.MAX_JSONLD:
@@ -165,21 +219,33 @@ class _PageText(HTMLParser):
         elif tag == 'a' and attrs.get('href'):
             self.links.append(attrs['href'])
             self._anchor = [attrs['href'], [], self._nav > 0]
+            look = f"{attrs.get('class') or ''} {attrs.get('role') or ''}".lower()
+            if not self._hide and re.search(r'\b(btn|button|cta)\b|button', look):
+                self.ctas.append(attrs['href'])
         elif tag == 'img' and not self._hide and not _hidden(attrs):
             if attrs.get('src'):
                 self.images.append(attrs['src'])
+                look = ' '.join(attrs.get(k) or '' for k in ('class', 'id', 'alt', 'src')).lower()
+                if 'logo' in look or self._nav and not self.logos and self._anchor is not None:
+                    self.logos.append((attrs['src'], attrs.get('alt') or ''))
             if attrs.get('alt'):
                 self.parts.append(f" [image: {attrs['alt']}] ")
         elif tag == 'meta' and attrs.get('content'):
             key = (attrs.get('property') or attrs.get('name') or '').strip().lower()
             if key and key not in self.meta and len(self.meta) < 40:
                 self.meta[key] = ' '.join(INVISIBLE_RE.sub('', attrs['content']).split())[:500]
-        elif tag == 'iframe' and attrs.get('src'):
+        elif tag == 'iframe' and attrs.get('src') and not self._hide:
+            # A marker line, so builder_site can tell which section a player or form sits in.
+            self.parts.append(f'\n[embed {len(self.embeds) + 1}]\n')
             self.embeds.append((attrs['src'], attrs.get('title') or ''))
         elif tag == 'link' and attrs.get('href'):
             rel, kind = (attrs.get('rel') or '').lower(), (attrs.get('type') or '').lower()
             if rel == 'canonical':
                 self.canonical = attrs['href']
+            elif 'stylesheet' in rel and len(self.styles) < 10:
+                self.styles.append(attrs['href'])
+            elif 'icon' in rel and len(self.icons) < 10:
+                self.icons.append((attrs['href'], rel, attrs.get('sizes') or ''))
             elif 'alternate' in rel and ('rss' in kind or 'atom' in kind or 'calendar' in kind):
                 self.feeds.append(attrs['href'])
         if tag in self.NAV:
@@ -192,6 +258,25 @@ class _PageText(HTMLParser):
             self._hide[1] -= 1
             if not self._hide[1]:
                 self._hide = None
+        if tag == 'li' and self._items:
+            self._items.pop()['open'] = False
+        if tag in self.HEADINGS and self._heading:
+            text = ' '.join(''.join(self._heading[1]).split())
+            if text:
+                self.headings.append((self._heading[0], text[:200]))
+            self._heading = None
+        if self._form is not None:
+            if tag == 'label' and self._label:
+                self._labels[self._label[0]] = ' '.join(''.join(self._label[1]).split())[:120]
+                self._label = None
+            elif tag == 'button' and '_button' in self._form:
+                text = ' '.join(''.join(self._form.pop('_button')).split())
+                self._form['submit'] = self._form['submit'] or text[:60]
+            elif tag == 'form':
+                self._form = None
+        if tag == 'style' and self._style is not None:
+            self.css.append(''.join(self._style))
+            self._style = None
         if tag in self.SKIP:
             self._skip = max(0, self._skip - 1)
             if tag == 'script' and self._script is not None:
@@ -209,6 +294,17 @@ class _PageText(HTMLParser):
             self.parts.append('\n')
 
     def handle_data(self, data):
+        if self._style is not None:
+            self._style.append(data)
+        if not self._hide and not self._skip:
+            if self._items and self._items[-1]['open']:
+                self._items[-1]['text'].append(data)
+            if self._heading:
+                self._heading[1].append(data)
+            if self._label:
+                self._label[1].append(data)
+            if self._form is not None and '_button' in self._form:
+                self._form['_button'].append(data)
         if self._script is not None:
             self._script.append(data)
         elif self._in_title:
@@ -217,6 +313,27 @@ class _PageText(HTMLParser):
             self.parts.append(data)
             if self._anchor:
                 self._anchor[1].append(data)
+
+    def menu(self):
+        """[(block, block tag, depth, label, href)] for menu items with a label."""
+        out = []
+        for item in self.nav:
+            label = ' '.join(INVISIBLE_RE.sub('', ''.join(item['text'])).split())[:80]
+            if label:
+                out.append((item['block'], item['tag'], item['depth'], label, item['href']))
+        return out
+
+    def form_list(self):
+        """Forms with their fields' labels; login forms are left out, and no field values are ever kept."""
+        out = []
+        for form in self.forms:
+            if form.pop('password', False):
+                continue
+            form.pop('_button', None)
+            for field in form['fields']:
+                field['label'] = self._labels.get(field.pop('id'), '') or field['label'] or field['name']
+            out.append(form)
+        return out
 
     def text(self):
         text = INVISIBLE_RE.sub('', ''.join(self.parts))
@@ -230,7 +347,9 @@ def parse_html(html):
     page.close()
     return {'title': ' '.join(INVISIBLE_RE.sub('', page.title).split()), 'text': page.text(), 'links': page.links, 'images': page.images,
             'anchors': page.anchors, 'jsonld': page.jsonld, 'embeds': page.embeds, 'feeds': page.feeds,
-            'canonical': page.canonical, 'meta': page.meta}
+            'canonical': page.canonical, 'meta': page.meta, 'nav': page.menu(), 'headings': page.headings,
+            'forms': page.form_list(), 'ctas': page.ctas, 'styles': page.styles, 'icons': page.icons,
+            'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS]}
 
 
 class FetchRefused(ValueError):
@@ -390,6 +509,16 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'links': list(dict.fromkeys(a[0] for a in anchors)),
                             'anchors': anchors, 'jsonld': page['jsonld'],
                             'site_name': page['meta'].get('og:site_name') or page['meta'].get('application-name', ''),
+                            'meta': page['meta'], 'headings': page['headings'],
+                            'nav': [(b, tag, depth, label, urldefrag(urljoin(final_url, href))[0] if href else '')
+                                    for b, tag, depth, label, href in page['nav']],
+                            'forms': [{**f, 'action': urljoin(final_url, f['action']) if f['action'] else final_url}
+                                      for f in page['forms']],
+                            'ctas': list(dict.fromkeys(urldefrag(urljoin(final_url, h))[0] for h in page['ctas']))[:30],
+                            'styles': [urljoin(final_url, h) for h in page['styles']],
+                            'icons': [(urljoin(final_url, h), rel, sizes) for h, rel, sizes in page['icons']],
+                            'logos': [(urljoin(final_url, src), alt) for src, alt in page['logos']],
+                            'css': page['css'],
                             'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']]})
             for href in page['feeds']:
                 add_feed(urljoin(final_url, href))
@@ -1488,7 +1617,7 @@ def session_from_sources(url, sources, complete=None, deadline=None, notes=None)
     return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(),
             'url': url, 'status': 'clarifying' if qs else 'review',
             'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes,
-            'collections': collect(items, sources)}
+            'collections': collect(items, sources), 'site': builder_site.build(sources, url or '')}
 
 
 # ---------------------------------------------------------------- storage and routes
