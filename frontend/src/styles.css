@@ -834,8 +834,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .calendar-section .calendar-filter-card { padding: 18px; }
 .calendar-section .calendar-filter-card h3 { font-size: 13px; margin-bottom: 12px; color: #314a3b; }
 .category-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.category-chips .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; padding: 6px 9px; border-radius: 6px; background: #f6f8f5; border: 1px solid #e5ebe4; color: #55695c; }
-.category-chips .chip.active { background: #245b45; color: #fff; border-color: #245b45; }
+.category-chips .chip, .events-view-toggle .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; padding: 6px 9px; border-radius: 6px; background: #f6f8f5; border: 1px solid #e5ebe4; color: #55695c; }
+.category-chips .chip.active, .events-view-toggle .chip.active { background: #245b45; color: #fff; border-color: #245b45; }
 .category-color-pip { width: 6px; height: 6px; border-radius: 50%; }
 
 /* Events list and cards */
@@ -859,6 +859,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .calendar-section .event-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .calendar-section .event-delete { font-size: 13px; padding: 4px 10px; color: #a14a3b; flex: none; }
 .events-view-toggle { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.events-view-toggle .chip { font-size: 12px; cursor: pointer; }
 .event-location { font-size: 11px; color: #63776b; margin-bottom: 12px; display: flex; align-items: center; gap: 4px; }
 .calendar-section .event-description { font-size: 12px; line-height: 1.7; color: #516257; margin-bottom: 16px; flex-grow: 1; }
 

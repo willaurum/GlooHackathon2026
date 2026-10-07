@@ -53,10 +53,11 @@ export function hashFor(slug, route = '', source = '') {
 }
 
 /** Whether the address bar should be rewritten to name its church: the older giving link (#/give/c/<slug>),
- * or a plain link (#/serve, no hash) off a church subdomain. A checkout return on /give is left alone. */
+ * or a plain link (#/serve, no hash) off a church subdomain. A checkout return on /give is left alone, and so is
+ * #/platform, the team's list of every church, which belongs to no church. */
 export function needsChurchInHash(hash, source, onGivePath = false) {
   if (/^#\/?give\/c\//.test(hash || '')) return true;
-  if (source === 'subdomain' || onGivePath) return false;
+  if (source === 'subdomain' || onGivePath || /^#\/?platform\/?$/.test(hash || '')) return false;
   return !/^#\/?c\//.test(hash || '');
 }
 

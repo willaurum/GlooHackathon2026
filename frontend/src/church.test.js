@@ -42,6 +42,7 @@ test('a plain address gains its church, so copying the address bar keeps it', ()
   assert.equal(needsChurchInHash('#/give/c/hope-chapel', 'link'), true);
   assert.equal(needsChurchInHash('#/c/hope-chapel/serve', 'link'), false);
   assert.equal(needsChurchInHash('#/serve', 'subdomain'), false);
+  assert.equal(needsChurchInHash('#/platform', 'saved'), false);
   // A checkout return (/give?session_id=…) keeps its address until the Give page has read it.
   assert.equal(needsChurchInHash('', 'link', true), false);
 });
