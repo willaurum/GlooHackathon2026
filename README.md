@@ -20,7 +20,7 @@ An **Ask Tekton** chat assistant is available on every page.
 |---|---|---|
 | `gloo-hackathon2026` | https://gloo-hackathon2026.jaronwilson2025.workers.dev | The live site: the React frontend built from `main` (static assets, repo root `wrangler.jsonc`). |
 | `preview-jaron-frontend-gloo-hackathon2026` | https://preview-jaron-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev | The integration preview: the latest `jaron-frontend`, which every PR goes into. Check new work here before it goes to `main`. It uses the two APIs below through its `/api` and `/giving-api` proxy. |
-| `gloo-hackathon2026-api-pastor-notes` | https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev | Church API (`api/`): a Cloudflare **Container** running the FastAPI backend, a **SQLite Durable Object** database, **R2** for sermon media, **Workers AI** for transcription and embeddings. Serves Serve, Guests, Calendar, Prayer map, the chat, Sermon Notes and Bible verses. |
+| `gloo-hackathon2026-api-pastor-notes` | https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev | Church API (`api/`): a Cloudflare **Container** running the FastAPI backend, a **SQLite Durable Object** database, **R2** for sermon media, **Workers AI** for transcription (Whisper) and **Gloo AI** for the language work, including sermon-note embeddings. Serves Serve, Guests, Calendar, Prayer map, the chat, Sermon Notes and Bible verses. |
 | `gloo-hackathon2026-api-donate-giving` | https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev | Giving API (`api-giving/`): a Worker with one SQLite Durable Object per church plus a small registry object. |
 
 ### Branch and PR previews
@@ -261,7 +261,8 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `NOTES_ADMIN_KEY` | `api/` | Changing the church config. |
 | `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the version (default `3034`, Berean Standard Bible). |
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
-| `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. |
+| `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. `GLOO_API_KEY` also turns on sermon-note embeddings. |
+| `GLOO_EMBED_MODEL` | `api/` | Optional, not secret. The Gloo embedding model for sermon-note search (default `gloo-baai-bge-base-en-v1.5`). Set it as a GitHub Actions **variable**, next to `GLOO_MODEL`; Deploy backend copies both to the Worker. |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
 | `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
@@ -322,19 +323,32 @@ The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) ta
 
 #### Which AI does what
 
-On Cloudflare, Gloo answers everything that is language work, and the only model we host is the transcriber:
+On Cloudflare, Gloo does the language work, embeddings included. The transcriber is the model we host on Workers AI:
 
 | Job | Model |
 | --- | --- |
 | Website chat, Find a place | Gloo (`GLOO_MODEL`) |
 | Calendar summaries, blog categories and summaries | Gloo (`GLOO_MODEL`) |
 | Sermon-note questions | Gloo (`GLOO_MODEL`) |
+| Passage and question embeddings for sermon-note search | Gloo, `gloo-baai-bge-base-en-v1.5` (`GLOO_EMBED_MODEL`) |
 | Transcribing sermon audio | Workers AI, `@cf/openai/whisper-large-v3-turbo` |
-| Passage embeddings for note search | Workers AI, `@cf/baai/bge-base-en-v1.5` |
+| Highlighting transcript passages by category | Workers AI, `NOTES_LLM_MODEL` (not moved yet) |
 
 Sermon notes pick their engine in `pickEngine` (`api/notes.ts`): Gloo when `GLOO_API_KEY` is set, then Gemini if `GEMINI_API_KEY` is set, then Workers AI when `NOTES_ANSWER_ENGINE=workers-ai`, and otherwise the extractive answerer, which uses no model at all. Asking for `extractive` explicitly always wins, and any model answer that fails the citation check falls back to it.
 
-Whisper stays on Workers AI because Gloo serves chat models, not speech to text. Embeddings stay there for the same reason, and because ingest and questions must use the same embedding model for search to work.
+Whisper stays on Workers AI because Gloo has no speech-to-text model. Gloo does serve embeddings (`POST https://platform.ai.gloo.com/ai/v2/direct/embeddings`, OpenAI-shaped; see [Gloo's guide](https://docs.gloo.com/api-guides/embeddings)), and `api/embed.ts` is the one place that calls it, for ingest (the container's `/embed` bridge) and for questions.
+
+**Embeddings are tagged with their model.** Every chunk stores `embed_model` (for example `gloo:gloo-baai-bge-base-en-v1.5`), and a question is only compared with chunks that carry the current tag. Chunks stored before the switch were made by Workers AI (`@cf/baai/bge-base-en-v1.5`, cls pooling); they are tagged `workers-ai:@cf/baai/bge-base-en-v1.5:cls` and are never compared with Gloo vectors. Changing `GLOO_EMBED_MODEL` works the same way: old chunks simply stop matching the tag.
+
+- **Re-embedding is lazy:** the first question on a note re-embeds its stale chunks from the stored chunk text. Nothing is transcribed again.
+- **Backfill a whole church:** `POST /api/churches/<slug>/notes/reembed` (or `/api/notes/reembed` for the demo church), with the `X-API-Key` or a staff session. Each call does up to `?limit=` chunks (default 256, max 1024), saves after every batch of 64, and returns `{"embedded", "remaining", "done"}`. Call it again until `done` is true; it resumes where it stopped. Each church is its own database, so run it once per church:
+
+  ```bash
+  until curl -fsS -X POST -H "X-API-Key: $NOTES_API_KEY" \
+      https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev/api/churches/grace-community/notes/reembed \
+      | tee /dev/stderr | grep -q '"done":true'; do sleep 1; done
+  ```
+- **If Gloo embeddings fail or there is no key,** ingest still saves the transcript and the chunks, marked unembedded, and the note is ready. Questions then rank passages by shared topic words instead (`"retrieval": "keyword"` in the answer, with a `retrieval_reason`), and the chunks are embedded on a later question or backfill. Nothing falls back to embedding with a different model.
 
 #### Two branches: laptops, or Cloudflare
 
@@ -442,7 +456,7 @@ Run the Python tests from the repo root with the backend requirements installed.
 
 ## Sermon Notes
 
-Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded and stored, and questions are answered only from what the transcript supports. The sermon list and an open sermon have their own routes (`#/notes`, `#/notes/<id>`); on phones an open sermon takes over the page, with a back button.
+Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded with Gloo (`gloo-baai-bge-base-en-v1.5`) and stored, and questions are answered only from what the transcript supports. The sermon list and an open sermon have their own routes (`#/notes`, `#/notes/<id>`); on phones an open sermon takes over the page, with a back button.
 
 ### How it works
 
@@ -455,7 +469,7 @@ Container (ffmpeg + yt-dlp) ----> R2 (raw media)
         v  Workers AI: whisper-large-v3-turbo
    transcript + timestamped segments
         |
-        v  Workers AI: bge-base-en-v1.5 (embeddings)
+        v  Gloo: gloo-baai-bge-base-en-v1.5 (embeddings, tagged with the model)
    chunks in the SQLite Durable Object
         |
         v  ask a question

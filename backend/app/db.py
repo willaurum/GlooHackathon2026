@@ -37,6 +37,9 @@ NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 BLOG_SEEDED = "SELECT 1 FROM config WHERE key = 'blog_seeded'"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
+# Every chunk records the embedding model that made its vector; the Worker only compares a question with chunks
+# from its current model (api/embed.ts). Rows from before the tag existed were Workers AI bge-base with cls pooling.
+LEGACY_EMBED_TAG = 'workers-ai:@cf/baai/bge-base-en-v1.5:cls'
 ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
                          'political_event', 'personal_story', 'inerrancy_claim')
 
@@ -152,11 +155,30 @@ def initialize():
         _initializing.add(slug)
         try:
             _create_tables(seed=slug == DEMO_CHURCH)
+            _ensure_embed_column()
             if slug != DEMO_CHURCH:
                 start_church(name or slug, city)
             _ready.add(slug)
         finally:
             _initializing.discard(slug)
+
+
+def _ensure_embed_column():
+    """Add chunks.embed_model to a database made before it existed; its rows are tagged as the legacy model.
+    The Worker does the same (api/embed.ts), so either side may get there first."""
+    def has_column():
+        try:
+            run(("SELECT embed_model FROM chunks LIMIT 0", ()))
+            return True
+        except Exception:
+            return False
+    if has_column():
+        return
+    try:
+        run((f"ALTER TABLE chunks ADD COLUMN embed_model TEXT NOT NULL DEFAULT '{LEGACY_EMBED_TAG}'", ()))
+    except Exception:
+        if not has_column():
+            raise
 
 
 def _create_tables(seed=True):
@@ -211,6 +233,7 @@ def _create_tables(seed=True):
             seg_to INTEGER NOT NULL,
             text TEXT NOT NULL,
             embedding TEXT NOT NULL,
+            embed_model TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (note_id, idx)
         )""", ()),
         # Transcript passages tagged by category (Bible quote, personal story, ...), as segment ranges.
@@ -657,9 +680,11 @@ def save_transcript(note_id, segments, chunks, duration, annotations=()):
                   ("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
     statements += [('INSERT INTO segments (note_id, idx, start, "end", text) VALUES (?, ?, ?, ?, ?)',
                     (note_id, i, s['start'], s['end'], s['text'])) for i, s in enumerate(segments)]
-    statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'], json.dumps(c['embedding'])))
+    # A chunk without a vector (embeddings were unavailable) is stored with '' for both; the Worker embeds it later.
+    statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding, embed_model) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'],
+                     *((json.dumps(c['embedding']), c.get('embed_model') or '') if c.get('embedding') else ('', ''))))
                    for i, c in enumerate(chunks)]
     statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
                     'VALUES (?, ?, ?, ?, ?, ?)',

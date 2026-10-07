@@ -60,8 +60,10 @@ jobs:
           NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
           # Not secret: set it under Settings > Secrets and variables > Actions > Variables.
           GLOO_MODEL: ${{ vars.GLOO_MODEL }}
+          # Also a variable: the Gloo embedding model for sermon-note search (default gloo-baai-bge-base-en-v1.5).
+          GLOO_EMBED_MODEL: ${{ vars.GLOO_EMBED_MODEL }}
         run: |
-          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL; do
+          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL GLOO_EMBED_MODEL; do
             value="${!name}"
             if [ -n "$value" ]; then
               printf '%s' "$value" | npx wrangler secret put "$name"

@@ -4,7 +4,9 @@ A note comes from a YouTube URL (downloaded here with yt-dlp) or an uploaded fil
 (the Worker streams it to R2; we read it back through the `notes-media` host).
 ffmpeg cuts the audio into 10-minute mono parts, Workers AI transcribes each part
 (`workers-ai` host, whisper-large-v3-turbo), and the segments are grouped into
-chunks and embedded (bge-base-en-v1.5) so the Worker can answer questions later.
+chunks and embedded with Gloo (gloo-baai-bge-base-en-v1.5, through the Worker's
+/embed bridge) so the Worker can answer questions later. If embeddings fail, the
+chunks are saved unembedded and the Worker embeds them on the first question.
 Finally an LLM (`/llm`) tags passages by category (Bible quotes, personal stories, ...)
 so the transcript can highlight them.
 
@@ -186,7 +188,7 @@ def split_audio(path, workdir):
     return parts
 
 
-# --- Transcribing and embedding (Workers AI, through the Worker) ---
+# --- Transcribing (Workers AI) and embedding (Gloo), both through the Worker ---
 
 _ai = httpx.Client(base_url=AI_URL, timeout=httpx.Timeout(30, read=300))
 
@@ -236,14 +238,40 @@ def make_chunks(segments):
 
 
 def embed(texts):
-    vectors = []
+    """(model tag, vectors) from the Worker's Gloo embeddings. Raises NoteError('embedding_failed')."""
+    vectors, tag = [], None
     for i in range(0, len(texts), EMBED_BATCH):
-        response = _ai.post('/embed', json={'texts': texts[i:i + EMBED_BATCH]})
+        try:
+            response = _ai.post('/embed', json={'texts': texts[i:i + EMBED_BATCH]})
+        except httpx.HTTPError as err:
+            log.warning('embed failed: %s', err)
+            raise NoteError('embedding_failed') from err
         if response.status_code != 200:
             log.warning('embed failed: %s %s', response.status_code, response.text[:500])
             raise NoteError('embedding_failed')
-        vectors += response.json()['vectors']
-    return [[round(x, 5) for x in v] for v in vectors]
+        body = response.json()
+        # One model per note: a model switch mid-note would make its vectors incomparable.
+        if not body.get('model') or (tag and body['model'] != tag):
+            raise NoteError('embedding_failed')
+        tag = body['model']
+        vectors += body['vectors']
+    if len(vectors) != len(texts):
+        raise NoteError('embedding_failed')
+    return tag, [[round(x, 5) for x in v] for v in vectors]
+
+
+def embed_chunks(chunks):
+    """Attach vectors and their model tag to the chunks. If embeddings are unavailable the chunks stay
+    unembedded and the note still becomes ready; the Worker embeds them on the first question or a backfill.
+    Transcription is never redone for this."""
+    try:
+        tag, vectors = embed([c['text'] for c in chunks])
+    except NoteError:
+        log.warning('saving %d chunks unembedded; they are embedded later', len(chunks))
+        return False
+    for chunk, vector in zip(chunks, vectors):
+        chunk['embedding'], chunk['embed_model'] = vector, tag
+    return True
 
 
 CATEGORIZE_PROMPT = """You tag passages in a sermon transcript. Each line is one segment: [index] text.
@@ -359,8 +387,7 @@ def process(note_id):
         if not segments:
             raise NoteError('no_speech')
         chunks = make_chunks(segments)
-        for chunk, vector in zip(chunks, embed([c['text'] for c in chunks])):
-            chunk['embedding'] = vector
+        embed_chunks(chunks)
         annotations = categorize(segments)
         db.save_transcript(note_id, segments, chunks, round(duration, 2), annotations)
         log.info('note %s ready: %d segments, %d chunks, %d annotations',
