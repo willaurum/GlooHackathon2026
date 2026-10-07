@@ -33,6 +33,19 @@ export const undoEditApi = draftId => draftApi('/' + encodeURIComponent(draftId)
 /** The pastor confirms (or takes back) the statement of faith Tekton kept word for word. */
 export const beliefsApi = (draftId, confirmed) => draftApi('/' + encodeURIComponent(draftId) + '/beliefs', { method: 'POST', body: JSON.stringify({ confirmed }) });
 
+export async function downloadSiteFiles(draftId) {
+  const { files } = await draftApi('/' + encodeURIComponent(draftId) + '/files');
+  const name = files['church.json']?.info?.name || 'church';
+  const url = URL.createObjectURL(new Blob([JSON.stringify(files, null, 2) + '\n'], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'church') + '-site-files.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const timer = setTimeout(resolve, ms);
   signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); }, { once: true });

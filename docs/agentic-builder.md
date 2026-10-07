@@ -16,6 +16,8 @@ The team agreed on five steps:
 | **Confirm** | The person picks a candidate, types their own, or edits on the review screen; list items are included, left out or edited | `apply_answer`, `apply_item` |
 | **Build preview** | Confirmed values fill the existing church template, with the old site's pages, menu and look | `build_content`, `builder_site.content`, `#/new/preview` |
 
+Build preview also exports seed-shaped files: `church.json` (`info`, `faqs`, `events`, `groups`), `ministries.json` (`ministries`), `events.json` (`calendar`) and `builder.json` (any `staff`, `locations`, `sermons`, `site`, `pages`); `regions.json` is included when present. `GET /api/builder/drafts/{id}/files` returns them, and Review's **Download site files (JSON)** saves one church-named JSON containing the files. `builder_export.load()` merges and validates them, including the demo's bare-array seeds. Run `python -m backend.app.builder_export <fixture-dir-or-url> <out-dir> [--answers answers.json]` to write individual files; fixtures run offline without AI. Answers are `{field: value}`; open questions may remain as in the site preview.
+
 The rule underneath: **the AI may suggest; only the person confirms.** Real disagreements (below) are asked about, never quietly chosen, and everything is shown for review before anything is built.
 
 ## Rules and AI: who does what
