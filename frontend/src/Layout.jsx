@@ -91,11 +91,51 @@ export function TopBar({ onAsk }) {
   </header>;
 }
 
-// Floating bubble in the bottom-left corner, across from Ask Tekton. Hidden on the Guests pages,
-// where a first-time visitor already is.
+// Welcome popup for first-time visitors. It fades in shortly after the site opens, at most once
+// per visit (a refresh is the same visit), and never again once "Don't show this again" is
+// checked. Not shown on the Guests pages, where a first-time visitor already is.
+const HIDE_KEY = 'belong.firstVisitHidden', SEEN_KEY = 'belong.firstVisitSeen';
+const stored = (store, key) => { try { return store.getItem(key) === '1'; } catch { return false; } };
+const store1 = (store, key) => { try { store.setItem(key, '1'); } catch { /* private mode: just close */ } };
+
 export function FirstVisit({ route, go }) {
-  if (sectionOf(route) === 'guests') return null;
-  return <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>;
+  const { name } = useChurch();
+  const [state, setState] = useState('hidden'); // hidden → open → closing → hidden
+  const [dontShow, setDontShow] = useState(false);
+  const onGuests = sectionOf(route) === 'guests';
+
+  useEffect(() => {
+    if (onGuests || stored(localStorage, HIDE_KEY) || stored(sessionStorage, SEEN_KEY)) return;
+    const t = setTimeout(() => { store1(sessionStorage, SEEN_KEY); setState('open'); }, 700);
+    return () => clearTimeout(t);
+  }, [onGuests]);
+
+  function close(next) {
+    if (dontShow) store1(localStorage, HIDE_KEY);
+    setState('closing');
+    setTimeout(() => setState('hidden'), 250);
+    if (next) go(next);
+  }
+  useEffect(() => {
+    if (state !== 'open') return;
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  if (state === 'hidden') return null;
+  return <div className={'welcome' + (state === 'closing' ? ' closing' : '')} onClick={e => e.target === e.currentTarget && close()}>
+    <div className="card welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-text">
+      <button className="close" aria-label="Close" onClick={() => close()}><Icon name="x" size={20} /></button>
+      <h2 id="welcome-title">First time here?</h2>
+      <p id="welcome-text">Welcome{name ? ` to ${name}` : ''}! We'd love to help your first Sunday feel easy. See service times, what to expect, where to park and how kids check-in works, and let us know you're coming so someone can say hello.</p>
+      <div className="welcome-actions">
+        <button className="primary" autoFocus onClick={() => close('guests/plan')}>Plan your visit<Icon name="arrow" size={18} /></button>
+        <button className="ghost" onClick={() => close()}>Not now</button>
+      </div>
+      <label className="field checkbox welcome-hide"><input type="checkbox" checked={dontShow} onChange={e => setDontShow(e.target.checked)} />Don't show this again</label>
+    </div>
+  </div>;
 }
 
 export function TabBar({ route, go, chatOpen, savedCount }) {

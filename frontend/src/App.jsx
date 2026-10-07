@@ -271,7 +271,7 @@ export default function App() {
         </main>
       </div>
       <TabBar route={route} go={go} chatOpen={chatOpen} savedCount={savedCount} />
-      {!chatOpen && <FirstVisit route={route} go={go} />}
+      <FirstVisit route={route} go={go} />
       <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onRequestFiled={() => setRequestsVersion(v => v + 1)} onNavigate={go} />
     </div>
   </ChurchContext.Provider>;
