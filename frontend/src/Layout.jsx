@@ -3,7 +3,7 @@ import { useChurch } from './ChurchContext.js';
 import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 
-// One navigation for every screen size: a sidebar on desktop; on phones, a tab bar holds the
+// One navigation for every screen size: a top navigation bar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
 // `staffOnly` sections appear only while church staff are signed in.
 export const SECTIONS = [
@@ -40,28 +40,45 @@ export function Avatar() {
   return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
 }
 
-export function Sidebar({ route, go, savedCount }) {
-  const { demo, staff } = useChurch();
-  const user = identity(staff);
-  return <aside className="sidebar">
+// Desktop header, first row: the church in place of a site logo, and who is signed in.
+export function SiteHeader() {
+  const church = useChurch();
+  const user = identity(church.staff);
+  return <header className="site-header">
     <ChurchName />
-    <nav aria-label="Main">
-      {visibleSections(staff).map(s => <div key={s.route}>
-        <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
-          <Icon name={s.icon} />{s.label}
+    <div className="site-account">
+      {church.demo ? <span className="demo-pill">● Demo workspace</span> : church.staff && <span className="demo-pill">● Signed in as staff</span>}
+      <div className="site-user"><strong>{user.name}</strong><small>{user.role}</small></div>
+      <Avatar />
+    </div>
+  </header>;
+}
+
+// Desktop header, second row: the main navigation, pinned to the top while scrolling. A section
+// with sub-pages opens them in a dropdown on hover or keyboard focus; the section itself still opens its first page.
+export function SiteNav({ route, go, savedCount }) {
+  const { demo, staff } = useChurch();
+  const current = sectionOf(route);
+  // Leave the dropdown once a page is picked (focus would otherwise keep it open).
+  const pick = (e, next) => { e.currentTarget.blur(); go(next); };
+  return <nav className="site-nav" aria-label="Main">
+    {visibleSections(staff).map(s => {
+      const kids = childrenFor(s, demo);
+      return <div key={s.route} className={'site-nav-item' + (kids.length > 1 ? ' has-menu' : '')}>
+        <button className={'site-nav-link' + (current === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined}
+          aria-haspopup={kids.length > 1 ? 'true' : undefined} onClick={e => pick(e, s.route)}>
+          {s.label}
+          {s.route === 'serve' && savedCount > 0 && <b className="count">{savedCount}</b>}
+          {kids.length > 1 && <svg className="caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
-        {s.children && sectionOf(route) === s.route && <div className="nav-children">
-          {childrenFor(s, demo).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
+        {kids.length > 1 && <div className="site-nav-menu">
+          {kids.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={e => pick(e, r)}>
             {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
           </button>)}
         </div>}
-      </div>)}
-    </nav>
-    <div className="profile">
-      <Avatar />
-      <div><strong>{user.name}</strong><small>{user.role}</small></div>
-    </div>
-  </aside>;
+      </div>;
+    })}
+  </nav>;
 }
 
 export function TopBar({ onAsk }) {
@@ -77,15 +94,6 @@ export function TopBar({ onAsk }) {
 export function FirstVisit({ route, go }) {
   if (sectionOf(route) === 'guests') return null;
   return <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>;
-}
-
-// Desktop-only strip in the top-right corner; phones get the avatar in the TopBar instead.
-export function WorkspaceBar() {
-  const church = useChurch();
-  return <div className="workspace-bar">
-    {church.demo ? <span className="demo-pill">● Demo workspace</span> : church.staff && <span className="demo-pill">● Signed in as staff</span>}
-    <Avatar />
-  </div>;
 }
 
 export function TabBar({ route, go, chatOpen, savedCount }) {

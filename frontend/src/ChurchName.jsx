@@ -3,7 +3,7 @@ import Icon from './Icon.jsx';
 
 // Which church this site is for. Churches do not see each other: a visitor reaches a church by its own
 // link (or subdomain), and the remembered church brings them back, so there is no list to switch from.
-// Desktop shows it in the sidebar; phones show the compact form in the top bar.
+// Desktop shows it in the header; phones show the compact form in the top bar.
 export default function ChurchName({ compact = false }) {
   const church = useChurch();
   const name = church.name || ' ';

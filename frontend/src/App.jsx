@@ -8,7 +8,7 @@ import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { ABOUT_DEMO_ONLY, FirstVisit, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import { ABOUT_DEMO_ONLY, FirstVisit, PageHeader, SECTIONS, SiteHeader, SiteNav, SubNav, TabBar, TopBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -70,7 +70,7 @@ function readLocation() {
 }
 
 // The browser tab shows the church itself: its name as the title, and its letter badge (the same
-// sand-colored initial as beside the church name in the sidebar) as the icon.
+// sand-colored initial as beside the church name in the header) as the icon.
 const xmlEscape = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
 function churchIcon(name) {
   const letter = xmlEscape(name.trim().charAt(0).toUpperCase() || '·');
@@ -257,10 +257,10 @@ export default function App() {
 
   return <ChurchContext.Provider value={church}>
     <div className="app">
-      <Sidebar route={route} go={go} savedCount={savedCount} />
+      <SiteHeader />
+      <SiteNav route={route} go={go} savedCount={savedCount} />
       <TopBar onAsk={() => setChatOpen(true)} />
       <div className="content">
-        <WorkspaceBar />
         {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
         <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
