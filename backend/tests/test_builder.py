@@ -16,7 +16,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from backend.app import builder, db, main
+from backend.app import builder, church_content, db, main
 from backend.tests.test_churches import ChurchTestCase
 
 FIXTURES = Path(__file__).resolve().parent / 'fixtures' / 'builder'
@@ -404,6 +404,64 @@ class RouteTests(ChurchTestCase):
         builder._save(draft)
         self.assertEqual(self.client.get('/api/builder/drafts/' + sid).json()['notes'], [])
 
+    def test_site_snapshot_has_confirmed_details_without_church_writes(self):
+        demo = db.export_content()
+        sid = self.create()
+        self.confirm(sid)
+        databases = set(self.fake.databases)
+        draft = builder._load(sid)
+        self.fake.seen.clear()
+        with mock.patch.object(db, 'replace_content', side_effect=AssertionError('Church write')), \
+                mock.patch.object(db, 'start_church', side_effect=AssertionError('Church creation')):
+            response = self.client.get(f'/api/builder/drafts/{sid}/site', headers=self.hope())
+        self.assertEqual(response.status_code, 200, response.text)
+        snapshot = response.json()
+        self.assertEqual(snapshot['info']['name'], 'Harborlight Chapel')
+        self.assertEqual([(s['day'], s['time']) for s in snapshot['info']['services']],
+                         [('Sunday', '9:00 AM'), ('Sunday', '11:00 AM')])
+        self.assertEqual(snapshot['church']['info'], snapshot['info'])
+        self.assertEqual(snapshot['ministries'], [])
+        self.assertEqual(snapshot['events'], [])
+        self.assertEqual(set(self.fake.seen), {builder.DRAFT_SPACE})
+        self.assertEqual(set(self.fake.databases), databases)
+        self.assertEqual(builder._load(sid), draft)
+        self.assertEqual(db.export_content(), demo)
+
+    def test_site_snapshot_allows_unanswered_questions(self):
+        sid = self.create()
+        response = self.client.get(f'/api/builder/drafts/{sid}/site')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['info']['name'], 'Your church')
+        self.assertEqual(response.json()['info']['services'], [])
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/preview').status_code, 400)
+
+    def test_site_snapshot_matches_the_real_public_endpoints(self):
+        sid = self.create()
+        self.confirm(sid)
+        content = builder.build_content(builder._load(sid))
+        content.update({
+            'faqs': [{'question': 'What should I wear?', 'answer': 'Come as you are.'}],
+            'events': [{'name': 'Community lunch', 'when': 'Sunday after service'}],
+            'ministries': [{'name': 'Welcome', 'shifts': [{'date': '2030-01-06', 'start_time': '09:00',
+                                                       'end_time': '10:00', 'filled': 1, 'total': 3}]}],
+            'calendar': [{'title': 'Community lunch', 'date': '2030-01-06', 'time': '12:00'}],
+        })
+        content = church_content.normalize(church_content.ChurchContent(**content))
+        with mock.patch.object(builder, 'build_content', return_value=content):
+            snapshot = self.client.get(f'/api/builder/drafts/{sid}/site').json()
+            self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope()).status_code, 200)
+        for path in ('info', 'church', 'ministries', 'events'):
+            self.assertEqual(self.client.get('/api/' + path, headers=self.hope()).json(), snapshot[path])
+        self.assertEqual(snapshot['ministries'][0]['total'], 3)
+        self.assertEqual(snapshot['events'][0]['title'], 'Community lunch')
+
+    def test_expired_site_snapshot_is_404(self):
+        sid = self.create()
+        draft = builder._load(sid)
+        draft['created_at'] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        builder._save(draft)
+        self.assertEqual(self.client.get(f'/api/builder/drafts/{sid}/site').status_code, 404)
+
     def test_drafts_live_outside_the_requesting_church(self):
         sid = self.create(self.hope())
         self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 200)
@@ -501,7 +559,7 @@ class RouteTests(ChurchTestCase):
 
     def test_unknown_or_malformed_drafts_are_404(self):
         for sid in ('a' * 24, 'nope-nope-nope', '../../etc', 'x', '+' * 24, 'a' * 25):
-            for path, method in [('', 'get'), ('/answers', 'post'), ('/preview', 'post'), ('/apply', 'post')]:
+            for path, method in [('', 'get'), ('/site', 'get'), ('/answers', 'post'), ('/preview', 'post'), ('/apply', 'post')]:
                 kwargs = {'json': {'field': 'name', 'value': 'Church'}} if path == '/answers' else {}
                 self.assertEqual(getattr(self.client, method)(f'/api/builder/drafts/{sid}{path}', **kwargs).status_code, 404)
 

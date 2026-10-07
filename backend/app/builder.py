@@ -666,15 +666,16 @@ def apply_answer(session, field, value):
     return session
 
 
-def build_content(session):
+def build_content(session, *, allow_unanswered=False):
     """The confirmed profile as ChurchContent (only the sections the builder fills)."""
     open_items = [q['field'] for q in session['questions']]
-    if open_items:
+    if open_items and not allow_unanswered:
         raise ValueError('Answer the open questions first: ' + ', '.join(FIELD_LABELS.get(f, f) for f in open_items))
     f = {k: v.get('value') for k, v in session['fields'].items() if v.get('value') is not None}
     phone = _show('phone', f['phone']) if f.get('phone') else ''
     info = {
-        'name': f.get('name', ''), 'address': f.get('address', ''), 'phone': phone, 'email': f.get('email', ''),
+        'name': f.get('name') or ('Your church' if allow_unanswered else ''),
+        'address': f.get('address', ''), 'phone': phone, 'email': f.get('email', ''),
         'office_hours': f.get('office_hours', ''), 'about': f.get('about', ''), 'first_visit': f.get('first_visit', ''),
         'services': [{'day': s['day'], 'time': _twelve(s['time']), 'note': ''} for s in f.get('services', [])],
         'map_query': f.get('address', ''),
@@ -831,6 +832,12 @@ def _content(draft_id):
 def preview(draft_id: str):
     with _draft_lock:
         return {'content': _content(draft_id)}
+
+
+@router.get('/api/builder/drafts/{draft_id}/site')
+def site(draft_id: str):
+    with _draft_lock:
+        return church_content.public_site(build_content(_load(draft_id), allow_unanswered=True))
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')

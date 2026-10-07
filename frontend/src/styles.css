@@ -1077,6 +1077,17 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .builder-steps li[aria-current] { color: var(--green-700); font-weight: 700; }
 .builder-steps li[aria-current] > span { color: var(--card); background: var(--green-700); }
 .builder-progress { color: var(--green-700); font-weight: 600; }
+.builder-notes { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+.site-preview { --preview-height: 52px; padding-top: var(--preview-height); }
+.site-preview-banner { position: fixed; inset: 0 0 auto; z-index: 110; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 8px 16px; background: var(--green-50); border-bottom: 1px solid var(--line); font-size: 13px; }
+.site-preview-banner a { flex: none; font-weight: 600; }
+.site-preview .sidebar { top: var(--preview-height); }
+.site-preview .topbar { top: var(--preview-height); }
+.site-preview-banner span { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .site-preview { --preview-height: 76px; }
+  .site-preview-banner { min-height: 76px; flex-wrap: wrap; align-content: center; }
+}
 .builder .banner { margin-bottom: 0; }
 .builder .banner.error p { color: inherit; }
 .builder-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }

@@ -74,12 +74,12 @@ class ConnectionRequest(BaseModel):
 @app.get('/api/info')
 def church_info():
     # Public church details (address, service times) for the home page.
-    return db.get_church_info()
+    return church_content.public_info({'info': db.get_church_info()})
 
 
 @app.get('/api/ministries')
 def ministries():
-    return db.list_ministries()
+    return church_content.public_ministries({'ministries': db.list_ministries()})
 
 
 @app.post('/api/matches')
@@ -230,7 +230,8 @@ class ClaimRequest(BaseModel):
 
 @app.get('/api/church')
 def church():
-    return {'info': db.get_church_info(), 'faqs': db.list_content('faqs'), 'events': db.list_content('events')}
+    return church_content.public_church({'info': db.get_church_info(), 'faqs': db.list_content('faqs'),
+                                        'events': db.list_content('events')})
 
 
 @app.post('/api/visits', status_code=201)
@@ -390,7 +391,7 @@ async def auto_summarize_background():
 
 @app.get("/api/events")
 def get_events():
-    return db.list_events()
+    return church_content.public_events({'calendar': db.list_events()})
 
 
 @app.get("/api/events/{event_id}")

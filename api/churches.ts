@@ -127,6 +127,7 @@ const ID = '[^/]+';
 const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['POST', /^\/api\/builder\/drafts$/],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}$`)],
+	['GET', new RegExp(`^/api/builder/drafts/${ID}/site$`)],
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|preview)$`)],
 ];
 

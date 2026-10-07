@@ -113,6 +113,7 @@ export default function Builder() {
     <div className="builder">
       <ol className="builder-steps" aria-label="Create your site steps">{['Import', 'Clarify', 'Review', 'Create your church'].map((label, i) => <li key={label} aria-current={step === i ? 'step' : undefined}><span aria-hidden="true">{i + 1}</span>{label}</li>)}</ol>
       <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your website import…' : busy === 'reading' ? 'Reading your website… This can take up to a minute.' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Start with your website address.'}</p>
+      {session?.notes?.length > 0 && <ul className="builder-notes">{session.notes.map((note, i) => <li key={i}>{note}</li>)}</ul>}
       {error && <div className="banner error" role="alert"><p>{error}</p></div>}
       {!loading && !session && sessionId && !created && <div className="card give-pad"><p>Your saved import could not be loaded.</p><button type="button" className="secondary" onClick={() => setRetry(v => v + 1)}>Try again</button></div>}
       {!loading && !session && !sessionId && <form className="card give-pad" onSubmit={readWebsite}>
@@ -135,7 +136,7 @@ export default function Builder() {
         <section className="card give-pad builder-build">
           <p>Ready? Create your church and a staff account to manage its new site.</p>
           {editing && <p className="form-note">Save or cancel your edit before continuing.</p>}
-          <div className="builder-actions"><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
+          <div className="builder-actions"><button type="button" className="primary" disabled={locked || !!editing} onClick={() => { window.location.hash = '#/new/preview'; }}>Preview your site</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
         </section>
       </>}
       {!loading && creating && (review || created) && <CreateAccount session={session} draftId={sessionId} created={created} onCreated={onCreated} onSuccess={onSuccess} onBack={() => setCreating(false)} answer={answer} disabled={locked} setBusy={setBusy} />}
@@ -153,10 +154,11 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
   const [city, setCity] = useState(addressCity(session?.fields.address?.value));
   const [ownerName, setOwnerName] = useState(''), [ownerEmail, setOwnerEmail] = useState('');
   const [password, setPassword] = useState(''), [confirm, setConfirm] = useState(''), [error, setError] = useState('');
+  const [registrationClosed, setRegistrationClosed] = useState(false);
   async function submit(e) {
     e.preventDefault();
     if (disabled) return;
-    setError('');
+    setError(''); setRegistrationClosed(false);
     if (!created && (password.length < 10 || password !== confirm)) {
       setError(password.length < 10 ? 'Use a password of at least 10 characters.' : 'The passwords must match.');
       return;
@@ -173,7 +175,11 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
         name: name.trim(), city: city.trim(), ownerName: ownerName.trim(), ownerEmail: ownerEmail.trim(), password,
       }, created, target => { onCreated(target); setPassword(''); setConfirm(''); });
       onSuccess(result.church);
-    } catch (err) { setError(err.message); }
+    } catch (err) {
+      const closed = err.status === 403 && err.registrationClosed;
+      setRegistrationClosed(closed);
+      setError(closed ? 'Creating new churches is not open on this site yet. You can still preview your site.' : err.message);
+    }
     finally { setBusy(''); }
   }
   return <form className="card give-pad builder-create" onSubmit={submit}>
@@ -191,6 +197,7 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
     </>}
     {error && <div className="banner error" role="alert">{error}</div>}
     <div className="builder-actions">
+      {registrationClosed && <button type="button" className="primary" onClick={() => { window.location.hash = '#/new/preview'; }}>Preview your site</button>}
       <button className="primary" disabled={disabled}>{disabled ? 'Loading your church…' : created ? 'Try again' : 'Create my church site'}</button>
       {!created && <button type="button" className="secondary" disabled={disabled} onClick={onBack}>Back to review</button>}
     </div>
@@ -203,12 +210,12 @@ function Evidence({ items }) {
   </li>)}</ul>;
 }
 
-function AnswerInput({ field, label, value, setValue, disabled }) {
+function AnswerInput({ field, label, value, setValue, disabled, question }) {
   const hint = field === 'services' ? 'e.g. Sundays 9:00 AM and 11:00 AM' : '';
   return <label className="field">{label}
     {field === 'about' || field === 'first_visit'
-      ? <textarea rows={3} value={value} disabled={disabled} onChange={e => setValue(e.target.value)} />
-      : <input value={value} inputMode={field === 'phone' ? 'tel' : field === 'email' ? 'email' : undefined} placeholder={hint} disabled={disabled} onChange={e => setValue(e.target.value)} />}
+      ? <textarea aria-label={question} rows={3} value={value} disabled={disabled} onChange={e => setValue(e.target.value)} />
+      : <input aria-label={question} value={value} inputMode={field === 'phone' ? 'tel' : field === 'email' ? 'email' : undefined} placeholder={hint} disabled={disabled} onChange={e => setValue(e.target.value)} />}
   </label>;
 }
 
@@ -225,7 +232,7 @@ function Question({ question, answer, disabled }) {
       <button type="button" className="secondary" disabled={disabled} aria-label={'Use this: ' + candidate.display} onClick={() => save(candidate.value)}>Use this</button>
     </div>)}</div>}
     <form onSubmit={e => { e.preventDefault(); save(value); }}>
-      <AnswerInput field={question.field} label={question.kind === 'conflict' ? 'Something else' : BUILDER_LABELS[question.field]} value={value} setValue={setValue} disabled={disabled} />
+      <AnswerInput field={question.field} label={question.kind === 'conflict' ? 'Something else' : BUILDER_LABELS[question.field]} question={question.prompt} value={value} setValue={setValue} disabled={disabled} />
       {error && <div className="banner error" role="alert">{error}</div>}
       <button className="primary" disabled={disabled || !value.trim()}>Save</button>
     </form>

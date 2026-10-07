@@ -20,7 +20,8 @@ export const draftApi = (path = '', options = {}) => request(apiUrl('/builder/dr
 export async function createFromDraft(draftId, account, created, onCreated) {
   let church = created;
   if (!church) {
-    church = await gapi('/api/churches', { method: 'POST', body: JSON.stringify(account) });
+    try { church = await gapi('/api/churches', { method: 'POST', body: JSON.stringify(account) }); }
+    catch (err) { if (err.status === 403) err.registrationClosed = true; throw err; }
     setStaffToken(church.slug, church.token, { verified: true });
     // Retain the target before apply: a failed apply must never cause another signup.
     onCreated({ slug: church.slug, draftId, token: church.token });

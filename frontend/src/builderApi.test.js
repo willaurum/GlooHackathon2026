@@ -70,3 +70,16 @@ test('giving errors are surfaced before any apply or target is recorded', async 
     await assert.rejects(createFromDraft('draft-id', {}, null, () => assert.fail('Signup failed')), /Too many new churches/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('only a signup 403 is marked as closed registration', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => Response.json({ error: 'Public church registration is not available on this site.' }, { status: 403 });
+    await assert.rejects(createFromDraft('draft-id', {}, null, () => assert.fail('Signup failed')),
+      error => error.status === 403 && error.registrationClosed === true);
+    globalThis.fetch = async url => url.endsWith('/api/health') ? Response.json({ churches: true })
+      : Response.json({ detail: 'Apply was refused.' }, { status: 403 });
+    await assert.rejects(createFromDraft('draft-id', null, { slug: 'harborlight', token: 'test-token' }, () => {}),
+      error => error.status === 403 && !error.registrationClosed && error.message === 'Apply was refused.');
+  } finally { globalThis.fetch = originalFetch; }
+});
