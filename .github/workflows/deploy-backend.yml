@@ -68,8 +68,10 @@ jobs:
           # Also a variable: the Gloo model that tags sermon highlights (default: GLOO_MODEL, then gloo-qwen-3.7-flash).
           GLOO_NOTES_MODEL: ${{ vars.GLOO_NOTES_MODEL }}
           GLOO_MATCH_MODEL: ${{ vars.GLOO_MATCH_MODEL }}
+          # Also a variable: the agentic builder's model (default: GLOO_MATCH_MODEL, then gloo-anthropic-claude-haiku-4.5).
+          GLOO_BUILDER_MODEL: ${{ vars.GLOO_BUILDER_MODEL }}
         run: |
-          for name in GLOO_API_KEY NEWSDATA_API_KEY YT_HELPER_KEY YT_HELPER_URL GLOO_MODEL GLOO_EMBED_MODEL GLOO_NOTES_MODEL GLOO_MATCH_MODEL; do
+          for name in GLOO_API_KEY NEWSDATA_API_KEY YT_HELPER_KEY YT_HELPER_URL GLOO_MODEL GLOO_EMBED_MODEL GLOO_NOTES_MODEL GLOO_MATCH_MODEL GLOO_BUILDER_MODEL; do
             value="${!name}"
             if [ -n "$value" ]; then
               printf '%s' "$value" | npx wrangler secret put "$name"

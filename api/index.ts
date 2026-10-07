@@ -5,6 +5,7 @@ import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBus
 import { DEMO_SLUG, STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
 import { YT_HELPER_HOST, ytHelperBridge, ytHelperEnvVars } from './ythelper';
+import { BUILDER_FETCH_HOST, builderFetchBridge, builderFetchEnvVars } from './builderfetch';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
 export { ContainerProxy };
@@ -61,7 +62,8 @@ export class ChurchAPI extends Container<AppEnv> {
 	// Outbound HTTPS goes through the Worker; start.sh makes the container trust its CA.
 	interceptHttps = true;
 	// allowedHosts gates everything, including outboundByHost, so the bridge hosts must be listed.
-	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, YT_HELPER_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS, ...NEWS_HOSTS];
+	// Church websites for the builder are not listed: they go through BUILDER_FETCH_HOST, which checks each address.
+	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, YT_HELPER_HOST, BUILDER_FETCH_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS, ...NEWS_HOSTS];
 
 	// The container and the Worker's /ask share each church's database.
 	// Assigned (not declared as a class field) so the library's static setter registers it.
@@ -78,6 +80,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			[TEAM_AI_HOST]: (request: Request, env: AppEnv) => teamAiBridge(request, env),
 			// YouTube downloads from Jaron's dev server (scripts/youtube-helper); the handler adds the key.
 			[YT_HELPER_HOST]: (request: Request, env: AppEnv) => ytHelperBridge(request, env),
+			// The agentic builder reads a church's existing website from the Worker; see builderfetch.ts.
+			[BUILDER_FETCH_HOST]: (request: Request) => builderFetchBridge(request),
 		};
 	}
 
@@ -100,6 +104,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			GLOO_NOTES_MODEL: env.GLOO_NOTES_MODEL ?? '',
 			// Optional. Find a place's model; the backend uses a fast non-reasoning default when empty.
 			GLOO_MATCH_MODEL: env.GLOO_MATCH_MODEL ?? '',
+			// Optional. The agentic builder's model; GLOO_MATCH_MODEL (then gloo-anthropic-claude-haiku-4.5) when it is empty.
+			GLOO_BUILDER_MODEL: env.GLOO_BUILDER_MODEL ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
@@ -107,6 +113,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			...teamAiEnvVars(env),
 			// http://youtube-helper when YT_HELPER_URL and YT_HELPER_KEY are set; the key stays in the Worker.
 			...ytHelperEnvVars(env),
+			// http://builder-fetch: the builder cannot reach church websites from the container (see allowedHosts).
+			...builderFetchEnvVars(),
 		};
 	}
 
