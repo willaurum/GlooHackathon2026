@@ -233,10 +233,10 @@ def build(sources, start_url):
             'in_menu': page['url'] in in_menu or page is pages[0], 'sections': page_sections,
             'section_count': len(page_sections),
             'include': not post})
-        ctas = set(page.get('ctas', []))
+        ctas, hidden = set(page.get('ctas', [])), set(page.get('hidden_links', []))
         for url, text, in_nav in page.get('anchors', []):
-            if not _web(url):
-                continue
+            if not _web(url) or url in hidden and not in_nav:
+                continue  # a link the page hides is followed by the crawler, but is not part of the page
             kind, provider = classify(url, origin)
             cta = url in ctas or bool(text and len(text) <= 40 and CTA_WORDS.search(text))
             if kind == 'page' and not cta:

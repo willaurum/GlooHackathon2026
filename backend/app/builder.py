@@ -151,7 +151,7 @@ class _PageText(HTMLParser):
         self.parts, self.links, self.images, self.title, self._skip, self._in_title = [], [], [], '', 0, False
         self.anchors, self.jsonld, self.embeds, self.feeds, self.canonical = [], [], [], [], ''
         self.meta, self.nav, self.headings, self.forms, self.ctas = {}, [], [], [], []
-        self.styles, self.icons, self.logos, self.css = [], [], [], []
+        self.styles, self.icons, self.logos, self.css, self.hidden_links = [], [], [], [], []
         self._nav, self._anchor, self._script, self._hide, self._style = 0, None, None, None, None
         self._block, self._items, self._heading, self._form, self._label, self._labels = 0, [], None, None, None, {}
 
@@ -218,7 +218,9 @@ class _PageText(HTMLParser):
             self._in_title = True
         elif tag == 'a' and attrs.get('href'):
             self.links.append(attrs['href'])
-            self._anchor = [attrs['href'], [], self._nav > 0]
+            self._anchor = [attrs['href'], [], self._nav > 0, attrs.get('aria-label') or attrs.get('title') or '']
+            if self._hide or _hidden(attrs):
+                self.hidden_links.append(attrs['href'])
             look = f"{attrs.get('class') or ''} {attrs.get('role') or ''}".lower()
             if not self._hide and re.search(r'\b(btn|button|cta)\b|button', look):
                 self.ctas.append(attrs['href'])
@@ -285,8 +287,9 @@ class _PageText(HTMLParser):
         elif tag == 'title':
             self._in_title = False
         elif tag == 'a' and self._anchor:
-            href, text, in_nav = self._anchor
-            self.anchors.append((href, ' '.join(''.join(text).split())[:120], in_nav))
+            href, text, in_nav, label = self._anchor
+            text = ' '.join(''.join(text).split()) or ('' if href in self.hidden_links else ' '.join(label.split()))
+            self.anchors.append((href, text[:120], in_nav))
             self._anchor = None
         if tag in self.NAV:
             self._nav = max(0, self._nav - 1)
@@ -349,7 +352,7 @@ def parse_html(html):
             'anchors': page.anchors, 'jsonld': page.jsonld, 'embeds': page.embeds, 'feeds': page.feeds,
             'canonical': page.canonical, 'meta': page.meta, 'nav': page.menu(), 'headings': page.headings,
             'forms': page.form_list(), 'ctas': page.ctas, 'styles': page.styles, 'icons': page.icons,
-            'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS]}
+            'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS], 'hidden_links': page.hidden_links}
 
 
 class FetchRefused(ValueError):
@@ -519,6 +522,7 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'icons': [(urljoin(final_url, h), rel, sizes) for h, rel, sizes in page['icons']],
                             'logos': [(urljoin(final_url, src), alt) for src, alt in page['logos']],
                             'css': page['css'],
+                            'hidden_links': list({urldefrag(urljoin(final_url, h))[0] for h in page['hidden_links']}),
                             'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']]})
             for href in page['feeds']:
                 add_feed(urljoin(final_url, href))

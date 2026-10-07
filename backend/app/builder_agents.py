@@ -54,6 +54,7 @@ class EventItem(Item):
 class StaffItem(Item):
     name: str = Field(min_length=2, max_length=120)
     role: str = Field(default='', max_length=120)
+    group: str = Field(default='', max_length=80)
     email: str = Field(default='', max_length=200)
     phone: str = Field(default='', max_length=60)
     bio: str = Field(default='', max_length=1000)
@@ -114,8 +115,11 @@ SPECIALISTS = {
     'staff': {
         'model': StaffItem, 'collection': 'staff',
         'tool': _tool('record_staff', 'Record the staff and leaders this page lists.',
-                      {'name': S, 'role': S, 'email': S, 'phone': S, 'bio': S}, ['name']),
-        'prompt': 'You list the staff, pastors and leaders named on one page of a church website, with their role.',
+                      {'name': S, 'role': S, 'email': S, 'phone': S, 'bio': S,
+                       'group': {'type': 'string', 'description': 'The list they appear under, e.g. "Elders", "Deacons", "Staff".'}},
+                      ['name']),
+        'prompt': 'You list the staff, pastors and leaders named on one page of a church website, with their role, '
+                  'including elders, deacons and other leadership lists.',
     },
     'ministries': {
         'model': MinistryItem, 'collection': 'ministries',
