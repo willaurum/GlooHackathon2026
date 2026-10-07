@@ -2,7 +2,7 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-Tekton is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton is the base church-site template for a future Agentic Website Builder. The Agentic Website Builder is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
@@ -68,8 +68,8 @@ is not implemented by these permission rules.
 | `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/staff` (Church staff; shown in the nav only to signed-in staff), `#/prayer` (Prayer map), `#/about/news` (News), `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Older `#/give/staff`, `#/start` and `#/give/start` links open Church staff, `#/blog` and `#/about/blog` open News, and `#/prayer/map` opens the Prayer map. A section with sub-pages opens its first sub-page. |
 | `frontend/src/News.jsx` | News, which replaced the separate blog. Two kinds of post share one feed (`/api/blog`, table `blog_posts`): **updates**, short posts that point to a page on the site or another website and never get key takeaways, and **articles**, longer reads with AI key takeaways and an optional link. Staff write, delete and summarize posts; the demo church's updates are seeded from `backend/app/news_posts.json`. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
-| `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the sidebar and top bar (with Staff sign in), the church's own link with a Copy button, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
-| `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), sidebar on desktop, top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
+| `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the desktop top bar and the phone top bar (with Staff sign in on phones), the church's own link with a Copy button, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
+| `frontend/src/Layout.jsx` | `SECTIONS` (the navigation), the pinned top bar on desktop (church, navigation with dropdowns for sub-pages, and Staff sign in), top bar and one-row bottom tab bar on phones, page header, `SubNav` sub-tabs. |
 | `frontend/src/Home.jsx`, `Serve.jsx`, `Calendar.jsx`, `PrayerMap.jsx` | Those pages. |
 | `frontend/src/VisitPage.jsx`, `WelcomeTeam.jsx`, `ChurchMap.jsx`, `visitMap.js` | Guests: Plan your visit, the greeter screen, and the parking and entrances map (each spot's color lives in `visitMap.js`). |
 | `frontend/src/PastorNotes.jsx`, `verses.js` | Sermon Notes, and the Bible reference parser and passage loader. |
@@ -108,7 +108,7 @@ For local API development run `npx wrangler dev` in `api/` or `api-giving/`.
 
 ## Churches
 
-Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future templatizer provisioning is outside this change.
+Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future Agentic Website Builder provisioning is outside this change.
 
 ### Which church the site shows
 
@@ -119,7 +119,7 @@ Grace Community is the fictional demo of the base template. Existing church site
 3. **Saved**: the church this browser picked last (localStorage `belong-church`). Opening a church link also saves it.
 4. **Demo**: `grace-community`.
 
-Routes without a church, like `#/serve`, keep working and use whichever church that picks, and the address bar is then rewritten to name it. Every link and in-app navigation names the church (`#/c/<slug>/serve`), the demo church too, so a copied address or a shared link (Church setup, the giving staff page) keeps the church. On a church subdomain the hash stays plain. The church name sits at the top of the sidebar (the phone top bar on phones), with **Staff sign in / Church setup** (`#/setup`) under it.
+Routes without a church, like `#/serve`, keep working and use whichever church that picks, and the address bar is then rewritten to name it. Every link and in-app navigation names the church (`#/c/<slug>/serve`), the demo church too, so a copied address or a shared link (Church setup, the giving staff page) keeps the church. On a church subdomain the hash stays plain. The church name sits at the left of the desktop top bar, with **Staff sign in / Church setup** (`#/setup`) at its right end; on phones both sit in the top bar.
 
 **Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-tekton) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
 
@@ -150,7 +150,7 @@ sessions remain valid until sign-out or expiry. Grace Community always retains t
 Owner login with email blank; its password lives in `ADMIN_KEY` in `api-giving/wrangler.jsonc`.
 Public `POST /api/churches` returns 403 and creates nothing. Internal church initialization
 remains for existing infrastructure and local test fixtures; no new provisioning UI or
-templatizer is included. Deploy the giving API alongside the frontend to disable the old
+Agentic Website Builder is included. Deploy the giving API alongside the frontend to disable the old
 public endpoint and enable staff accounts.
 
 For the full local giving checks (Node 22.13+), run `node test/fake-stripe.mjs` and
