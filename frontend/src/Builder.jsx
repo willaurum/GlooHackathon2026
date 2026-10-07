@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { beliefsApi, createBlank, createFromDraft, createFromFiles, draftApi, draftFileUrl, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
-import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, factCheck, feedSteps, fileCheck, runSummary, siteMenuLines, sitePartItem } from './builder.js';
+import { beliefsApi, calendarApi, createBlank, createFromDraft, createFromFiles, draftApi, draftFileUrl, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder, factCheck, feedSteps, fileCheck, runSummary, siteMenuLines, sitePartItem } from './builder.js';
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
@@ -196,6 +196,7 @@ export default function Builder() {
           {Object.entries(BUILDER_LABELS).map(([field, label]) => <ReviewField key={session.id + ':' + field} field={field} label={label} session={session} editing={editing === field} onEdit={() => { setEditing(field); setPreview(null); }} onCancel={() => setEditing('')} answer={answer} disabled={locked} />)}
         </section>
         {BUILDER_LISTS.filter(list => session.collections?.[list.key]?.length).map(list => <ImportedList key={session.id + ':' + list.key} list={list} entries={session.collections[list.key]} update={updateItem} disabled={locked} />)}
+        {session.site?.calendars?.length > 0 && <CalendarsReview key={session.id + ':calendars'} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
         {session.beliefs && <BeliefsReview key={session.id + ':beliefs'} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
         {session.site?.pages?.length > 0 && <SiteReview key={session.id + ':site'} session={session} update={updatePart} disabled={locked} />}
         <section className="card give-pad builder-edit-card">
@@ -329,6 +330,33 @@ function RunReport({ run }) {
     <p className="form-note">{run.ai_calls ? `${run.ai_calls} AI ${run.ai_calls === 1 ? 'call' : 'calls'}${run.models?.length ? ' to ' + run.models.join(', ') : ''}, ${(run.tokens_in + run.tokens_out).toLocaleString()} tokens.` : 'No AI was used; plain rules read the pages.'} Nothing Tekton could not find on your pages was added.</p>
     <ImportFeed steps={run.steps} />
   </details>;
+}
+
+// Calendars the church's site embeds (Google Calendar, Tockify, a .ics link...). Their events are read only when
+// the church says so: many calendar hosts ask crawlers to stay away, so importing is the church's own request.
+function CalendarsReview({ session, onChanged, disabled }) {
+  const [busy, setBusy] = useState(''), [error, setError] = useState('');
+  async function act(entry, action) {
+    setBusy(entry.id + ':' + action); setError('');
+    try { onChanged(await calendarApi(session.id, entry.id, action)); } catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
+  return <section className="card give-pad builder-calendars" aria-label="Calendars we found">
+    <div className="eyebrow">Calendars we found</div><h2>Import your calendar's events?</h2>
+    <p>Your website shows a calendar. Tekton can read its upcoming events (the next six months) into your new site's calendar, the way a calendar app does when you subscribe. It only does this if you ask.</p>
+    <ul className="builder-calendar-list">{session.site.calendars.map(entry => {
+      const line = calendarLine(entry);
+      return <li key={entry.id}>
+        <div><strong>We found your {line.title}</strong>{line.where && <small>On {safeHref(entry.page_url) ? <a href={safeHref(entry.page_url)} target="_blank" rel="noopener noreferrer">{line.where}</a> : line.where}</small>}
+          {line.status && <small className="form-note">{line.status}</small>}</div>
+        {line.canImport && <div className="builder-actions">
+          <button type="button" className="primary" disabled={disabled || !!busy} onClick={() => act(entry, 'import')}>{busy === entry.id + ':import' ? 'Importing…' : 'Import upcoming events'}</button>
+          {entry.status === 'found' && <button type="button" className="secondary" disabled={disabled || !!busy} onClick={() => act(entry, 'decline')}>Not now</button>}
+        </div>}
+      </li>;
+    })}</ul>
+    {error && <div className="banner error" role="alert">{error}</div>}
+  </section>;
 }
 
 // Tekton does not write theology: the statement of faith goes back to the pastor.

@@ -6,7 +6,7 @@ the other half of the work and is not done in this module.
     church.json   who the church is: info (name, address, service times...), FAQs, events, groups, ministries,
                   calendar, staff, locations, sermons, and where each imported fact came from (`sources`)
     site.json     how its site looks and reads: theme (colors, fonts, logo), menu, section order (layout), links,
-                  forms, media, images, and the pages recreated from the old site
+                  forms, media, images, the pages recreated from the old site, and the calendars it embeds
 
 The schemas are generated from the Pydantic models below, which reuse church_content's models, so the files, the
 schemas in schemas/*.schema.json and what a church stores cannot drift apart (backend/tests/test_builder_json.py
@@ -71,11 +71,29 @@ class ChurchFile(Header):
     sources: Sources = Field(default_factory=Sources)
 
 
+class Calendar(BaseModel):
+    """A calendar the church's site embeds or links (builder_calendar.detect). `feed_url` is its public iCal feed
+    when the provider has one; `status` says whether its events were imported (found, link, imported, declined,
+    failed), and `count` how many."""
+    model_config = ConfigDict(extra='forbid')
+    id: str = Field(max_length=10)
+    provider: str = Field(max_length=60)
+    name: str = Field(default='', max_length=120)
+    feed_url: str = Field(default='', max_length=500)
+    page_url: str = Field(default='', max_length=500)
+    page_title: str = Field(default='', max_length=300)
+    embed_url: str = Field(default='', max_length=2000)
+    robots_allowed: bool | None = None
+    status: Literal['found', 'link', 'imported', 'declined', 'failed'] = 'found'
+    count: int = Field(default=0, ge=0, le=10000)
+
+
 class SiteFile(Header):
     """site.json"""
     kind: Literal['site'] = 'site'
     site: cc.Site = Field(default_factory=cc.Site)
     pages: list[cc.SitePage] = Field(default_factory=list, max_length=60)
+    calendars: list[Calendar] = Field(default_factory=list, max_length=10)
 
 
 MODELS = {'church': ChurchFile, 'site': SiteFile}
@@ -113,7 +131,10 @@ def files(session, content=None, sources=None):
               'source_url': session.get('url') or ''}
     church = {**header, 'kind': 'church', 'info': content.get('info', {}),
               **{key: content.get(key, []) for key in CHURCH_SECTIONS}, 'sources': sources}
-    site = {**header, 'kind': 'site', 'site': content.get('site') or {}, 'pages': content.get('pages', [])}
+    calendars = [{k: c.get(k) for k in Calendar.model_fields if k in c}
+                 for c in (session.get('site') or {}).get('calendars', [])]
+    site = {**header, 'kind': 'site', 'site': content.get('site') or {}, 'pages': content.get('pages', []),
+            'calendars': calendars}
     return {'church': church, 'site': site}
 
 

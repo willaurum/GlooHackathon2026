@@ -178,61 +178,11 @@ def jsonld(source, scripts, today=None):
 
 # ---------------------------------------------------------------- iCal
 
-def _unescape(value):
-    return value.replace('\\n', ' ').replace('\\N', ' ').replace('\\,', ',').replace('\\;', ';').replace('\\\\', '\\')
-
-
-DAY_CODES = {'SU': 'Sunday', 'MO': 'Monday', 'TU': 'Tuesday', 'WE': 'Wednesday', 'TH': 'Thursday', 'FR': 'Friday', 'SA': 'Saturday'}
-
-
 def ics_events(source, text, today=None):
-    """Upcoming events (within EVENT_HORIZON_DAYS) and recurring ones from an iCal feed."""
-    today = today or _today()
-    lines = []
-    for line in text.replace('\r\n', '\n').split('\n'):
-        if line[:1] in (' ', '\t') and lines:
-            lines[-1] += line[1:]
-        else:
-            lines.append(line)
-    items, event = [], None
-    for line in lines:
-        if line == 'BEGIN:VEVENT':
-            event = {}
-        elif line == 'END:VEVENT' and event is not None:
-            item = _ics_item(source, event, today)
-            if item:
-                items.append(item)
-            event = None
-        elif event is not None and ':' in line:
-            key, value = line.split(':', 1)
-            event[key.split(';', 1)[0].upper()] = _unescape(value.strip())
-    items.sort(key=lambda i: i['value'].get('date') or '9999')
-    return items[:MAX_FEED_ITEMS]
-
-
-def _ics_item(source, event, today):
-    name = event.get('SUMMARY', '').strip()
-    start = event.get('DTSTART', '')
-    if not name or not re.match(r'\d{8}', start):
-        return None
-    iso = f'{start[:4]}-{start[4:6]}-{start[6:8]}'
-    try:
-        date.fromisoformat(iso)
-    except ValueError:
-        return None
-    clock = _twelve(int(start[9:11]), int(start[11:13])) if re.match(r'\d{8}T\d{4}', start) else ''
-    value = {'name': name, 'location': event.get('LOCATION', ''), 'description': event.get('DESCRIPTION', '')[:2000]}
-    rule = event.get('RRULE', '')
-    if rule:
-        freq = re.search(r'FREQ=(\w+)', rule)
-        days = [DAY_CODES[d[-2:]] for d in re.findall(r'[+-]?\d*(SU|MO|TU|WE|TH|FR|SA)', re.search(r'BYDAY=([\w,+-]+)', rule).group(1))] \
-            if 'BYDAY=' in rule else [date.fromisoformat(iso).strftime('%A')]
-        value['when'] = f"{(freq.group(1).capitalize() if freq else 'Repeats')} on {', '.join(days)}" + (f' at {clock}' if clock else '')
-    elif _upcoming(iso, today):
-        value.update(date=iso, time=clock)
-    else:
-        return None
-    return _item('events', value, f'{name} {start}', source)
+    """Upcoming events (within EVENT_HORIZON_DAYS) and recurring ones from an iCal feed, recurrences expanded
+    (builder_calendar.events)."""
+    from . import builder_calendar
+    return builder_calendar.events(source, text, today or _today(), EVENT_HORIZON_DAYS, MAX_FEED_ITEMS)
 
 
 # ---------------------------------------------------------------- RSS, Atom and podcasts

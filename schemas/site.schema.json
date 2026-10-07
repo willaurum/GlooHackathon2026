@@ -34,6 +34,89 @@
       "title": "Asset",
       "type": "object"
     },
+    "Calendar": {
+      "additionalProperties": false,
+      "description": "A calendar the church's site embeds or links (builder_calendar.detect). `feed_url` is its public iCal feed\nwhen the provider has one; `status` says whether its events were imported (found, link, imported, declined,\nfailed), and `count` how many.",
+      "properties": {
+        "count": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "embed_url": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Embed Url",
+          "type": "string"
+        },
+        "feed_url": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Feed Url",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 10,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Name",
+          "type": "string"
+        },
+        "page_title": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Page Title",
+          "type": "string"
+        },
+        "page_url": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Page Url",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 60,
+          "title": "Provider",
+          "type": "string"
+        },
+        "robots_allowed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Robots Allowed"
+        },
+        "status": {
+          "default": "found",
+          "enum": [
+            "found",
+            "link",
+            "imported",
+            "declined",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "provider"
+      ],
+      "title": "Calendar",
+      "type": "object"
+    },
     "FormField": {
       "properties": {
         "label": {
@@ -529,6 +612,14 @@
   "additionalProperties": false,
   "description": "site.json",
   "properties": {
+    "calendars": {
+      "items": {
+        "$ref": "#/$defs/Calendar"
+      },
+      "maxItems": 10,
+      "title": "Calendars",
+      "type": "array"
+    },
     "generated_at": {
       "default": "",
       "maxLength": 40,

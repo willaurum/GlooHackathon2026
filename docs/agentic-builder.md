@@ -2,7 +2,7 @@
 
 The builder turns a church website, uploaded materials, or answers to questions into a Tekton site. Open `#/new`, choose how to start, answer the missing or conflicting details, and preview the result. This doc covers how it decides what to trust, how it is tested, and what went wrong along the way.
 
-Code: `backend/app/builder.py` (pipeline, orchestrator and routes), `builder_crawl.py` (robots.txt, Crawl-delay, sitemaps, page types and link scoring), `builder_structured.py` (JSON-LD, iCal, RSS and page-pattern readers), `builder_agents.py` (specialist AI readers), `builder_site.py` (the site model: menu, page sections, links, forms, media), `builder_theme.py` (colors, fonts, logo and icon), `frontend/src/Builder.jsx` (the `#/new` page), `frontend/src/SitePages.jsx` (recreated pages, `#/p/<slug>`), `backend/tests/test_builder*.py` (tests), `backend/tests/fixtures/builder/` (made-up church sites).
+Code: `backend/app/builder.py` (pipeline, orchestrator and routes), `builder_crawl.py` (robots.txt, Crawl-delay, sitemaps, page types and link scoring), `builder_structured.py` (JSON-LD, iCal, RSS and page-pattern readers), `builder_calendar.py` (calendars a site embeds, and the iCal reader with repeating events), `builder_agents.py` (specialist AI readers), `builder_site.py` (the site model: menu, page sections, links, forms, media), `builder_theme.py` (colors, fonts, logo and icon), `frontend/src/Builder.jsx` (the `#/new` page), `frontend/src/SitePages.jsx` (recreated pages, `#/p/<slug>`), `backend/tests/test_builder*.py` (tests), `backend/tests/fixtures/builder/` (made-up church sites).
 
 ## The framework
 
@@ -86,8 +86,8 @@ The church reviews it all (`POST /api/builder/drafts/{id}/parts`: keep or leave 
 - **Fetch bridge (optional).** With `BUILDER_FETCH_URL` set, pages and images are fetched by a bridge that checks every address and redirect itself, and the container only checks the scheme. The Cloudflare build sets it to the Worker's `http://builder-fetch`, because its container can only reach listed hosts. Unset (the laptop build), the container fetches directly.
 - **Model.** The builder uses the first provider in the chat's chain. On Gloo it picks a fast model that also reads images (`GLOO_BUILDER_MODEL`, then `GLOO_MATCH_MODEL`, then `gloo-anthropic-claude-haiku-4.5`), because the chat's reasoning default spends 30+ seconds per call. Other providers, such as Ollama on the laptop, keep their configured model.
 - **AI offline.** The rules still run when the AI reader is down, slow or not set up, and the draft's `notes` say so. Each AI call is limited to the time left in the import, so a hung model never holds a worker past it. A model that refuses a forced tool choice is asked again with `tool_choice: auto`.
-- **Same site only.** The crawler never follows links to other domains (`www.` and the bare domain are one site). The only off-site fetches are calendar and podcast feeds the site itself links to, and they go through the same address checks.
-- **robots.txt** follows RFC 9309 for the `Tekton` user agent: our own group if there is one (else `*`), `*` and `$` wildcards, the longest matching rule wins and `Allow` wins a tie. It is checked for **every host** the import touches: pages, sitemaps, feeds, stylesheets and images (`builder_crawl.HostPolicy`, robots.txt read once per host). A missing robots.txt (4xx) allows everything; one that cannot be read (5xx, timeout) stops the import, and a site that disallows its home page cannot be imported. Either way the church is told to upload materials instead.
+- **Same site only.** The crawler never follows links to other domains (`www.` and the bare domain are one site). The only off-site fetches are calendar and podcast feeds the site itself links to, and they go through the same address checks (and, once the church asks, the one calendar feed in [Calendars](#calendars-ask-the-church-first)).
+- **robots.txt** follows RFC 9309 for the `Tekton` user agent: our own group if there is one (else `*`), `*` and `$` wildcards, the longest matching rule wins and `Allow` wins a tie. It is checked for **every host** the import touches: pages, sitemaps, feeds, stylesheets and images (`builder_crawl.HostPolicy`, robots.txt read once per host). A missing robots.txt (4xx) allows everything; one that cannot be read (5xx, timeout) stops the import, and a site that disallows its home page cannot be imported. Either way the church is told to upload materials instead. **The one exception** is a calendar import the church asks for on the Review screen (see [Calendars](#calendars-ask-the-church-first)): the crawl itself never reads a feed robots.txt keeps it from.
 - **Crawl-delay** (capped at 10 seconds) is honored per host: pages are then read one at a time with that pause, only as many as fit in the time, and the notes say so.
 - **Hidden text is not read.** Elements marked `hidden`, `aria-hidden="true"`, `display:none` or `visibility:hidden`, HTML comments, and zero-width or text-direction characters are dropped before any reader sees the page. Links in hidden menus are still followed, but are never shown as page content. Text a visitor can see that reads like instructions stays plain page text: it is never followed, and links, menus and players only come from the page's own markup.
 - **What gets read first.** Sitemap pages and links are scored by `builder_crawl.score`: visit, staff, events, ministries, groups, sermons and locations first, then about and contact; menu links get a bonus. At most 3 blog, news or archive posts are read. Logins, carts, tags, searches, paginated archives and files are skipped.
@@ -100,6 +100,28 @@ The church reviews it all (`POST /api/builder/drafts/{id}/parts`: keep or leave 
   - reached only by an unguessable 24-character id;
   - expire after 24 hours, and expired drafts are deleted whenever a draft is saved;
   - can be applied to a church only once, and never to the demo church.
+
+## Calendars: ask the church first
+
+Many churches show a calendar from another service on their site. Forest Baptist's calendar page, for example, embeds a Google Calendar, and `calendar.google.com/robots.txt` asks every crawler to stay away. So Tekton finds calendars during the import, but reads a blocked feed only when the church asks it to.
+
+1. **Finding them.** While reading pages, `builder_calendar.detect` looks at embedded frames, links and `webcal:` links, and Tockify's `data-tockify-calendar` attribute. Each calendar it recognizes becomes an entry in `site.json`'s `calendars` (at most 10): its provider, name, the page it was on, the embed address, and the public iCal feed address Tekton derives from it, if the provider has one.
+2. **During the crawl** a feed is read only if its host's robots.txt allows it (and it is within the feed limit), exactly like any other feed. Its entry then says `imported`. Otherwise the entry says `found`, with `robots_allowed` recording what robots.txt said, and the progress feed says "Found your calendar, Forest Baptist (Google Calendar); Tekton will ask before importing its events".
+3. **On the Review screen** the "Calendars we found" card lists each one with **Import upcoming events** and **Not now**. Only when the church presses Import does `POST /api/builder/drafts/{id}/calendars/{cal_id}/import` fetch that one feed. This is a request the church makes about its own calendar, the way a calendar app reads a feed someone subscribes to, so robots.txt is not consulted for it. `POST .../decline` marks it `declined`; it can still be imported later. A feed that cannot be read marks it `failed`.
+
+**Limits on that fetch.** The route takes no address: it reads only the `feed_url` Tekton stored, and that address must match one of the derived shapes in `builder_calendar.FEED_PATTERNS` (a Google, Tockify, Outlook or Teamup feed, a `.ics` file, or an Events Calendar `?ical=1` export). The fetch bridge has its own copy of the shapes (`api/builderfetch.ts`, kind `calendar`) and checks every redirect against them, so a feed that moves anywhere else is refused. The usual public-address checks apply, the body is capped at 5 MB, and the answer must be an iCal file (`BEGIN:VCALENDAR`).
+
+| Provider | What Tekton finds | Feed |
+|---|---|---|
+| Google Calendar | `src=` and `cid=` (plain or base64) calendar ids in embeds and links, group calendars, `/calendar/ical/` links | `calendar.google.com/calendar/ical/<id>/public/basic.ics` |
+| `.ics` / `webcal:` links | any link to an iCal file | the file itself (`webcal:` read as `https:`) |
+| Tockify | `tockify.com/...` embeds and `data-tockify-calendar` | `tockify.com/api/feeds/ics/<name>` |
+| Outlook | published calendar links (`/owa/calendar/.../calendar.html`) | the matching `calendar.ics` |
+| Teamup | `teamup.com/ks...` embeds | `ics.teamup.com/feed/<key>/0.ics` |
+| The Events Calendar (WordPress) | `?ical=1` export links | the export |
+| Church Center (Planning Center), ChurchSuite, Elvanto, Breeze, Subsplash, Elexio, MinistryPlatform | calendar and event pages and embeds | none public: listed as a link (`status: link`) |
+
+**Reading the feed.** `builder_calendar.events` reads the next six months (183 days, `EVENT_HORIZON_DAYS`) and keeps at most 200 events. Repeating events are expanded: `FREQ` DAILY, WEEKLY, MONTHLY and YEARLY with `INTERVAL`, `BYDAY` (including `1SU` and `-1TU`), `BYMONTHDAY`, `BYMONTH`, `COUNT`, `UNTIL` and `EXDATE`; a moved or cancelled single date (`RECURRENCE-ID`) replaces its occurrence, and cancelled events are left out. Times use the event's `TZID`, else the calendar's `X-WR-TIMEZONE`, and UTC times are shown in that zone; all-day events have no time. Rules Tekton cannot expand exactly (`BYSETPOS`, `BYWEEKNO`, `BYYEARDAY`, hourly) give only their first date, never guessed ones. An event that repeats every week (or every day) with no end in sight becomes one weekly highlight ("Weekly on Wednesday at 7:00 PM") instead of 26 dated entries; everything else (including a series with a set number of dates, like a 3-week class) becomes dated events. Entries already in the draft are not added twice. Feeds read during the crawl use the same reader.
 
 ## Testing
 
@@ -126,7 +148,7 @@ The church reviews it all (`POST /api/builder/drafts/{id}/parts`: keep or leave 
 ```bash
 python -m unittest backend.tests.test_builder backend.tests.test_builder_deep backend.tests.test_builder_score \
   backend.tests.test_builder_robots backend.tests.test_builder_site backend.tests.test_builder_theme \
-  backend.tests.test_builder_assets backend.tests.test_builder_injection
+  backend.tests.test_builder_assets backend.tests.test_builder_injection backend.tests.test_builder_calendar
 python -m backend.app.builder_score backend/tests/fixtures/builder/stonebridge-large
 python -m backend.app.builder_score backend/tests/fixtures/builder/snappage-like
 node --test api/test/*.test.mjs        # the fetch bridge and the Worker access rules
@@ -173,7 +195,7 @@ Tekton's output is two JSON files per church, written from the reviewed draft (`
 | File | Holds |
 |---|---|
 | `church.json` | the church: `info` (name, address, phone, email, office hours, service times, about, first visit), `faqs`, `events` and `groups` (short listings), `ministries`, `calendar` (dated events), `staff`, `locations`, `sermons`, and `sources` (where each imported fact came from) |
-| `site.json` | its site: `site.theme` (colors, fonts, logo, icon), `site.navigation` (menu), `site.layout` (section order and hidden sections), `site.links`, `site.forms`, `site.media`, `site.assets` (images, shown only once the church confirms it may use them), and `pages` (the old site's pages as headed sections) |
+| `site.json` | its site: `site.theme` (colors, fonts, logo, icon), `site.navigation` (menu), `site.layout` (section order and hidden sections), `site.links`, `site.forms`, `site.media`, `site.assets` (images, shown only once the church confirms it may use them), `pages` (the old site's pages as headed sections), and `calendars` (calendars the site embeds or links, with their feed address and whether their events were imported) |
 
 **Schemas.** `schemas/church.schema.json` and `schemas/site.schema.json` (JSON Schema 2020-12) are generated from the Pydantic models in `builder_json.py`, which reuse `church_content.py`'s models, so the files and what a church stores have one definition. `backend/tests/test_builder_json.py` fails when a committed schema is stale; `python -m backend.app.builder_json` rewrites both.
 

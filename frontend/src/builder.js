@@ -117,6 +117,17 @@ export function siteMenuLines(navigation) {
 }
 
 /** "$0.03", "under $0.01", "no AI cost", or '' when the cost is unknown. */
+/** How the review lists a calendar Tekton found: its title, where it was, and what can be done with it. */
+export function calendarLine(entry = {}) {
+  const provider = entry.provider || 'Calendar';
+  const title = entry.name && entry.name !== provider ? `${entry.name} (${provider})` : provider;
+  const where = entry.page_title || entry.page_url || '';
+  const status = { imported: entry.count ? `Imported ${entry.count} upcoming ${entry.count === 1 ? 'event' : 'events'}` : 'Imported',
+    declined: 'Left out', failed: 'Could not be read; check that the calendar is public, then try again',
+    link: 'No public feed: your new site can link to it' }[entry.status] || '';
+  return { title, where, status, canImport: !!entry.feed_url && ['found', 'failed', 'declined'].includes(entry.status) };
+}
+
 export function costText(usd) {
   if (usd == null) return '';
   if (usd === 0) return 'no AI cost';

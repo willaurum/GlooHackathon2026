@@ -50,7 +50,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import (builder_agents, builder_crawl, builder_json, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
+from . import (builder_agents, builder_calendar, builder_crawl, builder_json, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
                church_content, db)
 from .builder_edit import clean_layout, default_layout
 
@@ -159,7 +159,7 @@ class _PageText(HTMLParser):
         self.styles, self.icons, self.logos, self.css, self.hidden_links = [], [], [], [], []
         self._nav, self._anchor, self._script, self._hide, self._style = 0, None, None, None, None
         self._block, self._items, self._heading, self._form, self._label, self._labels = 0, [], None, None, None, {}
-        self.scripts = 0
+        self.scripts, self.calendar_hints = 0, []
 
     def _nav_start(self, tag, attrs):
         if tag in ('nav', 'header', 'footer') and not self._nav:
@@ -210,6 +210,8 @@ class _PageText(HTMLParser):
         elif tag not in VOID_TAGS and _hidden(attrs):
             self._hide = [tag, 1]
         self._nav_start(tag, attrs)
+        if attrs.get('data-tockify-calendar') and len(self.calendar_hints) < 5:
+            self.calendar_hints.append(attrs['data-tockify-calendar'].strip())  # a Tockify embed names its calendar here
         if not self._hide:
             self._form_start(tag, attrs)
             if tag in self.HEADINGS:
@@ -246,7 +248,7 @@ class _PageText(HTMLParser):
         elif tag == 'iframe' and attrs.get('src') and not self._hide:
             # A marker line, so builder_site can tell which section a player or form sits in.
             self.parts.append(f'\n[embed {len(self.embeds) + 1}]\n')
-            self.embeds.append((attrs['src'], attrs.get('title') or ''))
+            self.embeds.append((attrs['src'], attrs.get('title') or attrs.get('aria-label') or ''))
         elif tag == 'link' and attrs.get('href'):
             rel, kind = (attrs.get('rel') or '').lower(), (attrs.get('type') or '').lower()
             if rel == 'canonical':
@@ -360,7 +362,7 @@ def parse_html(html):
             'canonical': page.canonical, 'meta': page.meta, 'nav': page.menu(), 'headings': page.headings,
             'forms': page.form_list(), 'ctas': page.ctas, 'styles': page.styles, 'icons': page.icons,
             'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS], 'hidden_links': page.hidden_links,
-            'scripts': page.scripts}
+            'scripts': page.scripts, 'calendar_hints': page.calendar_hints}
 
 
 class FetchRefused(ValueError):
@@ -551,7 +553,7 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'css': page['css'],
                             'hidden_links': list({urldefrag(urljoin(final_url, h))[0] for h in page['hidden_links']}),
                             'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']],
-                            'scripts': page['scripts']})
+                            'scripts': page['scripts'], 'calendar_hints': page.get('calendar_hints', [])})
             kind = PAGE_KINDS.get(sources[-1]['page_type'])
             builder_run.step(f'Read “{_page_name(sources[-1])}”' + (f' ({kind})' if kind else ''))
             for href in page['feeds']:
@@ -1454,7 +1456,7 @@ def extract(sources, complete=None, deadline=None, notes=None):
 def feed_items(source):
     try:
         if 'BEGIN:VCALENDAR' in source['feed'][:2000]:
-            return builder_structured.ics_events(source, source['feed'])
+            return builder_structured.ics_events(source, source['feed'])  # recurring events expanded (builder_calendar)
         return builder_structured.feed_sermons(source, source['feed'])
     except (ET.ParseError, ValueError) as error:
         log.info('builder: skipped feed %s (%s)', source.get('url'), error)
@@ -2039,10 +2041,119 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None,
     if progress:
         progress('extracting', len([s for s in sources if s.get('kind') == 'page']), len(sources))
     session = session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+    session['site']['calendars'] = found_calendars(sources, found_feeds, policy if fetch_feed is not None else None)
     look = look or builder_theme.read(sources[0])
     session['site'].update(theme=look[0], assets=look[1])
     builder_run.step('Read the colors, fonts and logo from your site')
     return finish_run(session, pages=len([s for s in sources if s.get('kind', 'page') == 'page']))
+
+
+def found_calendars(sources, feeds, policy=None):
+    """The calendars the pages embed or link (builder_calendar.detect), marked 'imported' when the crawl already read
+    their feed (its host allowed it). A feed robots.txt keeps the crawl away from waits for the church's say-so."""
+    calendars = builder_calendar.detect(sources)
+    read = {f.get('url') for f in feeds} | {f.get('requested_url') for f in feeds}
+    for entry in calendars:
+        if not entry['feed_url']:
+            builder_run.step(f'Found your calendar, {builder_calendar.label(entry)}; it has no public feed, so it stays a link')
+            continue
+        if policy is not None:
+            try:
+                entry['robots_allowed'] = bool(policy.allowed(entry['feed_url']))
+            except Exception:  # robots.txt could not be read: treat as not allowed, the church decides
+                entry['robots_allowed'] = False
+        if entry['feed_url'] in read:
+            entry['status'] = 'imported'
+            builder_run.step(f'Read the events from your calendar, {builder_calendar.label(entry)}')
+        else:
+            builder_run.step(f'Found your calendar, {builder_calendar.label(entry)}; Tekton will ask before importing its events')
+    return calendars
+
+
+def _http_calendar(url):
+    """(final_url, text) of one calendar feed the church asked to import. Only addresses Tekton derived
+    (builder_calendar.is_feed_url); robots.txt is not consulted for this one user-requested fetch; size is capped."""
+    if not builder_calendar.is_feed_url(url):
+        raise ValueError('That is not a calendar feed Tekton found.')
+    _check_public(url)
+    if _fetch_bridge():
+        final_url, content_type, data = _bridge_fetch(url, 'calendar')
+    else:
+        data, hops = b'', 0
+        with httpx.Client(timeout=FETCH_TIMEOUT * 2, follow_redirects=False, headers={'User-Agent': 'Tekton/0.1'}) as client:
+            while True:
+                with client.stream('GET', url) as response:
+                    if response.is_redirect and hops < 5:
+                        url, hops = urljoin(url, response.headers['location']), hops + 1
+                        if not builder_calendar.is_feed_url(url):
+                            raise ValueError('The calendar feed moved somewhere Tekton does not read.')
+                        _check_public(url)
+                        continue
+                    response.raise_for_status()
+                    for chunk in response.iter_bytes():
+                        data += chunk
+                        if len(data) > builder_calendar.MAX_FEED_BYTES:
+                            break  # a long calendar is cut, not refused: the upcoming events are usually near the end
+                    final_url = str(response.url)
+                    break
+    text = data[:builder_calendar.MAX_FEED_BYTES].decode('utf-8', errors='replace')
+    if 'BEGIN:VCALENDAR' not in text[:5000]:
+        raise ValueError('That calendar did not answer with a calendar feed.')
+    return final_url, text
+
+
+def import_calendar(session, calendar_id, fetch=None, today=None):
+    """Read one found calendar's feed (the church said yes) into the events list. Returns how many were added."""
+    entry = next((c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id), None)
+    if entry is None:
+        raise ValueError('Calendar not found')
+    if not entry.get('feed_url'):
+        raise ValueError('This calendar has no public feed to import.')
+    try:
+        final_url, text = (fetch or _http_calendar)(entry['feed_url'])
+    except Exception as error:
+        entry['status'] = 'failed'
+        raise ValueError('Tekton could not read that calendar. Check that it is public, then try again.') from error
+    source = {'id': 'calendar-' + calendar_id, 'kind': 'feed', 'url': entry.get('page_url') or final_url,
+              'title': builder_calendar.label(entry)}
+    items = builder_calendar.events(source, text, today or builder_structured._today(),
+                                    builder_structured.EVENT_HORIZON_DAYS, builder_calendar.MAX_IMPORTED,
+                                    quote_name=entry.get('name') or '')
+    added = add_items(session, items, [source])
+    entry.update(status='imported', count=added)
+    if not any(s.get('id') == source['id'] for s in session.get('sources', [])):
+        session.setdefault('sources', []).append(source)
+    note = f'Imported {added} upcoming ' + ('event' if added == 1 else 'events') + f' from {builder_calendar.label(entry)}.'
+    session.setdefault('notes', []).append(note)
+    return added
+
+
+def add_items(session, items, sources):
+    """Merge new list items into the draft's lists (collect's rules); an entry already there is not added twice."""
+    fresh = collect(items, sources)
+    collections = session.setdefault('collections', {})
+    added = 0
+    for name, entries in fresh.items():
+        current = collections.setdefault(name, [])
+        keys = {_item_key(name, e['value']) for e in current}
+        for entry in entries:
+            if _item_key(name, entry['value']) in keys or len(current) >= COLLECTION_LIMITS[name]:
+                continue
+            keys.add(_item_key(name, entry['value']))
+            used = {e['id'] for e in current}
+            n = len(current) + 1
+            while f'{name}-{n}' in used:
+                n += 1
+            current.append({**entry, 'id': f'{name}-{n}'})
+            added += 1
+    return added
+
+
+def decline_calendar(session, calendar_id):
+    entry = next((c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id), None)
+    if entry is None:
+        raise ValueError('Calendar not found')
+    entry['status'] = 'declined'
 
 
 JS_SITE_NOTE = ('This site builds itself in the browser, so Tekton could not read its text. '
@@ -2622,6 +2733,49 @@ def church_file(draft_id: str):
 @router.get('/api/builder/drafts/{draft_id}/site.json')
 def site_file(draft_id: str):
     return _file(draft_id, 'site')
+
+
+@router.post('/api/builder/drafts/{draft_id}/calendars/{calendar_id}/import')
+def calendar_import(draft_id: str, calendar_id: str):
+    """The church asked Tekton to import a calendar it found: read that one feed (an address Tekton derived, never
+    one sent by the page) into the events list."""
+    if not re.fullmatch(r'cal\d{1,2}', calendar_id):
+        raise HTTPException(status_code=404, detail='Calendar not found')
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+    try:
+        entry = next(c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id)
+    except StopIteration:
+        raise HTTPException(status_code=404, detail='Calendar not found') from None
+    try:
+        final_url, text = _http_calendar(entry.get('feed_url') or '')  # outside the lock: it can take a few seconds
+    except Exception as error:
+        log.info('builder: calendar %s failed (%s)', entry.get('feed_url'), error)
+        final_url, text = None, None
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            if text is None:
+                raise ValueError('Tekton could not read that calendar. Check that it is public, then try again.')
+            import_calendar(session, calendar_id, fetch=lambda url: (final_url, text))
+        except ValueError as error:
+            entry = next((c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id), None)
+            if entry is not None:
+                entry['status'] = 'failed'
+                _save(session)
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+@router.post('/api/builder/drafts/{draft_id}/calendars/{calendar_id}/decline')
+def calendar_decline(draft_id: str, calendar_id: str):
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            decline_calendar(session, calendar_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return _public(_save(session))
 
 
 class BeliefsBody(BaseModel):
