@@ -79,13 +79,13 @@ class CustomizeTests(ChurchTestCase):
 
         with mock.patch.object(builder, '_completer', return_value=complete), \
              mock.patch.object(builder, '_ai_available', return_value=True):
-            made = self.ask('make it feel more like a forest, and tell people where to park')
+            made = self.ask('make it feel more like a forest, and tell people to park in the lot behind the building')
             self.assertEqual(made.status_code, 200, made.text)
             self.assertEqual(len(made.json()['changes']), 2)
             self.assertEqual(len(made.json()['refused']), 2)
             asked = self.ask('and the buttons too')
             self.assertTrue(asked.json()['asking'])
-        self.assertIn('make it feel more like a forest, and tell people where to park', [m['content'] for m in seen[1]])
+        self.assertIn('make it feel more like a forest, and tell people to park in the lot behind the building', [m['content'] for m in seen[1]])
         site = self.site()
         self.assertEqual(site['church']['site']['theme']['heading_font'], 'Georgia')
         self.assertIn('Where do I park?', [f['question'] for f in site['church']['faqs']])
@@ -138,6 +138,25 @@ class CustomizeTests(ChurchTestCase):
         self.assertEqual(wrong.status_code, 400)
         self.assertIn('sounds like a person', wrong.json()['detail'])
         self.assertEqual(self.site()['info']['name'], church)
+
+    def test_qa_cases_youth_group_and_no_written_wording(self):
+        """Ben's QA sheet: "Hide the youth ministry" finds a group, and the AI cannot write the church's prose."""
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            hid = self.ask('Hide the Lantern group')
+        self.assertEqual(hid.status_code, 200, hid.text)
+        self.assertNotIn('Lantern group', [g['name'] for g in self.site()['church']['groups']])
+        plan = {'reply': 'Done.', 'operations': [
+            {'op': 'set_detail', 'field': 'about', 'value': 'We are a Reformed congregation rooted in grace, '
+                                                             'committed to Scripture and warm fellowship for all.'}]}
+        with mock.patch.object(builder, '_completer', return_value=lambda messages, tools: plan), \
+             mock.patch.object(builder, '_ai_available', return_value=True):
+            wrote = self.ask('Write a 3-paragraph welcome message emphasizing Reformed doctrine and warm fellowship')
+            self.assertEqual(wrote.status_code, 400)
+            self.assertIn('does not write new wording', wrote.json()['detail'])
+            plan['operations'][0]['value'] = 'We are a small church that loves our town.'
+            given = self.ask('Change the about text to: We are a small church that loves our town.')
+        self.assertEqual(given.status_code, 200, given.text)
+        self.assertEqual(self.site()['info']['about'], 'We are a small church that loves our town.')
 
     def test_stored_changes_that_no_longer_fit_are_skipped(self):
         content = {'info': {'name': 'Example Chapel'}, 'faqs': [{'question': 'Kids?', 'answer': 'Yes.'}]}
