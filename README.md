@@ -148,10 +148,17 @@ For existing churches with no accounts, leave email blank to use the shared chur
 as Owner. Once an account exists, new sign-ins require email and password. Existing shared
 sessions remain valid until sign-out or expiry. Grace Community always retains the demo
 Owner login with email blank; its password lives in `ADMIN_KEY` in `api-giving/wrangler.jsonc`.
-Public `POST /api/churches` returns 403 and creates nothing. Internal church initialization
-remains for existing infrastructure and local test fixtures; no new provisioning UI or
-Agentic Website Builder is included. Deploy the giving API alongside the frontend to disable the old
-public endpoint and enable staff accounts.
+`POST /api/churches` (creating a church from a finished Tekton draft) needs an invite code from the
+`TEKTON_INVITE_CODES` secret on `api-giving/`: a comma-separated list, each code at least 8 characters. Codes are
+compared in constant time, and wrong codes are rate limited per IP (the same lockout as sign-in). Without the secret,
+the route returns 403 and creates nothing, so public registration stays off. To turn it on for the demo, set it
+either way:
+
+- `npx wrangler secret put TEKTON_INVITE_CODES --name gloo-hackathon2026-api-donate-giving`, or
+- add a GitHub Actions secret `TEKTON_INVITE_CODES` and run Actions > Deploy backend, which copies it to the giving API.
+
+To turn it off, `npx wrangler secret delete TEKTON_INVITE_CODES --name gloo-hackathon2026-api-donate-giving`.
+Internal church initialization remains for existing infrastructure and local test fixtures.
 
 For the full local giving checks (Node 22.13+), run `node test/fake-stripe.mjs` and
 `node test/local-worker.mjs` in separate terminals from `api-giving/`, then set
@@ -234,6 +241,15 @@ Drafts are church-independent: they live in the reserved platform database space
 
 On Cloudflare the container can only reach the hosts in `allowedHosts`, and a church's website can be anywhere, so the builder fetches pages and images through the Worker: the container gets `BUILDER_FETCH_URL=http://builder-fetch`, and the `builder-fetch` outbound handler (`api/builderfetch.ts`) does the request. It allows http(s) on the default ports only, refuses credentials, local names (`localhost`, `.local`, `.internal`, single-label names), and any private, loopback, link-local, metadata or reserved IP, whether it is in the URL or what the name resolves to (checked over DNS-over-HTTPS), and checks every redirect the same way. Pages, sitemaps and feeds are cut at 1 MB, stylesheets at 500 KB, images over 4 MB are refused, and each fetch has 10 seconds. The builder's AI runs on Gloo like everything else, with a fast model that also reads images: `GLOO_BUILDER_MODEL`, then `GLOO_MATCH_MODEL`, then `gloo-anthropic-claude-haiku-4.5`. When the AI is offline or slow, the import still finishes with the rule-based details and says so in its notes.
 
+#### What Tekton shows while it works, and what it will not do
+
+- **Live progress.** While a website import runs, the draft's `progress.steps` fills in about once a second ("Read “Visit” (visit page)", "Staff reader on “Our Team”: 4 found", "Checking facts… 2 unsupported claims removed"), and `#/new` shows them as they come. A finished draft keeps the full list and a summary in `run`: pages read, seconds, AI calls, tokens and an estimated cost from Gloo's published per-model prices (`backend/app/builder_run.py`).
+- **Fact check.** Every AI answer must quote its page. Answers whose quote is not on the page, or that are not a detail Tekton asked for, are dropped and counted, and the count is shown.
+- **Sources.** `GET /api/builder/drafts/<id>/site` also returns `provenance`. On `#/new/preview`, imported facts (service times, address, About, ministries, staff, campuses) show where they came from on hover, focus or tap; **Sources shown** in the banner turns this off. Source links use [text fragments](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments) (`#:~:text=`) so the church's page opens scrolled to the quote, with a few words before and after it to pick the right spot (`frontend/src/sourceLink.js`). Chrome, Edge, Safari and Firefox 131+ support them; older browsers just open the page.
+- **Changes in plain words.** `POST /api/builder/drafts/<id>/edits` with `{"request": "Put service times above ministries"}` turns a request into checked operations: move or hide a section of Home or Plan your visit, change a detail, or leave out a list entry. Common requests are matched by rules; anything else goes to the AI as a strict tool call, and every operation is validated before it is applied. `/edits/undo` undoes the last 5. The order is saved as `site.layout`, which Home and Plan your visit follow (`backend/app/builder_edit.py`).
+- **Sites that build themselves in the browser.** When the pages are an app shell (little text, many scripts, or a Wix/Squarespace generator), Tekton says so and switches to questions instead of importing empty pages.
+- **Beliefs are never summarized.** A statement of faith is kept word for word and left off the new site until the pastor confirms it (`POST /api/builder/drafts/<id>/beliefs` with `{"confirmed": true}`). A placeholder ("under construction") is not imported; it becomes something for the pastor to add.
+
 ### Adding an endpoint
 
 Nothing extra: any endpoint that goes through `db.py` already runs against the church of the request. In the Worker, add the route to the right list in `api/churches.ts` (public, staff work that the demo church leaves open, or staff only); a route on no list needs the API key or a staff session. A new table goes in `db.initialize` as usual. Its seed `INSERT`s only run for the demo church.
@@ -280,6 +296,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `GLOO_EMBED_MODEL` | `api/` | Optional, not secret. The Gloo embedding model for sermon-note search (default `gloo-baai-bge-base-en-v1.5`). Set it as a GitHub Actions **variable**, next to `GLOO_MODEL`; Deploy backend copies both to the Worker. |
 | `GLOO_NOTES_MODEL` | `api/` | Optional, not secret. The Gloo model that tags sermon highlights (default: `GLOO_MODEL`, then `gloo-qwen-3.7-flash`). Also a GitHub Actions **variable**; Deploy backend copies it to the Worker, which passes it to the container. |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
+| `TEKTON_INVITE_CODES` | `api-giving/` | Optional. Comma-separated invite codes (8+ characters each) that let someone create a church from a Tekton draft. Without it, `POST /api/churches` is a 403. See [One registry, individual staff accounts](#one-registry-individual-staff-accounts) for how to set it. |
 | `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
 
@@ -641,7 +658,7 @@ Routes (all under the Worker origin, CORS limited to `ALLOWED_ORIGIN`):
 |---|---|---|---|
 | `GET` | `/api/health` | none | Liveness; `churches: true` means church support is deployed. |
 | `GET` | `/api/churches` | none | Only the public demo church, whatever the query. Churches are not listed or searchable; kept so older builds still render. |
-| `POST` | `/api/churches` | unavailable | Public registration is disabled (403); creates nothing. |
+| `POST` | `/api/churches` | invite code | Creates a church from a Tekton draft when `inviteCode` matches `TEKTON_INVITE_CODES`; 403 without the secret or with a wrong code. |
 | `GET` | `/api/platform/churches` | `PLATFORM_ADMIN_KEY` (wrong keys rate-limited) | Every church for the platform team: slug, name, city, `createdAt`, `demo`, and `giving` (mode, currency, fund, trip and gift counts, total raised, setup checklist). 404 when the secret is not set. |
 | `GET` | `/api/directory/{slug}` | none | One church listing (slug, name, city) from the registry. The church API uses it to check a church exists. |
 | `GET` | `/api/churches/{slug}/admin/session` | staff session | 200 when the session is valid for that church. The church API uses it for its staff-only routes. |
