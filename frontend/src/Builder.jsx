@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { createBlank, createFromDraft, createFromFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
-import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, siteMenuLines, sitePartItem } from './builder.js';
+import { beliefsApi, createBlank, createFromDraft, createFromFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, factCheck, feedSteps, runSummary, siteMenuLines, sitePartItem } from './builder.js';
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
 import { PageHeader } from './Layout.jsx';
+import { evidenceLink } from './sourceLink.js';
+import TektonEdit from './TektonEdit.jsx';
 
 const DRAFT_KEY = 'tekton-new-draft';
 const CREATED_KEY = 'tekton-new-church';
@@ -152,11 +154,14 @@ export default function Builder() {
       <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your draft…' : importing ? builderImportProgress(session) + ' This can take up to 3 minutes; keep this tab open.' : failed ? 'The import did not finish.' : busy === 'item' ? 'Saving…' : busy === 'reading' ? (importMode === 'files' ? 'Reading your church materials… This can take up to a minute.' : 'Starting to read your website…') : busy === 'blank' ? 'Preparing your questions…' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Choose how to start your draft.'}</p>
       {session?.notes?.length > 0 && <ul className="builder-notes">{session.notes.map((note, i) => <li key={i}>{note}</li>)}</ul>}
       {error && <div className="banner error" role="alert"><p>{error}</p></div>}
-      {!loading && importing && <section className="card give-pad builder-importing" aria-live="polite">
+      {!loading && importing && <section className="card give-pad builder-importing" aria-label="What Tekton is doing">
         <h2>Reading {session.url}</h2>
-        <p>We read the most useful pages first: visit, staff, events, ministries, groups, sermons and locations. Every detail we find keeps a quote from the page it came from.</p>
+        <p>Tekton reads the most useful pages first: visit, staff, events, ministries, groups, sermons and locations. Every detail it finds keeps a quote from the page it came from.</p>
         <div className="give-progress" aria-hidden="true"><span style={{ width: Math.min(95, session.progress?.stage === 'extracting' ? 80 : 10 + 60 * ((session.progress?.pages_read || 0) / Math.max(1, session.progress?.pages_found || 1))) + '%' }} /></div>
+        <ImportFeed steps={session.progress?.steps} live />
+        {session.progress?.checked > 0 && <p className="tekton-check-live">Checking facts… {session.progress.checked} unsupported {session.progress.checked === 1 ? 'claim' : 'claims'} removed so far</p>}
       </section>}
+      {!loading && session?.run && !importing && !creating && <RunReport run={session.run} />}
       {!loading && failed && <section className="card give-pad" role="alert">
         <h2>We could not finish reading your website</h2>
         <p>{session.error || 'Please try again.'}</p>
@@ -191,7 +196,12 @@ export default function Builder() {
           {Object.entries(BUILDER_LABELS).map(([field, label]) => <ReviewField key={session.id + ':' + field} field={field} label={label} session={session} editing={editing === field} onEdit={() => { setEditing(field); setPreview(null); }} onCancel={() => setEditing('')} answer={answer} disabled={locked} />)}
         </section>
         {BUILDER_LISTS.filter(list => session.collections?.[list.key]?.length).map(list => <ImportedList key={session.id + ':' + list.key} list={list} entries={session.collections[list.key]} update={updateItem} disabled={locked} />)}
+        {session.beliefs && <BeliefsReview key={session.id + ':beliefs'} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
         {session.site?.pages?.length > 0 && <SiteReview key={session.id + ':site'} session={session} update={updatePart} disabled={locked} />}
+        <section className="card give-pad builder-edit-card">
+          <div className="eyebrow">Change your site</div><h2>Ask Tekton to change something</h2>
+          <TektonEdit draftId={session.id} undoCount={session.undo_count || 0} onChanged={draft => { setSession(draft); setPreview(null); }} />
+        </section>
         {preview && <section className="card give-pad builder-preview" aria-label="Content preview">
           <div className="eyebrow">Content preview</div><h2>{preview.info?.name || 'Your church'}</h2>
           <dl className="builder-summary">{Object.entries(preview.info || {}).filter(([field, value]) => field !== 'map_query' && value != null && value !== '' && (!Array.isArray(value) || value.length)).map(([field, value]) => <div key={field}><dt>{BUILDER_LABELS[field] || field.replaceAll('_', ' ')}</dt><dd>{builderValue(field, value)}</dd></div>)}</dl>
@@ -218,7 +228,7 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
   const [city, setCity] = useState(addressCity(session?.fields.address?.value));
   const [ownerName, setOwnerName] = useState(''), [ownerEmail, setOwnerEmail] = useState('');
   const [password, setPassword] = useState(''), [confirm, setConfirm] = useState(''), [error, setError] = useState('');
-  const [registrationClosed, setRegistrationClosed] = useState(false);
+  const [registrationClosed, setRegistrationClosed] = useState(false), [inviteCode, setInviteCode] = useState('');
   async function submit(e) {
     e.preventDefault();
     if (disabled) return;
@@ -237,6 +247,7 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
       } else setBusy('create');
       const result = await createFromDraft(draftId, {
         name: name.trim(), city: city.trim(), ownerName: ownerName.trim(), ownerEmail: ownerEmail.trim(), password,
+        inviteCode: inviteCode.trim(),
       }, created, target => { onCreated(target); setPassword(''); setConfirm(''); });
       onSuccess(result.church);
     } catch (err) {
@@ -258,6 +269,8 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
       <label className="field">Your email<input required type="email" maxLength={200} autoComplete="email" value={ownerEmail} disabled={disabled} onChange={e => setOwnerEmail(e.target.value)} /></label>
       <label className="field">Password (10+ characters)<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={password} disabled={disabled} onChange={e => setPassword(e.target.value)} /></label>
       <label className="field">Confirm password<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={confirm} disabled={disabled} onChange={e => setConfirm(e.target.value)} /></label>
+      <label className="field">Invite code<input required maxLength={200} autoComplete="off" spellCheck={false} value={inviteCode} disabled={disabled} aria-describedby="builder-invite-note" onChange={e => setInviteCode(e.target.value)} /></label>
+      <p className="form-note" id="builder-invite-note">New churches need an invite code from the Tekton team while Tekton is in preview. You can preview your site without one.</p>
     </>}
     {error && <div className="banner error" role="alert">{error}</div>}
     <div className="builder-actions">
@@ -267,11 +280,76 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
     </div>
   </form>;
 }
+// Each source opens the original page scrolled to the quote, highlighted (a URL text fragment, sourceLink.js).
 function Evidence({ items }) {
-  return <ul className="builder-evidence">{items.map((item, i) => <li key={i}>
-    {/^(https?):\/\//i.test(item.url) ? <a href={item.url} target="_blank" rel="noreferrer">{builderPage(item)}</a> : <span>{builderPage(item)}</span>}
-    <blockquote>{item.quote}</blockquote>
-  </li>)}</ul>;
+  return <ul className="builder-evidence">{items.map((item, i) => {
+    const href = evidenceLink(item);
+    return <li key={i}>
+      {href ? <a href={href} target="_blank" rel="noopener noreferrer">{builderPage(item)}<span className="builder-sr-only"> (opens the page at this quote)</span></a> : <span>{builderPage(item)}</span>}
+      <blockquote>{item.quote}</blockquote>
+    </li>;
+  })}</ul>;
+}
+
+/** What Tekton did, step by step: the live feed while it reads, and the full list on the finished draft. */
+function ImportFeed({ steps, live = false }) {
+  const shown = live ? feedSteps(steps) : steps || [];
+  return <ol className="tekton-feed" aria-live={live ? 'polite' : undefined} aria-label="Tekton's steps">
+    {shown.map((step, i) => <li key={i + ':' + step.text} className={'tekton-step ' + (step.kind || 'step')}>
+      <span className="tekton-step-time">{step.at}s</span><span>{step.text}</span>
+    </li>)}
+    {live && <li className="tekton-step working" aria-hidden="true"><span className="tekton-step-time" /><span>Working…</span></li>}
+  </ol>;
+}
+
+function RunReport({ run }) {
+  const check = factCheck(run);
+  return <details className="card give-pad builder-run" open>
+    <summary>
+      <span className="eyebrow">How Tekton built this</span>
+      <strong>{runSummary(run)}</strong>
+      {run.ai_calls > 0 && <span className={'badge tekton-check' + (check.total ? ' removed' : '')}>Checking facts… {check.line}</span>}
+    </summary>
+    {check.reasons.length > 0 && <ul className="builder-notes">{check.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+    <p className="form-note">{run.ai_calls ? `${run.ai_calls} AI ${run.ai_calls === 1 ? 'call' : 'calls'}${run.models?.length ? ' to ' + run.models.join(', ') : ''}, ${(run.tokens_in + run.tokens_out).toLocaleString()} tokens.` : 'No AI was used; plain rules read the pages.'} Nothing Tekton could not find on your pages was added.</p>
+    <ImportFeed steps={run.steps} />
+  </details>;
+}
+
+// Tekton does not write theology: the statement of faith goes back to the pastor.
+function BeliefsReview({ session, onChanged, disabled }) {
+  const { beliefs } = session;
+  const [text, setText] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  async function confirm(confirmed) {
+    setBusy(true); setError('');
+    try { onChanged(await beliefsApi(session.id, confirmed)); } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  async function toggleText() {
+    if (text) { setText(null); return; }
+    try { setText(await draftPageApi(session.id, beliefs.page_ids[0])); } catch (err) { setError(err.message); }
+  }
+  return <section className="card give-pad builder-beliefs" aria-label="Statement of faith">
+    <div className="eyebrow">Statement of faith</div>
+    {beliefs.status === 'needs_pastor' ? <>
+      <h2>For your pastor to confirm</h2>
+      <p>Tekton does not write theology. It kept “{beliefs.title || 'your beliefs'}” word for word from your website and left it off your new site until your pastor confirms it.</p>
+      <div className="builder-actions">
+        <button type="button" className="link" aria-expanded={!!text} onClick={toggleText}>{text ? 'Hide the text' : 'Read the text'}</button>
+        {safeHref(beliefs.url) && <a className="link" href={safeHref(beliefs.url)} target="_blank" rel="noopener noreferrer">Open it on your website</a>}
+      </div>
+      {text && <div className="builder-page-preview">{text.sections.map((section, i) => <div key={i}>
+        {section.heading && <strong>{section.heading}</strong>}
+        {paragraphs(section.text).map((line, j) => <p key={j}>{line}</p>)}
+      </div>)}</div>}
+      <label className="builder-item-check"><input type="checkbox" checked={!!beliefs.confirmed} disabled={disabled || busy} onChange={e => confirm(e.target.checked)} />
+        <span>Our pastor confirmed this is our church's statement of faith</span></label>
+    </> : <>
+      <h2>Your pastor adds this</h2>
+      <p>{beliefs.placeholder ? 'Your website\'s beliefs section is only a placeholder, so Tekton left it out.' : 'Tekton did not find a statement of faith on your website.'} Tekton does not write theology; your pastor can add your statement in Church setup once your church is created.</p>
+    </>}
+    {error && <div className="banner error" role="alert">{error}</div>}
+  </section>;
 }
 
 function AnswerInput({ field, label, value, setValue, disabled, question }) {

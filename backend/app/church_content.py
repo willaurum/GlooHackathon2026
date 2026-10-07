@@ -310,8 +310,22 @@ class Asset(Strict):
     rights: bool = False
 
 
+class Layout(Strict):
+    """The order of the Home and Plan your visit sections, and the ones hidden ('page:section'), set by a request
+    to Tekton ("Put service times above ministries"). The keys are builder_edit.PAGES."""
+    home: list[str] = Field(default_factory=list, max_length=20)
+    visit: list[str] = Field(default_factory=list, max_length=20)
+    hidden: list[str] = Field(default_factory=list, max_length=40)
+
+    @field_validator('home', 'visit', 'hidden')
+    @classmethod
+    def _keys(cls, value):
+        return [key for key in value if re.fullmatch(r'[a-z_]{1,30}(:[a-z_]{1,30})?', key)]
+
+
 class Site(Strict):
     navigation: Navigation = Field(default_factory=Navigation)
+    layout: Layout | None = None
     links: list[SiteLink] = Field(default_factory=list, max_length=150)
     forms: list[SiteForm] = Field(default_factory=list, max_length=20)
     media: list[SiteMedia] = Field(default_factory=list, max_length=40)

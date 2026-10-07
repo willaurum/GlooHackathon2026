@@ -423,8 +423,10 @@ class BudgetTests(BuilderTestCase):
                 expected = []
                 for source in sources:
                     expected += builder.pattern_claims(source) + builder.ai_claims(source, complete)
+                texts = {s['id']: s['text'] for s in sources}
                 for i, claim in enumerate(expected, 1):
                     claim['id'] = f'c{i}'
+                    claim.update(builder.quote_context(texts[claim['source_id']], claim['quote']))
                 s = self.session(name, complete)
                 fields = builder.reconcile(expected, len(sources))
                 self.assertEqual(s['claims'], expected)

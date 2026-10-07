@@ -86,3 +86,16 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
           npm run deploy
+
+      # Tekton's invite codes (comma-separated). Without them, creating a church from #/new stays off.
+      - name: Copy Tekton invite codes to the giving API
+        working-directory: api-giving
+        env:
+          TEKTON_INVITE_CODES: ${{ secrets.TEKTON_INVITE_CODES }}
+        run: |
+          if [ -n "$TEKTON_INVITE_CODES" ]; then
+            printf '%s' "$TEKTON_INVITE_CODES" | npx wrangler secret put TEKTON_INVITE_CODES
+            echo "Set TEKTON_INVITE_CODES on the giving API."
+          else
+            echo "TEKTON_INVITE_CODES is not set in GitHub; leaving the giving API's copy as it is."
+          fi
