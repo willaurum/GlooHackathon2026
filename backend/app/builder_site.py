@@ -44,6 +44,7 @@ PROVIDERS = (
     ('form', 'Church software', r'(^|\.)(ccbchurch\.com|breezechms\.com|elvanto\.[a-z.]+|fellowshipone\.com|'
                                 r'onrealm\.org|shelbynextchms\.com)$', None),
     ('calendar', 'Google Calendar', r'^calendar\.google\.com$', None),
+    ('calendar', 'Google Calendar', r'^(www\.)?google\.com$', r'^/calendar'),
     ('livestream', 'Castr', r'(^|\.)castr\.(io|com)$', None),
     ('livestream', 'BoxCast', r'(^|\.)boxcast\.(tv|com)$', None),
     ('livestream', 'Resi', r'(^|\.)(resi\.io|livingasone\.com|resi\.media)$', None),
@@ -94,6 +95,54 @@ def classify(url, origin):
     if re.search(r'(^|/)(give|giving|donate)(/|$)', path, re.I):
         return 'giving', host
     return 'external', host
+
+
+def _link_key(url):
+    """One key for the addresses of one link: http or https, with or without www. and a trailing slash."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower().removeprefix('www.')
+    return f"{host}{parsed.path.rstrip('/') or '/'}{'?' + parsed.query if parsed.query else ''}"
+
+
+def _label(text, url, provider):
+    """A link's words, or for a link with none (an icon) or a bare address, its provider or host."""
+    text = ' '.join(str(text or '').split())
+    bare = re.fullmatch(r'(https?://)?(www\.)?[\w-]+(\.[\w-]+)+(/\S*)?', text, re.I)
+    if text and not bare:
+        return text
+    return (provider or urlparse(url).hostname or '').removeprefix('www.')
+
+
+# Link words that say nothing about where the link goes ("Sign up here.", "Click for Details", "HERE").
+GENERIC_LINK = re.compile(r'^(?:click\s+)?(?:sign\s?up|register|apply|rsvp)?\s*(?:to serve\s*)?(?:here|now|today)?|'
+                          r'(?:click|tap)(?: here)?(?: for (?:details|more(?: info)?))?|here|learn more(?: here)?|more|'
+                          r'more info(?:rmation)?|details|read more|go|link|this link|get started(?: now)?|find out more$',
+                          re.I)
+
+
+def _generic(text):
+    words = ' '.join(str(text or '').split()).strip(' .!:>»→')
+    return bool(words) and bool(GENERIC_LINK.fullmatch(words))
+
+
+def _heading_before(text, nth, lines):
+    """The short line above the nth line that holds `text`: the item a "Sign up here." belongs to
+    ("Coffee" / "Bless others ... Sign up here.")."""
+    # The link's own words, as written ("HERE" is not the "here" in "Sign up here."), as whole words.
+    words = re.compile(rf'(?<!\w){re.escape(text)}(?!\w)')
+    holding = [i for i, line in enumerate(lines) if words.search(line)]
+    if not holding:
+        return ''
+    at = holding[min(nth, len(holding) - 1)]
+    for line in reversed(lines[max(0, at - 3):at]):
+        if _short(line) and not words.search(line):
+            return line
+    return ''
+
+
+def _short(line):
+    """A heading-like line: a few words, not a sentence."""
+    return 0 < len(line.split()) <= 6 and not re.search(r'[.!?:,]$', line)
 
 
 def _web(url):
@@ -234,16 +283,31 @@ def build(sources, start_url):
             'section_count': len(page_sections),
             'include': not post})
         ctas, hidden = set(page.get('ctas', [])), set(page.get('hidden_links', []))
+        lines, seen_text = [l.strip() for l in page.get('text', '').split('\n') if l.strip()], {}
         for url, text, in_nav in page.get('anchors', []):
+            nth = seen_text[text] = seen_text.get(text, -1) + 1
+            url = builder_crawl.unwrap(url)
             if not _web(url) or url in hidden and not in_nav:
                 continue  # a link the page hides is followed by the crawler, but is not part of the page
             kind, provider = classify(url, origin)
             cta = url in ctas or bool(text and len(text) <= 40 and CTA_WORDS.search(text))
             if kind == 'page' and not cta:
                 continue
-            entry = links.setdefault(url, {'url': url, 'text': '', 'kind': kind, 'provider': provider,
-                                          'pages': [], 'cta': False, 'in_menu': False, 'context': ''})
-            entry['text'] = entry['text'] or text
+            entry = links.setdefault(_link_key(url), {'url': url, 'text': '', 'kind': kind, 'provider': provider,
+                                                      'pages': [], 'cta': False, 'in_menu': False, 'context': ''})
+            words = _label(text, url, provider)
+            if _generic(text) and not in_nav:
+                # "Sign up here." under "Coffee" is the Coffee sign-up; else the section it is in.
+                about = _heading_before(text.strip(), nth, lines) or _heading_of(page_sections, text)
+                if not (about and _short(about)):
+                    from .builder import _page_name
+                    about = _page_name(page) if kind == 'form' or not provider else provider
+                if about:
+                    signs = kind == 'form' and not re.search(r'sign[\s-]?up|regist|rsvp', about, re.I)
+                    words = f'{about} sign-up' if signs else about
+            if not entry['text'] or entry['text'] == _label('', entry['url'], entry['provider']) \
+                    or _generic(entry['text']) and not _generic(words):
+                entry['text'] = words
             entry['cta'] = entry['cta'] or cta
             entry['in_menu'] = entry['in_menu'] or in_nav
             entry['context'] = entry['context'] or _heading_of(page_sections, text)
@@ -253,7 +317,10 @@ def build(sources, start_url):
             names = {f['name'].lower() for f in form['fields']}
             if not form['fields'] or names <= SEARCH_FIELDS or 'search' in form['action'].lower():
                 continue
-            key = (urldefrag(form['action'])[0], tuple(sorted(names)))
+            # A form that posts back to its own page (no action) is one form wherever it appears: a footer form.
+            own_page = urldefrag(form['action'])[0] == urldefrag(page['url'])[0]
+            key = ('' if own_page else urldefrag(form['action'])[0],
+                   tuple(sorted(names)), tuple(f.get('label', '').lower() for f in form['fields']))
             entry = forms.setdefault(key, {
                 'action': form['action'] if _web(form['action']) else '', 'method': form['method'],
                 'name': form.get('name', ''), 'fields': form['fields'], 'submit': form.get('submit', ''),
@@ -301,12 +368,8 @@ def slug(path, taken):
 def page_title(page, church_name=''):
     """"Plan a Visit - Harvest Point Church" is "Plan a Visit"; a title that is only the church's name falls back
     to the page's first heading."""
-    from .builder import TITLE_SPLIT, CHURCH_WORDS
-    parts = [p.strip() for p in TITLE_SPLIT.split(page.get('title') or '') if p.strip()]
-    own = [p for p in parts if _norm(p) != _norm(church_name) and not (len(parts) > 1 and CHURCH_WORDS.search(p))]
-    heading = next((s['heading'] for s in page.get('sections', []) if s['heading']), '')
-    title = (own[0] if own else '') or heading or (parts[0] if parts else '') or page.get('path', '/')
-    return 'Home' if page.get('page_type') == 'home' and not own else title[:200]
+    from .builder import _page_name
+    return _page_name(page, church_name)
 
 
 def content(site, church_name=''):

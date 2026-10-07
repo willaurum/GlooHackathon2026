@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { beliefsApi, createBlank, createFromDraft, createFromFiles, createFromJson, downloadSiteFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
-import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, factCheck, feedSteps, runSummary, siteMenuLines, sitePartItem } from './builder.js';
+import { beliefsApi, calendarApi, createBlank, createFromDraft, createFromFiles, createFromJson, draftApi, draftFileUrl, draftPageApi, itemApi, partApi, pollDraft, removedApi } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder, factCheck, feedSteps, fileCheck, removedGroups, runSummary, siteMenuLines, sitePartItem } from './builder.js';
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
@@ -126,13 +126,6 @@ export default function Builder() {
     finally { setBusy(''); }
   }
 
-  async function downloadFiles() {
-    if (busy || loading || editing || !canReviewBuilder(session)) return;
-    setBusy('download'); setError('');
-    try { await downloadSiteFiles(session.id); }
-    catch (err) { setError(err.message); }
-    finally { setBusy(''); }
-  }
 
   function startOver() {
     rememberDraft(''); rememberCreated(null); setSessionId(''); setSession(null); setUrl('');
@@ -169,7 +162,7 @@ export default function Builder() {
         <ImportFeed steps={session.progress?.steps} live />
         {session.progress?.checked > 0 && <p className="tekton-check-live">Checking facts… {session.progress.checked} unsupported {session.progress.checked === 1 ? 'claim' : 'claims'} removed so far</p>}
       </section>}
-      {!loading && session?.run && !importing && !creating && <RunReport run={session.run} />}
+      {!loading && session?.run && !importing && !creating && <RunReport run={session.run} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
       {!loading && failed && <section className="card give-pad" role="alert">
         <h2>We could not finish reading your website</h2>
         <p>{session.error || 'Please try again.'}</p>
@@ -210,6 +203,7 @@ export default function Builder() {
           {session.import_kind === 'json' ? <dl className="builder-summary">{Object.entries(session.fields).filter(([key, field]) => key !== 'map_query' && field.value !== '' && (!Array.isArray(field.value) || field.value.length)).map(([key, field]) => <div key={key}><dt>{BUILDER_LABELS[key] || key.replaceAll('_', ' ')}</dt><dd>{builderValue(key, field.value)}</dd></div>)}</dl> : Object.entries(BUILDER_LABELS).map(([field, label]) => <ReviewField key={session.id + ':' + field} field={field} label={label} session={session} editing={editing === field} onEdit={() => { setEditing(field); setPreview(null); }} onCancel={() => setEditing('')} answer={answer} disabled={locked} />)}
         </section>
         {BUILDER_LISTS.filter(list => session.collections?.[list.key]?.length).map(list => <ImportedList key={session.id + ':' + list.key} list={list} entries={session.collections[list.key]} update={updateItem} disabled={locked} />)}
+        {session.site?.calendars?.length > 0 && <CalendarsReview key={session.id + ':calendars'} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
         {session.beliefs && <BeliefsReview key={session.id + ':beliefs'} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
         {session.site?.pages?.length > 0 && <SiteReview key={session.id + ':site'} session={session} update={updatePart} disabled={locked} />}
         {session.import_kind !== 'json' && <section className="card give-pad builder-edit-card">
@@ -221,10 +215,11 @@ export default function Builder() {
           <dl className="builder-summary">{Object.entries(preview.info || {}).filter(([field, value]) => field !== 'map_query' && value != null && value !== '' && (!Array.isArray(value) || value.length)).map(([field, value]) => <div key={field}><dt>{BUILDER_LABELS[field] || field.replaceAll('_', ' ')}</dt><dd>{builderValue(field, value)}</dd></div>)}</dl>
           <p>{preview.faqs?.length || 0} FAQs{builderListCounts(session).map(list => `, ${list.included} of ${list.total} ${list.label.toLowerCase()}`).join('')}</p>
         </section>}
+        <FilesCard session={session} />
         <section className="card give-pad builder-build">
           <p>Ready? Create your church and a staff account to manage its new site.</p>
           {editing && <p className="form-note">Save or cancel your edit before continuing.</p>}
-          <div className="builder-actions"><button type="button" className="primary" disabled={locked || !!editing} onClick={() => { window.location.hash = '#/new/preview'; }}>Preview your site</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={downloadFiles}>Download site files (JSON)</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
+          <div className="builder-actions"><button type="button" className="primary" disabled={locked || !!editing} onClick={() => { window.location.hash = '#/new/preview'; }}>Preview your site</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
         </section>
       </>}
       {!loading && creating && (review || created) && <CreateAccount session={session} draftId={sessionId} created={created} onCreated={onCreated} onSuccess={onSuccess} onBack={() => setCreating(false)} answer={answer} disabled={locked} setBusy={setBusy} />}
@@ -316,7 +311,21 @@ function ImportFeed({ steps, live = false }) {
   </ol>;
 }
 
-function RunReport({ run }) {
+// What Tekton wrote: church.json (the church) and site.json (its site), checked against their schemas.
+function FilesCard({ session }) {
+  const check = fileCheck(session.file_check);
+  return <section className="card give-pad builder-files" aria-label="Your church files">
+    <div className="eyebrow">Your church files</div><h2>church.json and site.json</h2>
+    <p>Everything above, written as two files: <strong>church.json</strong> holds your church (details, service times, lists and where each fact came from) and <strong>site.json</strong> holds your site (colors, fonts, menu, section order and pages). They include your answers and edits so far.</p>
+    {check && <p className={'badge tekton-check' + (check.ok ? '' : ' removed')}>Checking church.json and site.json against the schema… {check.line}</p>}
+    {check?.details.length > 0 && <ul className="builder-notes">{check.details.map(detail => <li key={detail}>{detail}</li>)}</ul>}
+    <div className="builder-actions">
+      {['church', 'site'].map(name => <a key={name} className="secondary" href={draftFileUrl(session.id, name)} download={name + '.json'}>Download {name}.json</a>)}
+    </div>
+  </section>;
+}
+
+function RunReport({ run, session, onChanged, disabled }) {
   const check = factCheck(run);
   return <details className="card give-pad builder-run" open>
     <summary>
@@ -325,9 +334,65 @@ function RunReport({ run }) {
       {run.ai_calls > 0 && <span className={'badge tekton-check' + (check.total ? ' removed' : '')}>Checking facts… {check.line}</span>}
     </summary>
     {check.reasons.length > 0 && <ul className="builder-notes">{check.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+    <RemovedClaims session={session} onChanged={onChanged} disabled={disabled} />
     <p className="form-note">{run.ai_calls ? `${run.ai_calls} AI ${run.ai_calls === 1 ? 'call' : 'calls'}${run.models?.length ? ' to ' + run.models.join(', ') : ''}, ${(run.tokens_in + run.tokens_out).toLocaleString()} tokens.` : 'No AI was used; plain rules read the pages.'} Nothing Tekton could not find on your pages was added.</p>
     <ImportFeed steps={run.steps} />
   </details>;
+}
+
+// What the fact check took out, kept so the church can look and decide: "Add it anyway" puts it back, marked as
+// added by the church rather than read from the page.
+function RemovedClaims({ session, onChanged, disabled }) {
+  const [busy, setBusy] = useState(''), [error, setError] = useState('');
+  const groups = removedGroups(session?.removed);
+  const count = groups.reduce((n, group) => n + group.entries.length, 0);
+  if (!count) return null;
+  async function add(id) {
+    setBusy(id); setError('');
+    try { onChanged(await removedApi(session.id, id)); } catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
+  return <details className="builder-removed">
+    <summary>Removed by the fact check ({count})</summary>
+    <p className="form-note">Tekton left these out because it could not match them to your pages. If one is right, add it anyway: it will show as added by you.</p>
+    {groups.map(group => <section key={group.key} aria-label={group.label}>
+      <h3>{group.label}</h3>
+      <ul className="builder-removed-list">{group.entries.map(entry => <li key={entry.id}>
+        <strong>{entry.text}</strong>
+        {entry.reason && <small className="form-note">{entry.reason}</small>}
+        {(entry.evidence.url || entry.evidence.title) && <Evidence items={[entry.evidence]} />}
+        <div className="builder-actions"><button type="button" className="secondary" disabled={disabled || !!busy} onClick={() => add(entry.id)}>{busy === entry.id ? 'Adding…' : 'Add it anyway'}</button></div>
+      </li>)}</ul>
+    </section>)}
+    {error && <div className="banner error" role="alert">{error}</div>}
+  </details>;
+}
+
+// Calendars the church's site embeds (Google Calendar, Tockify, a .ics link...). Their events are read only when
+// the church says so: many calendar hosts ask crawlers to stay away, so importing is the church's own request.
+function CalendarsReview({ session, onChanged, disabled }) {
+  const [busy, setBusy] = useState(''), [error, setError] = useState('');
+  async function act(entry, action) {
+    setBusy(entry.id + ':' + action); setError('');
+    try { onChanged(await calendarApi(session.id, entry.id, action)); } catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
+  return <section className="card give-pad builder-calendars" aria-label="Calendars we found">
+    <div className="eyebrow">Calendars we found</div><h2>Import your calendar's events?</h2>
+    <p>Your website shows a calendar. Tekton can read its upcoming events (the next six months) into your new site's calendar, the way a calendar app does when you subscribe. It only does this if you ask.</p>
+    <ul className="builder-calendar-list">{session.site.calendars.map(entry => {
+      const line = calendarLine(entry);
+      return <li key={entry.id}>
+        <div><strong>We found your {line.title}</strong>{line.where && <small>On {safeHref(entry.page_url) ? <a href={safeHref(entry.page_url)} target="_blank" rel="noopener noreferrer">{line.where}</a> : line.where}</small>}
+          {line.status && <small className="form-note">{line.status}</small>}</div>
+        {line.canImport && <div className="builder-actions">
+          <button type="button" className="primary" disabled={disabled || !!busy} onClick={() => act(entry, 'import')}>{busy === entry.id + ':import' ? 'Importing…' : 'Import upcoming events'}</button>
+          {entry.status === 'found' && <button type="button" className="secondary" disabled={disabled || !!busy} onClick={() => act(entry, 'decline')}>Not now</button>}
+        </div>}
+      </li>;
+    })}</ul>
+    {error && <div className="banner error" role="alert">{error}</div>}
+  </section>;
 }
 
 // Tekton does not write theology: the statement of faith goes back to the pastor.

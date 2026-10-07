@@ -8,6 +8,11 @@
 // Bodies are capped (1 MB per page or feed, 4 MB per image, 500 KB per stylesheet) and each fetch is bounded in time.
 // Feeds are robots.txt, sitemaps and iCal/RSS feeds, which the builder reads to find pages, events and sermons;
 // stylesheets give the site's colors and fonts.
+//
+// kind 'calendar' is the one fetch the church asks for itself: after it says "Import upcoming events" for a calendar
+// Tekton found on its site, the builder reads that calendar's public iCal feed (up to 5 MB) even when the feed's host
+// asks crawlers to stay away in robots.txt (Google Calendar's does), as a calendar app does when someone subscribes.
+// It is accepted only for feed addresses of the shapes Tekton derives (isCalendarFeed), at every redirect too.
 
 export const BUILDER_FETCH_HOST = 'builder-fetch';
 
@@ -16,18 +21,35 @@ export function builderFetchEnvVars(): Record<string, string> {
 	return { BUILDER_FETCH_URL: `http://${BUILDER_FETCH_HOST}` };
 }
 
-type Kind = 'page' | 'image' | 'feed' | 'css';
-const KINDS: Kind[] = ['page', 'image', 'feed', 'css'];
-const LIMITS: Record<Kind, number> = { page: 1_000_000, image: 4_000_000, feed: 1_000_000, css: 500_000 };
+type Kind = 'page' | 'image' | 'feed' | 'css' | 'calendar';
+const KINDS: Kind[] = ['page', 'image', 'feed', 'css', 'calendar'];
+const LIMITS: Record<Kind, number> = { page: 1_000_000, image: 4_000_000, feed: 1_000_000, css: 500_000, calendar: 5_000_000 };
 const ACCEPT: Record<Kind, string> = {
 	page: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
 	image: 'image/*',
 	feed: 'application/rss+xml,application/atom+xml,application/xml,text/xml,text/calendar,text/plain;q=0.9',
 	css: 'text/css',
+	calendar: 'text/calendar,text/plain;q=0.9,*/*;q=0.5',
 };
 const TYPES: Record<Kind, RegExp> = {
 	page: /html|text\//i, image: /^image\//i, feed: /xml|rss|atom|calendar|text\/plain/i, css: /^text\/css\b/i,
+	calendar: /calendar|text\/plain|octet-stream/i,
 };
+// The calendar feed addresses Tekton derives (backend/app/builder_calendar.py FEED_PATTERNS); keep the two in step.
+const CALENDAR_FEEDS = [
+	/^https:\/\/calendar\.google\.com\/calendar\/ical\/[^/?#]+\/public\/basic\.ics$/i,
+	/^https:\/\/(?:www\.)?google\.com\/calendar\/ical\/[^/?#]+\/public\/basic\.ics$/i,
+	/^https:\/\/tockify\.com\/api\/feeds\/ics\/[\w-]+$/i,
+	/^https:\/\/outlook\.(?:office365|office|live)\.com\/owa\/calendar\/[^?#]+\/calendar\.ics$/i,
+	/^https:\/\/ics\.teamup\.com\/feed\/[\w-]+\/\d+\.ics$/i,
+	/^https:\/\/[^/?#]+\/[^?#]*\.ics(?:\?[^#]*)?$/i,
+	/^https:\/\/[^/?#]+\/[^?#]*\?(?:[^#]*&)?ical=1(?:&[^#]*)?$/i,
+];
+
+/** True for a calendar feed address of a shape Tekton derives; only these may be fetched with kind 'calendar'. */
+export function isCalendarFeed(href: string): boolean {
+	return href.length <= 500 && CALENDAR_FEEDS.some(pattern => pattern.test(href));
+}
 const MAX_REQUEST_BYTES = 4096;
 const MAX_REDIRECTS = 5;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -185,6 +207,7 @@ export async function builderFetchBridge(request: Request, fetcher: typeof fetch
 	let current = checkUrl(body.url);
 	for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
 		if (typeof current === 'string') return refuse(current, current === PRIVATE ? 403 : 400);
+		if (kind === 'calendar' && !isCalendarFeed(current.href)) return refuse('Not a calendar feed Tekton found.', 403);
 		const dns = await checkDns(current.hostname, fetcher);
 		if (dns) return refuse(dns, dns === PRIVATE ? 403 : 400);
 		let response: Response;
@@ -215,7 +238,8 @@ export async function builderFetchBridge(request: Request, fetcher: typeof fetch
 		const contentType = response.headers.get('content-type') ?? '';
 		if (!TYPES[kind].test(contentType) || (kind === 'feed' && /html/i.test(contentType))) {
 			await response.body?.cancel();
-			return refuse(kind === 'feed' ? 'Not a feed or sitemap.' : kind === 'css' ? 'Not a stylesheet.' : 'Not a web page or image.', 415);
+			return refuse(kind === 'feed' ? 'Not a feed or sitemap.' : kind === 'css' ? 'Not a stylesheet.'
+				: kind === 'calendar' ? 'Not a calendar feed.' : 'Not a web page or image.', 415);
 		}
 		const data = await readCapped(response, LIMITS[kind], kind !== 'image');
 		if (!data) return refuse('That image is too large.', 413);

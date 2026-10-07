@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /assets/*
+Disallow: /data/*
+Disallow: /tours/*
+
+Sitemap: https://church.test/sitemap.xml

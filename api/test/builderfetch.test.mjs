@@ -1,7 +1,7 @@
 // The builder fetch bridge (api/builderfetch.ts). Run: node --test api/test/*.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BUILDER_FETCH_HOST, builderFetchBridge, builderFetchEnvVars, checkDns, checkUrl, privateIp } from '../builderfetch.ts';
+import { BUILDER_FETCH_HOST, builderFetchBridge, builderFetchEnvVars, checkDns, checkUrl, isCalendarFeed, privateIp } from '../builderfetch.ts';
 
 const ask = (url, kind = 'page', path = '/fetch', method = 'POST') =>
   new Request(`http://${BUILDER_FETCH_HOST}${path}`, { method, body: method === 'POST' ? JSON.stringify({ url, kind }) : undefined });
@@ -168,4 +168,27 @@ test('stylesheets are their own kind: a page or script is not a stylesheet', asy
   for (const path of ['page', 'app.js'])
     assert.equal((await builderFetchBridge(ask(`https://cdn.example.org/${path}`, 'css'), net.fetcher)).status, 415, path);
   assert.equal((await builderFetchBridge(ask('http://10.0.0.1/theme.css', 'css'), net.fetcher)).status, 403);
+});
+
+test('a calendar the church asked to import: only derived feed addresses, at every redirect, up to 5 MB', async () => {
+  const google = 'https://calendar.google.com/calendar/ical/fbc.schedule%40gmail.com/public/basic.ics';
+  for (const url of [google, 'https://tockify.com/api/feeds/ics/gracechurch', 'https://grace.org/events/?ical=1',
+    'https://outlook.office365.com/owa/calendar/abc@grace.org/def/calendar.ics', 'https://ics.teamup.com/feed/ksabc123/0.ics',
+    'https://grace.org/files/calendar.ics'])
+    assert.equal(isCalendarFeed(url), true, url);
+  for (const url of ['https://grace.org/', 'https://calendar.google.com/calendar/embed?src=x@gmail.com', 'http://grace.org/c.ics',
+    'https://evil.org/ical/x/public/basic.ics.html'])
+    assert.equal(isCalendarFeed(url), false, url);
+  const ics = 'BEGIN:VCALENDAR\r\n' + 'X'.repeat(1_500_000) + '\r\nEND:VCALENDAR\r\n';
+  const net = internet({ 'calendar.google.com': ['142.250.1.1'], 'grace.org': ['93.184.216.34'] }, {
+    [google]: () => new Response(ics, { headers: { 'Content-Type': 'text/calendar; charset=utf-8' } }),
+    'https://grace.org/move.ics': () => new Response('', { status: 302, headers: { location: 'https://grace.org/about' } }),
+  });
+  const read = await builderFetchBridge(ask(google, 'calendar'), net.fetcher);
+  assert.equal(read.status, 200);
+  assert.ok((await read.arrayBuffer()).byteLength > 1_000_000); // past the 1 MB feed cap, within the calendar cap
+  assert.equal((await builderFetchBridge(ask('https://grace.org/', 'calendar'), net.fetcher)).status, 403);
+  // A redirect away from a calendar feed address is refused before it is fetched.
+  assert.equal((await builderFetchBridge(ask('https://grace.org/move.ics', 'calendar'), net.fetcher)).status, 403);
+  assert.ok(!net.fetched().includes('https://grace.org/about'));
 });

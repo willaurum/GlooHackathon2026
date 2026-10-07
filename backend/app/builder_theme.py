@@ -137,6 +137,37 @@ def _first_color(values):
     return ''
 
 
+# Site builders name their parts their own way (SnapPages: "#sp-header", ".sp-scheme-0 .sp-button"), so beyond the
+# usual selectors a header, menu or button is recognized by the last part of a selector, ignoring hover and other states.
+HEADER_PART = re.compile(r'(?:^|[\s>+~])(?:header|nav|[#.][\w-]*(?:header|navbar|topbar|masthead|nav))$', re.I)
+BUTTON_PART = re.compile(r'(?:^|[\s>+~])(?:button|[#.][\w-]*(?:button|btn|cta)(?:-primary)?)$', re.I)
+# Colors that say nothing about a brand: near white, near black and grays.
+def _saturation(hex_color):
+    r, g, b = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    high, low = max(r, g, b), min(r, g, b)
+    return 0 if high == 0 else (high - low) / high
+
+
+def _matching(rules, variables, part, props):
+    """Colors declared for selectors whose last part matches `part` (states like :hover left out), in order."""
+    for selector, declarations in rules:
+        if any(':' not in member and part.search(member.strip()) for member in selector.split(',')):
+            for prop in props:
+                if prop in declarations:
+                    yield _resolve(declarations[prop], variables)
+
+
+def _brand_colors(css_texts):
+    """Saturated colors by how often the site's CSS uses them, most used first: the last resort for a brand color."""
+    counts = {}
+    for text in css_texts:
+        for match in re.finditer(r'#[0-9a-f]{3,6}\b|rgba?\([^)]*\)', _strip_comments(text or '')[:MAX_CSS], re.I):
+            found = color(match.group(0))
+            if found and _saturation(found) >= 0.35 and 0.03 <= _luminance(found) <= 0.75:
+                counts[found] = counts.get(found, 0) + 1
+    return sorted(counts, key=lambda c: -counts[c])
+
+
 def theme(meta, css_texts):
     """Theme fields (church_content.Theme) from a home page's meta tags and CSS texts. Empty fields keep the
     church site's own defaults."""
@@ -160,11 +191,13 @@ def theme(meta, css_texts):
                or _first_color(_declared(rules, variables, {'header', '.site-header', '.header', '#header', 'nav', '#nav',
                                                             '.nav', '.navbar', '#navbar', '.topbar', '#topbar'},
                                          ('background-color', 'background')))
+               or _first_color(_matching(rules, variables, HEADER_PART, ('background-color', 'background')))
                or _first_color(_declared(rules, variables, {'h1', 'h2', 'h1, h2', 'h3', 'h2, h3', 'h1, h2, h3'}, ('color',))))
     # A menu's hover color is the site's highlight when it has no buttons; a plain link color is the last resort.
     accent = (var_color(ACCENT_VARS)
               or _first_color(_declared(rules, variables, {'.btn', '.button', 'button', '.btn-primary', '.cta'},
                                         ('background-color', 'background')))
+              or _first_color(_matching(rules, variables, BUTTON_PART, ('background-color', 'background')))
               or _first_color(_declared(rules, variables, {'#nav a:hover', 'nav a:hover', '.nav a:hover', '#nav a:hover, #nav a:focus',
                                                            '.navbar a:hover', '#menu a:hover', '.menu a:hover'},
                                         ('background-color', 'background')))
@@ -179,6 +212,14 @@ def theme(meta, css_texts):
     body_font = next(filter(None, map(font, _declared(rules, variables, {'body', 'html'}, ('font-family',)))), '')
     heading_font = next(filter(None, map(font, _declared(rules, variables, {'h1', 'h2', 'h1, h2, h3', 'h1, h2'},
                                                          ('font-family',)))), '')
+    # Nothing named a brand color: the saturated colors the site uses most (the first is the accent, a second the primary).
+    brand = _brand_colors(css_texts)
+    if not primary and not accent and brand:
+        accent, primary = brand[0], (brand[1] if len(brand) > 1 else brand[0])
+    elif not accent and brand:
+        accent = next((c for c in brand if c != primary), primary)
+    elif not primary and brand:
+        primary = accent
     # Colors the church's pages can actually use: buttons carry white text, and text must read on the background.
     primary = readable_on_white(primary) if primary else ''
     accent = readable_on_white(accent) if accent else ''

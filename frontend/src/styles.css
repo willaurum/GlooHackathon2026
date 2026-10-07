@@ -1315,6 +1315,14 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .tekton-check { background: var(--green-50); color: var(--green-700); }
 .tekton-check.removed { background: #fff4e0; color: #8a5300; }
 .builder-beliefs .builder-item-check { margin-top: 14px; }
+.builder-removed { margin-top: 12px; }
+.builder-removed > summary { cursor: pointer; font-weight: 600; }
+.builder-removed h3 { margin: 14px 0 6px; font-size: 1rem; }
+.builder-removed-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.builder-removed-list li { display: grid; gap: 4px; }
+.builder-calendar-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 14px; }
+.builder-calendar-list li > div:first-child { display: grid; gap: 2px; }
+.builder-calendar-list .builder-actions { margin-top: 8px; }
 
 /* "Ask Tekton to change something" on the review step and in the preview banner. */
 .tekton-edit { display: grid; gap: 8px; }
