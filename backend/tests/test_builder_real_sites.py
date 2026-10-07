@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from backend.app import builder, builder_agents, builder_run, builder_score, builder_structured
+from backend.app import builder, builder_agents, builder_crawl, builder_run, builder_score, builder_site, builder_structured
 
 REAL = Path(__file__).resolve().parent / 'fixtures' / 'builder' / 'real'
 FBC = REAL / 'forest-baptist'
@@ -180,6 +180,41 @@ class StaffTests(unittest.TestCase):
                  {'collection': 'staff', 'value': {'name': 'Mark Eckels', 'role': 'Deacon of New Member Assimilation'},
                   'quote': 'Mark Eckels Deacon of New Member Assimilation', 'source_id': 's1', 'method': 'ai'}]
         self.assertEqual(builder.collect(items, [page])['staff'][0]['value']['role'], 'Deacon of New Member Assimilation')
+
+
+class LinkTests(unittest.TestCase):
+    """Forest Baptist (Google Sites): every outside link went through https://www.google.com/url?q=..., so Give was
+    an "external" link to www.google.com, links were listed twice and icon links had no words."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.session = import_site('forest-baptist', 'home')
+        cls.links = cls.session['site']['links']
+
+    def test_google_redirects_are_unwrapped(self):
+        self.assertFalse([l['url'] for l in self.links if 'google.com/url' in l['url']])
+        give = next(l for l in self.links if l['text'] == 'Give')
+        self.assertEqual((give['url'], give['kind']), ('https://giving.ncsservices.org/App/Giving/ncs-2095', 'giving'))
+        self.assertTrue(give['in_menu'])
+        menu = [item['url'] for item in self.session['site']['navigation']['main']]
+        self.assertIn('https://giving.ncsservices.org/App/Giving/ncs-2095', menu)
+
+    def test_each_link_once_with_a_label(self):
+        keys = [builder_site._link_key(l['url']) for l in self.links]
+        self.assertEqual(len(keys), len(set(keys)))
+        by_url = {l['url']: l for l in self.links}
+        self.assertEqual(by_url['https://www.facebook.com/ForestBaptist']['text'], 'Facebook')
+        self.assertEqual(by_url['https://www.facebook.com/ForestBaptist']['pages'], ['s1', 's6'])
+        self.assertEqual(by_url['https://www.imb.org']['text'], 'imb.org')
+        self.assertEqual(by_url['https://podcasts.apple.com/us/podcast/forest-baptist-church-podcast/id1596222749']['kind'], 'podcast')
+        self.assertTrue(all(l['text'] for l in self.links))
+
+    def test_unwrap(self):
+        self.assertEqual(builder_crawl.unwrap('https://www.google.com/url?q=https%3A%2F%2Fwww.imb.org&sa=D&sntz=1&usg=x'),
+                         'https://www.imb.org')
+        self.assertEqual(builder_crawl.unwrap('https://www.google.com/url?url=https://grace.test/give#top'), 'https://grace.test/give')
+        for url in ('https://www.google.com/url?q=javascript:alert(1)', 'https://www.google.com/maps?q=x', 'https://grace.test/url?q=https://a.test'):
+            self.assertEqual(builder_crawl.unwrap(url), url)
 
 
 if __name__ == '__main__':

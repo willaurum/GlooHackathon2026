@@ -532,7 +532,10 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
             if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] or canonical and s['url'] == canonical for s in sources):
                 continue
             images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
-            anchors = [(urldefrag(urljoin(final_url, href))[0], text, nav) for href, text, nav in page['anchors']
+
+            def address(href):
+                return builder_crawl.unwrap(urldefrag(urljoin(final_url, href))[0])  # Google Sites wraps outside links
+            anchors = [(address(href), text, nav) for href, text, nav in page['anchors']
                        if not href.lower().startswith(('mailto:', 'tel:', 'javascript:'))][:300]
             sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
                             'text': page['text'][:MAX_SOURCE_CHARS],
@@ -542,16 +545,16 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'anchors': anchors, 'jsonld': page['jsonld'],
                             'site_name': page['meta'].get('og:site_name') or page['meta'].get('application-name', ''),
                             'meta': page['meta'], 'headings': page['headings'],
-                            'nav': [(b, tag, depth, label, urldefrag(urljoin(final_url, href))[0] if href else '')
+                            'nav': [(b, tag, depth, label, address(href) if href else '')
                                     for b, tag, depth, label, href in page['nav']],
                             'forms': [{**f, 'action': urljoin(final_url, f['action']) if f['action'] else final_url}
                                       for f in page['forms']],
-                            'ctas': list(dict.fromkeys(urldefrag(urljoin(final_url, h))[0] for h in page['ctas']))[:30],
+                            'ctas': list(dict.fromkeys(address(h) for h in page['ctas']))[:30],
                             'styles': [urljoin(final_url, h) for h in page['styles']],
                             'icons': [(urljoin(final_url, h), rel, sizes) for h, rel, sizes in page['icons']],
                             'logos': [(urljoin(final_url, src), alt) for src, alt in page['logos']],
                             'css': page['css'],
-                            'hidden_links': list({urldefrag(urljoin(final_url, h))[0] for h in page['hidden_links']}),
+                            'hidden_links': list({address(h) for h in page['hidden_links']}),
                             'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']],
                             'scripts': page['scripts'], 'calendar_hints': page.get('calendar_hints', [])})
             kind = PAGE_KINDS.get(sources[-1]['page_type'])

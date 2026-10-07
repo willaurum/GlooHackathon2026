@@ -8,7 +8,7 @@ import re
 import threading
 import time
 import xml.etree.ElementTree as ET
-from urllib.parse import unquote, urldefrag, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urldefrag, urljoin, urlparse
 
 USER_AGENT = 'Tekton'
 MAX_SITEMAPS = 5
@@ -101,6 +101,18 @@ def score(url, anchor='', in_nav=False):
 
 def is_feed(url):
     return bool(FEED_RE.search(url))
+
+
+def unwrap(url):
+    """The real address behind a redirect wrapper. Google Sites sends every outside link through
+    https://www.google.com/url?q=<address>&sa=D...; the address it goes to is the link."""
+    parsed = urlparse(url)
+    if (parsed.hostname or '').lower() in ('google.com', 'www.google.com') and parsed.path == '/url':
+        query = parse_qs(parsed.query)
+        target = (query.get('q') or query.get('url') or [''])[0]
+        if urlparse(target).scheme in ('http', 'https'):
+            return urldefrag(target)[0]
+    return url
 
 
 def feed_url(url):

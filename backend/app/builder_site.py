@@ -44,6 +44,7 @@ PROVIDERS = (
     ('form', 'Church software', r'(^|\.)(ccbchurch\.com|breezechms\.com|elvanto\.[a-z.]+|fellowshipone\.com|'
                                 r'onrealm\.org|shelbynextchms\.com)$', None),
     ('calendar', 'Google Calendar', r'^calendar\.google\.com$', None),
+    ('calendar', 'Google Calendar', r'^(www\.)?google\.com$', r'^/calendar'),
     ('livestream', 'Castr', r'(^|\.)castr\.(io|com)$', None),
     ('livestream', 'BoxCast', r'(^|\.)boxcast\.(tv|com)$', None),
     ('livestream', 'Resi', r'(^|\.)(resi\.io|livingasone\.com|resi\.media)$', None),
@@ -94,6 +95,22 @@ def classify(url, origin):
     if re.search(r'(^|/)(give|giving|donate)(/|$)', path, re.I):
         return 'giving', host
     return 'external', host
+
+
+def _link_key(url):
+    """One key for the addresses of one link: http or https, with or without www. and a trailing slash."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower().removeprefix('www.')
+    return f"{host}{parsed.path.rstrip('/') or '/'}{'?' + parsed.query if parsed.query else ''}"
+
+
+def _label(text, url, provider):
+    """A link's words, or for a link with none (an icon) or a bare address, its provider or host."""
+    text = ' '.join(str(text or '').split())
+    bare = re.fullmatch(r'(https?://)?(www\.)?[\w-]+(\.[\w-]+)+(/\S*)?', text, re.I)
+    if text and not bare:
+        return text
+    return (provider or urlparse(url).hostname or '').removeprefix('www.')
 
 
 def _web(url):
@@ -235,15 +252,17 @@ def build(sources, start_url):
             'include': not post})
         ctas, hidden = set(page.get('ctas', [])), set(page.get('hidden_links', []))
         for url, text, in_nav in page.get('anchors', []):
+            url = builder_crawl.unwrap(url)
             if not _web(url) or url in hidden and not in_nav:
                 continue  # a link the page hides is followed by the crawler, but is not part of the page
             kind, provider = classify(url, origin)
             cta = url in ctas or bool(text and len(text) <= 40 and CTA_WORDS.search(text))
             if kind == 'page' and not cta:
                 continue
-            entry = links.setdefault(url, {'url': url, 'text': '', 'kind': kind, 'provider': provider,
-                                          'pages': [], 'cta': False, 'in_menu': False, 'context': ''})
-            entry['text'] = entry['text'] or text
+            entry = links.setdefault(_link_key(url), {'url': url, 'text': '', 'kind': kind, 'provider': provider,
+                                                      'pages': [], 'cta': False, 'in_menu': False, 'context': ''})
+            if not entry['text'] or entry['text'] == _label('', entry['url'], entry['provider']):
+                entry['text'] = _label(text, url, provider)
             entry['cta'] = entry['cta'] or cta
             entry['in_menu'] = entry['in_menu'] or in_nav
             entry['context'] = entry['context'] or _heading_of(page_sections, text)
