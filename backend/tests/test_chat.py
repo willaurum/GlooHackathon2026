@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from backend.app import chat
 
@@ -154,6 +154,84 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(result['status'], 'pending_staff_review')
         self.assertIn('no notification', result['message'])
         self.assertNotIn('one business day', result['message'])
+
+    # --- A model that keeps calling tools still has to answer ---
+
+    @staticmethod
+    def ai_message(content='', calls=()):
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=list(calls)))]), 'fake:model'
+
+    @staticmethod
+    def info_call(n=0):
+        return SimpleNamespace(id=f'info{n}', function=SimpleNamespace(name='get_church_info', arguments='{}'))
+
+    def run_ai(self, question, answer):
+        """Run a turn against a model that asks for get_church_info on every call, even with tools off.
+        `answer(convo)` is the text it writes once tools are off. Returns the result and each call's final flag."""
+        finals = []
+
+        def fake_complete(clients, convo, session_id, final=False):
+            finals.append(final)
+            return self.ai_message(answer(convo) if final else '', [self.info_call(len(finals))])
+
+        with patch.object(chat, 'complete', side_effect=fake_complete):
+            result = chat.run([{'role': 'user', 'content': question}], 'test', clients=[('fake', 'model', {}, None)])
+        return result, finals
+
+    def test_the_last_step_switches_tools_off_and_answers(self):
+        seen = {}
+
+        def answer(convo):
+            seen['system'] = [m['content'] for m in convo if m['role'] == 'system']
+            seen['tool_results'] = [m for m in convo if m['role'] == 'tool']
+            return 'Sunday services are at 9:00am and 11:00am.'
+
+        result, finals = self.run_ai('What time are services on Sunday?', answer)
+        self.assertEqual(finals, [False] * (chat.MAX_STEPS - 1) + [True])
+        self.assertEqual(result['reply'], 'Sunday services are at 9:00am and 11:00am.')
+        # The final call is told to answer from the results it already has, inside the one system message.
+        self.assertEqual(len(seen['system']), 1)
+        self.assertIn(chat.FINAL_ANSWER, seen['system'][0])
+        self.assertEqual(len(seen['tool_results']), chat.MAX_STEPS - 1)
+
+    def test_complete_sends_tool_choice_none_on_the_final_call(self):
+        create = MagicMock(return_value='response')
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        chat.complete([('fake', 'model', {}, client)], [], 'test', final=True)
+        self.assertEqual(create.call_args.kwargs['tool_choice'], 'none')
+        chat.complete([('fake', 'model', {}, client)], [], 'test')
+        self.assertEqual(create.call_args.kwargs['tool_choice'], 'auto')
+
+    def test_many_tool_calls_end_the_loop_early(self):
+        calls = [self.info_call(n) for n in range(chat.MAX_TOOL_CALLS)]
+        responses = [self.ai_message('', calls), self.ai_message('Services are Sunday at 9:00am and 11:00am.')]
+        with patch.object(chat, 'complete', side_effect=responses) as complete:
+            result = chat.run([{'role': 'user', 'content': 'When are services?'}], 'test', clients=[('fake', 'model', {}, None)])
+        self.assertEqual([c.kwargs['final'] for c in complete.call_args_list], [False, True])
+        self.assertIn('9:00am', result['reply'])
+
+    def test_an_empty_final_answer_falls_back_to_the_church_details(self):
+        result, _ = self.run_ai('What time are services on Sunday?', lambda convo: '')
+        self.assertIn('Sunday at 9:00am', result['reply'])
+        self.assertIn('Sunday at 11:00am', result['reply'])
+        self.assertNotIn('Wednesday', result['reply'])
+        self.assertNotIn("couldn't finish", result['reply'])
+        result, _ = self.run_ai("What's your address?", lambda convo: '')
+        self.assertIn('410 Maple Ridge Road', result['reply'])
+        # A question the church details can't answer still gets the office contact.
+        result, _ = self.run_ai('Can you tell me about the youth retreat?', lambda convo: '')
+        self.assertEqual(result['reply'], chat.GAVE_UP.format(**self.church['info']))
+
+    def test_fact_reply(self):
+        info = self.church['info']
+        self.assertIn('Wednesday at 6:30pm', chat.fact_reply('When are services?', info))
+        self.assertIn('Tuesday to Friday', chat.fact_reply('What are your office hours?', info))
+        self.assertIn('(555) 010-0140', chat.fact_reply("What's the church phone number?", info))
+        self.assertIsNone(chat.fact_reply('Do you have a youth group?', info))
+        self.assertIsNone(chat.fact_reply('When are services?', {**info, 'services': []}))
+
+    def test_prompt_asks_for_the_concrete_facts(self):
+        self.assertIn("list each service's day and time", chat.SYSTEM_PROMPT)
 
     @patch.dict('os.environ', {'AI_PROVIDER': 'gloo', 'OPENAI_API_KEY': 'unused-key'}, clear=True)
     def test_status_and_reply_agree_when_only_unused_provider_has_key(self):
