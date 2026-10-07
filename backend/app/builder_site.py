@@ -320,12 +320,8 @@ def slug(path, taken):
 def page_title(page, church_name=''):
     """"Plan a Visit - Harvest Point Church" is "Plan a Visit"; a title that is only the church's name falls back
     to the page's first heading."""
-    from .builder import TITLE_SPLIT, CHURCH_WORDS
-    parts = [p.strip() for p in TITLE_SPLIT.split(page.get('title') or '') if p.strip()]
-    own = [p for p in parts if _norm(p) != _norm(church_name) and not (len(parts) > 1 and CHURCH_WORDS.search(p))]
-    heading = next((s['heading'] for s in page.get('sections', []) if s['heading']), '')
-    title = (own[0] if own else '') or heading or (parts[0] if parts else '') or page.get('path', '/')
-    return 'Home' if page.get('page_type') == 'home' and not own else title[:200]
+    from .builder import _page_name
+    return _page_name(page, church_name)
 
 
 def content(site, church_name=''):

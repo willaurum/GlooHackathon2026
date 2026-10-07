@@ -430,13 +430,31 @@ PAGE_KINDS = {'home': 'home page', 'news': 'announcements', 'connect': 'sign-ups
               'visit': 'plan a visit', 'about': 'about', 'contact': 'contact', 'give': 'giving'}
 
 
-def _page_name(source):
-    """A page as the progress feed shows it: its title without the site name, else its path."""
-    title = re.split(r'\s+[|\-–—·:]\s+', source.get('title') or '')[0].strip()
-    if title:
-        return title[:60]
-    path = urlparse(source.get('url') or '').path.strip('/')
-    return path[:60] or 'Home'
+STRONG_CHURCH_WORDS = re.compile(r'\b(church|chapel|parish|cathedral|tabernacle|abbey|basilica)\b', re.I)
+
+
+def _page_name(source, church=''):
+    """A page as Tekton names it: the part of its title that is not the church's name ("Crosspoint Church - Men's"
+    is "Men's"), else its first heading, else its address. A title that is a sentence is not a name."""
+    title = source.get('title') or ''
+    parts = [p.strip() for p in TITLE_SPLIT.split(title) if p.strip()]
+    if source.get('page_type') == 'home' or urlparse(source.get('url') or '').path.strip('/') in ('', 'home', 'index.html'):
+        if len(parts) <= 1 or all(CHURCH_WORDS.search(p) or ',' in p for p in parts):
+            return 'Home'
+    names = {' '.join(n.lower().split()) for n in (church, title_name(title)) if n}
+    own = [p for p in parts if ' '.join(p.lower().split()) not in names]
+    if len(parts) > 1 and len(own) == len(parts):
+        # "Crosspoint Church - Downtown Missional Community": the part that says church is the site's name.
+        strong = [p for p in own if not STRONG_CHURCH_WORDS.search(p)]
+        own = strong if len(strong) < len(own) else [p for p in own if not CHURCH_WORDS.search(p)]
+    names = own[:1] + [text for _, text in source.get('headings') or []][:2] \
+        + [s.get('heading') or '' for s in source.get('sections') or []][:2]
+    for name in names:
+        name = ' '.join(name.split())
+        if name and len(name.split()) <= 8 and not re.search(r'[.!?]$', name):
+            return name[:60]
+    path = urlparse(source.get('url') or '').path.strip('/').rsplit('/', 1)[-1]
+    return re.sub(r'[-_]+', ' ', re.sub(r'\.html?$', '', path)).strip().capitalize()[:60] or 'Home'
 
 
 ROBOTS_UNREACHABLE = ('This website\'s robots.txt could not be read right now, so it cannot be imported safely. '
@@ -1179,7 +1197,7 @@ def _normalize_space(s):
     return re.sub(r'\s+', ' ', s).strip().lower()
 
 
-BELIEFS_RE = re.compile(r'belie|doctrin|statement[-\s]of[-\s]faith|what[-\s]we[-\s]teach|our[-\s]faith|creed|confession', re.I)
+BELIEFS_RE = re.compile(r'belie(?:fs?|ve)\b|doctrin|statement[-\s]of[-\s]faith|what[-\s]we[-\s]teach|our[-\s]faith|creed|confession', re.I)
 BELIEFS_PLACEHOLDER_NOTE = ('Your website\'s beliefs section is only a placeholder, so it was not imported. Tekton does '
                             'not write theology; your pastor can add your statement of faith in Church setup.')
 

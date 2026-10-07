@@ -285,5 +285,40 @@ class OccasionTests(unittest.TestCase):
             self.assertTrue(builder_agents.occasion(when), when)
 
 
+class PageLabelTests(unittest.TestCase):
+    """Crosspoint (SnapPages): every title is "Crosspoint Church - <page>", so the progress feed said "Read
+    “Crosspoint Church” (ministries)" for every page, and the beliefs were labeled with a home-page sentence that
+    says "believers"."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.progress, token = builder_run.start()
+        try:
+            cls.session = import_site('crosspoint', '')
+        finally:
+            builder_run.finish(token)
+        cls.steps = [s['text'] for s in cls.progress.steps]
+
+    def test_the_progress_feed_names_each_page(self):
+        for name in ("Men's", 'Seniors', 'Small Groups', 'Downtown Missional Community', 'Values & Beliefs', 'Contact Us'):
+            self.assertTrue(any(t.startswith(f'Read “{name}”') for t in self.steps), name)
+        self.assertIn('Read “Home” (home page)', self.steps)
+        self.assertFalse([t for t in self.steps if t.startswith('Read “Crosspoint Church”')])
+
+    def test_beliefs_and_pages_are_named_by_their_page(self):
+        self.assertEqual(self.session['beliefs']['title'], 'Values & Beliefs')
+        titles = {p['url'].rsplit('/', 1)[-1]: builder_site.page_title(p, 'Crosspoint Church') for p in self.session['site']['pages']}
+        self.assertEqual((titles[''], titles['men-s'], titles['downtownmissions']), ('Home', "Men's", 'Downtown Missional Community'))
+
+    def test_names_fall_back_to_the_heading_then_the_address(self):
+        self.assertEqual(builder._page_name({'title': 'A place the body of believers gather in corporate worship, disciple making.',
+                                             'headings': [(1, 'OUR VALUES & BELIEFS')], 'url': 'https://c.test/our-values'}),
+                         'OUR VALUES & BELIEFS')
+        self.assertEqual(builder._page_name({'title': 'Grace Chapel', 'url': 'https://c.test/small-groups'}, 'Grace Chapel'), 'Small groups')
+        self.assertEqual(builder._page_name({'title': 'Plan a Visit | Cedar Hollow Church', 'url': 'https://c.test/visit'}), 'Plan a Visit')
+        self.assertFalse(builder.BELIEFS_RE.search('A place the body of believers gather'))
+        self.assertTrue(builder.BELIEFS_RE.search('What We Believe'))
+
+
 if __name__ == '__main__':
     unittest.main()
