@@ -320,5 +320,57 @@ class PageLabelTests(unittest.TestCase):
         self.assertTrue(builder.BELIEFS_RE.search('What We Believe'))
 
 
+class MinistryContactTests(unittest.TestCase):
+    """Crosspoint: the phone question offered (607) 425-9569 (only on the Men's page) and (540) 874-4442 (only on
+    Seniors). Neither is the church's: they are ministry leaders' numbers."""
+
+    @staticmethod
+    def ministries(messages, tools):
+        tool, page = tools[0]['function']['name'], messages[1]['content']
+        if tool == 'record_ministries' and 'Morning Study' in page:
+            return {'items': [{'name': 'Morning Study', 'kind': 'group', 'when': 'Fridays 6:30 AM',
+                               'quote': 'Join the men every Friday morning from 6:30-7:30 for fellowship'}]}
+        return {'facts': []} if tool == 'record_church_facts' else {'items': []}
+
+    def import_pages(self, *paths, complete=None):
+        fetch, fetch_feed = builder_score.fixture_fetchers(REAL / 'crosspoint')
+
+        def only(url):
+            if url.removeprefix('https://church.test/') not in paths:
+                raise FileNotFoundError(url)
+            return fetch(url)
+        with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1'}):
+            return builder.new_session('https://church.test/', fetch=only, fetch_feed=fetch_feed,
+                                       complete=complete or (lambda m, t: None), describe=False)
+
+    def test_ministry_numbers_are_hints_not_the_church_phone(self):
+        session = self.import_pages('', 'men-s', 'seniors', complete=self.ministries)
+        self.assertEqual(session['fields']['phone']['status'], 'missing')
+        question = next(q for q in session['questions'] if q['field'] == 'phone')
+        self.assertEqual(question['candidates'], [])
+        self.assertIn("What is your church's phone number?", question['prompt'])
+        self.assertIn("The Men's page lists (607) 425-9569.", question['prompt'])
+        self.assertIn('The Seniors page lists (540) 874-4442.', question['prompt'])
+        group = next(g for g in session['collections']['groups'] if g['value']['name'] == 'Morning Study')
+        self.assertIn('Contact: (607) 425-9569', group['value']['description'])
+        self.assertEqual(session['fields']['email']['value'], 'info@crosspointonline.com')  # in every page's footer
+        self.assertTrue(session['file_check']['valid'], session['file_check'])
+
+    def test_the_contact_page_number_is_the_church_phone(self):
+        session = import_site('crosspoint', '')
+        self.assertEqual((session['fields']['phone']['status'], session['fields']['phone']['value']), ('prefilled', '4349444967'))
+        self.assertFalse([q for q in session['questions'] if q['field'] == 'phone'])
+
+    def test_a_footer_number_beats_a_leader_number(self):
+        footer = '\nGrace Chapel\n(802) 555-0142\ninfo@grace.test'
+        pages = [('', 'Home', 'Welcome to Grace Chapel.'), ('kids', 'Kids', 'Sunday classes for kids.'),
+                 ('youth', 'Youth', 'Questions? Call our youth leader at (802) 555-0199.'), ('men', 'Men', 'Breakfast monthly.')]
+        sources = [{'id': f's{n}', 'kind': 'page', 'url': 'https://church.test/' + path, 'title': f'Grace Chapel - {title}',
+                    'text': text + footer, 'page_type': builder_crawl.page_type('https://church.test/' + path, title)}
+                   for n, (path, title, text) in enumerate(pages, 1)]
+        session = builder.session_from_sources('https://church.test/', sources)
+        self.assertEqual((session['fields']['phone']['status'], session['fields']['phone']['value']), ('prefilled', '8025550142'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1837,8 +1837,14 @@ def questions(fields, claims, sources):
         elif info['status'] == 'missing':
             # A blank draft read nothing, so it asks plainly instead of reporting a miss.
             what = f'What are your {label.lower()}?' if field == 'services' else f'What is your {label.lower()}?'
-            out.append({'field': field, 'kind': 'missing', 'candidates': [],
-                        'prompt': what if not sources else f'We could not find your {label.lower()}. {what}'})
+            if field in ('phone', 'email'):
+                what = f"What is your church's {label.lower()}?"
+            prompt = what if not sources else f'We could not find your {label.lower()}. {what}'
+            hints = info.get('hints') or []
+            if hints:
+                # Ministry contacts are shown as hints only: "The Men's page lists (607) 425-9569."
+                prompt += ' ' + ' '.join(f"The {h['page']} page lists {h['display']}." for h in hints[:3])
+            out.append({'field': field, 'kind': 'missing', 'candidates': [], 'prompt': prompt})
     return out
 
 
@@ -2255,13 +2261,60 @@ def finish_run(session, pages=0):
     return session
 
 
+# Pages about one ministry, group, person or event: a phone or email found only there is that ministry's contact
+# ("please contact Pete at (607) 425-9569"), not the church's.
+LOCAL_CONTACT_PAGES = ('ministries', 'groups', 'staff', 'events', 'news', 'sermons')
+
+
+def local_contacts(claims, sources, items):
+    """(church-wide claims, {field: [hint]}). A phone or email is the church's when a home, contact, visit, about
+    or other general page gives it, when it is on at least half the pages read (a header or footer), or when the
+    site's structured data says so. One found only on ministry, group, staff, event, news or sermon pages is left
+    out of the church's candidates: it goes to that page's ministry or group when it has none, and the question
+    for the church's own number mentions it."""
+    by_id = {s['id']: s for s in sources}
+    pages = [s for s in sources if s.get('kind', 'page') == 'page' and s.get('url')]
+    kept, local = [], {}
+    for claim in claims:
+        source = by_id.get(claim['source_id'], {})
+        if claim['field'] in ('phone', 'email') and claim['method'] != 'structured' and source in pages \
+                and source.get('page_type') in LOCAL_CONTACT_PAGES:
+            local.setdefault((claim['field'], _key(claim['field'], claim['value'])), []).append(claim)
+        else:
+            kept.append(claim)
+    general = {(c['field'], _key(c['field'], c['value'])) for c in kept if c['field'] in ('phone', 'email')}
+    hints, left_out = {}, set()
+    for (field, key), found in local.items():
+        on = {c['source_id'] for c in found}
+        if (field, key) in general or len(on) * 2 >= len(pages):
+            continue  # also on a general page, or in the header or footer of most pages: the church's
+        left_out.update(id(c) for c in found)
+        value = found[0]['value']
+        for sid in on:
+            page = by_id[sid]
+            hints.setdefault(field, []).append({'value': value, 'display': _show(field, value), 'page': _page_name(page),
+                                                'url': page.get('url', '')})
+            group = next((i for i in items if i['source_id'] == sid and i['collection'] in ('ministries', 'groups')
+                          and not i['value'].get(field) and 'Contact:' not in i['value'].get('description', '')), None)
+            if group and field == 'email':
+                group['value']['email'] = value
+            elif group:  # ministries and groups have no phone field: it goes in their description
+                text = group['value'].get('description', '')
+                group['value']['description'] = f"{text} Contact: {_show(field, value)}".strip()[:1000]
+    return [c for c in claims if id(c) not in left_out], hints
+
+
 def session_from_sources(url, sources, complete=None, deadline=None, notes=None):
     notes = notes if notes is not None else []
     claims, items = extract_all(sources, complete, deadline=deadline, notes=notes)
     by_id = {s['id']: s for s in sources}
     for claim in claims:  # while the page text is at hand: where on the page each quote sits, for source links
         claim.update(quote_context(by_id.get(claim['source_id'], {}).get('text', ''), claim['quote']))
+    claims, hints = local_contacts(claims, sources, items)
     fields = reconcile(claims, len(sources))
+    for field, found in hints.items():
+        if fields.get(field, {}).get('status') == 'missing':
+            fields[field]['hints'] = found[:5]
     qs = questions(fields, claims, sources)
     if sources:
         for q in qs:
