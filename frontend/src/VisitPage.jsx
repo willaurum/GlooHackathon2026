@@ -209,7 +209,7 @@ export default function VisitPage() {
         {visit.status === 'arrived' && (visit.wants_host ? <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>The welcome team has been notified…</h2>
-          <p>Hang tight — someone will come find you at the main entrance shortly.</p>
+          <p>Hang tight. Someone will come find you at the main entrance shortly.</p>
         </> : <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>Thanks for letting us know. Enjoy the service!</h2>

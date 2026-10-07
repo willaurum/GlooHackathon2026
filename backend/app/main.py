@@ -84,13 +84,14 @@ def ministries():
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
+    ministries, preferences = db.list_ministries(), body.preferences.model_dump(mode='json')
     try:
-        return recommendations.recommend(body.description, db.list_ministries(),
-                                         preferences=body.preferences.model_dump(mode='json'))
+        return recommendations.recommend(body.description, ministries, preferences=preferences)
     except recommendations.NotConfigured as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    except recommendations.Unavailable as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+    except recommendations.Unavailable:
+        # Every model failed or timed out: show the fitting teams instead of an error.
+        return recommendations.browse_fallback(ministries, preferences)
 
 
 @app.get('/api/connections')
@@ -407,6 +408,13 @@ def post_event(body: EventCreate):
     return db.create_event(title=body.title, category=body.category, date=body.date,
                             time=body.time, location=body.location, description=body.description,
                             ministry_name=body.ministry_name)
+
+
+@app.delete("/api/events/{event_id}", status_code=204)
+def delete_event(event_id: int):
+    # Staff only: the API Worker allows DELETE /api/events/<id> for a staff session (api/churches.ts).
+    if not db.delete_event(event_id):
+        raise HTTPException(status_code=404, detail="Event not found")
 
 
 @app.post("/api/events/{event_id}/summarize")

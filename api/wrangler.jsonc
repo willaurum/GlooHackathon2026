@@ -35,10 +35,8 @@
     // Comma-separated frontend origins; the first is the default.
     "ALLOWED_ORIGIN": "https://gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-pastor-notes-gloo-hackathon2026.jaronwilson2025.workers.dev",
     // Once churches have subdomains, add "BASE_DOMAIN": "belong.example.org" so https://<slug>.belong.example.org is allowed too.
-    // extractive (default, no AI answerer) | workers-ai. A GEMINI_API_KEY secret overrides both.
-    "NOTES_ANSWER_ENGINE": "extractive",
+    // Sermon highlights fall back to this Workers AI model only for a window Gloo could not tag.
     "NOTES_LLM_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8",
-    "GEMINI_MODEL": "gemini-2.5-flash",
     // Similarity floor; a passage must also share a topic word with the question.
     "NOTES_MIN_SCORE": "0.45",
     "MAX_UPLOAD_BYTES": "99614720",

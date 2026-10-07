@@ -146,7 +146,7 @@ test('visitors can read posts and summaries but cannot publish, approve or regen
       ['POST', '/api/blog'], ['POST', '/api/blog/categorize'], ['POST', '/api/blog/12/summarize'],
       ['POST', '/api/blog/12/approve'], ['PATCH', '/api/blog/12'], ['PUT', '/api/blog/12'],
       ['DELETE', '/api/blog/12'], ['POST', '/api/events/12/summarize'],
-      ['POST', '/api/events/summarize-all'],
+      ['POST', '/api/events/summarize-all'], ['DELETE', '/api/events/12'], ['DELETE', '/api/events/+12'],
     ]) assert.equal(access(method, path, demo), 'staff', method + ' ' + path);
     assert.equal(access('POST', '/api/ai/model', demo), 'key');
     assert.equal(access('POST', '/api/ollama/model', demo), 'key');

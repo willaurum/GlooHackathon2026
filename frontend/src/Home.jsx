@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmt } from './api.js';
+import { hashFor } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
@@ -42,19 +43,19 @@ export default function Home({ go, onAsk }) {
     </section>}
 
     <div className="features">
-      <a className="card feature" href="#/serve" onClick={e => { e.preventDefault(); go('serve'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
         <span className="icon color1"><Icon name="users" size={22} /></span>
         <h2>Serve</h2>
         <p>Browse ministry teams, see where help is needed, and match members to a place that fits.</p>
         <span className="link">Explore ministries<Icon name="arrow" size={16} /></span>
       </a>
-      <a className="card feature" href="#/notes" onClick={e => { e.preventDefault(); go('notes'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); go('notes'); }}>
         <span className="icon color3"><Icon name="book" size={22} /></span>
         <h2>Sermon Notes</h2>
         <p>Read past sermons and ask questions. Answers quote the message with timestamps.</p>
         <span className="link">Open sermon notes<Icon name="arrow" size={16} /></span>
       </a>
-      <a className="card feature" href="#/give" onClick={e => { e.preventDefault(); go('give'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); go('give'); }}>
         <span className="icon color0"><Icon name="heart" size={22} /></span>
         <h2>Give</h2>
         {goal ? <>

@@ -4,6 +4,8 @@ import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
 import { DEMO_SLUG, STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
+import { YT_HELPER_HOST, ytHelperBridge, ytHelperEnvVars } from './ythelper';
+import { BUILDER_FETCH_HOST, builderFetchBridge, builderFetchEnvVars } from './builderfetch';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
 export { ContainerProxy };
@@ -44,10 +46,13 @@ export class ChurchDB extends DurableObject<AppEnv> {
 	}
 }
 
-// yt-dlp talks to these directly; with no outbound handler they fall through to the internet.
+// The direct yt-dlp fallback talks to these; with no outbound handler they fall through to the internet.
+// YouTube links go to the YouTube helper (YT_HELPER_HOST, see ythelper.ts) first.
 const YOUTUBE_HOSTS = ['youtube.com', '*.youtube.com', 'youtu.be', '*.googlevideo.com', '*.ytimg.com', '*.googleapis.com'];
 // The website chat (backend/app/chat.py) calls these AI providers when a key is set.
 const AI_PROVIDER_HOSTS = ['platform.ai.gloo.com', 'api.openai.com', 'api.anthropic.com'];
+// POST /api/news/refresh pulls Prayer Map headlines from NewsData.io when NEWSDATA_API_KEY is set.
+const NEWS_HOSTS = ['newsdata.io'];
 
 /** The FastAPI backend (backend/Dockerfile). */
 export class ChurchAPI extends Container<AppEnv> {
@@ -57,7 +62,8 @@ export class ChurchAPI extends Container<AppEnv> {
 	// Outbound HTTPS goes through the Worker; start.sh makes the container trust its CA.
 	interceptHttps = true;
 	// allowedHosts gates everything, including outboundByHost, so the bridge hosts must be listed.
-	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS];
+	// Church websites for the builder are not listed: they go through BUILDER_FETCH_HOST, which checks each address.
+	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, YT_HELPER_HOST, BUILDER_FETCH_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS, ...NEWS_HOSTS];
 
 	// The container and the Worker's /ask share each church's database.
 	// Assigned (not declared as a class field) so the library's static setter registers it.
@@ -72,6 +78,10 @@ export class ChurchAPI extends Container<AppEnv> {
 			'workers-ai': (request: Request, env: AppEnv) => aiBridge(request, env),
 			// The team's HPC model through scripts/team-ai-bridge (a stopgap until the Gloo key); see teamai.ts.
 			[TEAM_AI_HOST]: (request: Request, env: AppEnv) => teamAiBridge(request, env),
+			// YouTube downloads from Jaron's dev server (scripts/youtube-helper); the handler adds the key.
+			[YT_HELPER_HOST]: (request: Request, env: AppEnv) => ytHelperBridge(request, env),
+			// The agentic builder reads a church's existing website from the Worker; see builderfetch.ts.
+			[BUILDER_FETCH_HOST]: (request: Request) => builderFetchBridge(request),
 		};
 	}
 
@@ -85,9 +95,26 @@ export class ChurchAPI extends Container<AppEnv> {
 			YTDLP_COOKIES: env.YTDLP_COOKIES ?? '',
 			// Chat runs in demo mode until one of these secrets is set, or the team AI bridge is (TEAM_AI_URL + TEAM_AI_KEY).
 			GLOO_API_KEY: env.GLOO_API_KEY ?? '',
+			// Optional. Which Gloo model to use; the backend's default (gloo-qwen-3.7-flash) applies when it is empty.
+			GLOO_MODEL: env.GLOO_MODEL ?? '',
+			// Optional. The Gloo embedding model (default gloo-baai-bge-base-en-v1.5). Ingest embeds through the Worker's
+			// /embed bridge, which reads the same value, so the chunks are tagged with the model the Worker queries.
+			GLOO_EMBED_MODEL: env.GLOO_EMBED_MODEL ?? '',
+			// Optional. The Gloo model that tags sermon highlights; GLOO_MODEL (then gloo-qwen-3.7-flash) when it is empty.
+			GLOO_NOTES_MODEL: env.GLOO_NOTES_MODEL ?? '',
+			// Optional. Find a place's model; the backend uses a fast non-reasoning default when empty.
+			GLOO_MATCH_MODEL: env.GLOO_MATCH_MODEL ?? '',
+			// Optional. The agentic builder's model; GLOO_MATCH_MODEL (then gloo-anthropic-claude-haiku-4.5) when it is empty.
+			GLOO_BUILDER_MODEL: env.GLOO_BUILDER_MODEL ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
+			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
+			NEWSDATA_API_KEY: env.NEWSDATA_API_KEY ?? '',
 			...teamAiEnvVars(env),
+			// http://youtube-helper when YT_HELPER_URL and YT_HELPER_KEY are set; the key stays in the Worker.
+			...ytHelperEnvVars(env),
+			// http://builder-fetch: the builder cannot reach church websites from the container (see allowedHosts).
+			...builderFetchEnvVars(),
 		};
 	}
 

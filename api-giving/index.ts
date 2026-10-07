@@ -788,7 +788,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
       if (s.metadata?.belong_church !== c.slug || !customer) return json({ error: 'We could not find that gift.' }, 404);
       if (!c.portal_config_id) await this.#ensurePortal(key, c).catch(() => null);
       const configId = this.#church()!.portal_config_id;
-      const params: Params = [['customer', customer], ['return_url', returnOrigin(request, this.env) + '/#/give']];
+      const params: Params = [['customer', customer], ['return_url', returnOrigin(request, this.env) + '/#/c/' + c.slug + '/give']];
       if (configId) params.push(['configuration', configId]);
       const portal = await stripe(this.env, key, 'POST', '/v1/billing_portal/sessions', params);
       if (!portal.url) return json({ error: 'Stripe did not open the page. Please try again.' }, 502);
@@ -1294,7 +1294,7 @@ export class GivingDO extends DurableObject<GivingEnv> {
         after = list.data[list.data.length - 1].id;
       }
     }
-    const returnUrl = allowedOrigins(this.env)[0] + '/#/give';
+    const returnUrl = allowedOrigins(this.env)[0] + '/#/c/' + c.slug + '/give';
     const params: Params = [
       ['features[subscription_cancel][enabled]', 'true'],
       ['features[subscription_cancel][mode]', 'immediately'],
@@ -1456,6 +1456,19 @@ export class GivingDO extends DurableObject<GivingEnv> {
     return this.#donations(c);
   }
 
+  // Replace one gift's donor name and email with 'Demo donor' and '' (for example a teammate's real details
+  // left on the public demo church). Amounts, totals, statuses and Stripe are untouched; the renewals of a
+  // monthly gift (same subscription) change with it. Owners only, and only on the demo church
+  // (demo_locked): a real church keeps its gift records as Stripe reported them, for receipts and bookkeeping.
+  #anonymizeGift(c: ChurchRow, session: StaffSession, id: string): Response {
+    if (session.role !== 'owner') return json({ error: 'Only an owner can anonymize a gift.' }, 403);
+    if (!c.demo_locked) return json({ error: 'Gifts can be anonymized on the demo church only.' }, 403);
+    const r = this.#sql.exec('SELECT id, subscription_id FROM gifts WHERE id = ?', id).toArray()[0] as { id: string; subscription_id: string } | undefined;
+    if (!r) return json({ error: 'Gift not found.' }, 404);
+    this.#sql.exec("UPDATE gifts SET name = 'Demo donor', email = '' WHERE id = ? OR (? != '' AND subscription_id = ?)", r.id, r.subscription_id || '', r.subscription_id || '');
+    return this.#donations(c);
+  }
+
   #applications(): Response {
     const rows = this.#sql
       .exec('SELECT a.*, f.name AS trip FROM applications a LEFT JOIN funds f ON f.id = a.fund_id ORDER BY a.created_at DESC LIMIT 1000')
@@ -1568,6 +1581,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
         if (p === '/c/admin/donations' && m === 'GET') return this.#donations(c);
         r = /^\/c\/admin\/donations\/([\w-]{1,60})\/cancel$/.exec(p);
         if (r && m === 'POST') return this.#staffCancel(c, r[1]);
+        r = /^\/c\/admin\/donations\/([\w-]{1,60})\/anonymize$/.exec(p);
+        if (r && m === 'POST') return this.#anonymizeGift(c, session, r[1]);
         if (p === '/c/admin/applications' && m === 'GET') return this.#applications();
         r = /^\/c\/admin\/applications\/([\w-]{1,60})$/.exec(p);
         if (r && m === 'PUT') return this.#reviewApplication(request, r[1]);

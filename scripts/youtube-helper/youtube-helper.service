@@ -1,0 +1,23 @@
+# systemd user unit for the YouTube helper. install.sh fills in @STATE@, @VENV@ and @NODE@
+# and writes it to ~/.config/systemd/user/youtube-helper.service.
+[Unit]
+Description=belong. YouTube helper (yt-dlp from a home connection for Sermon Notes)
+After=network-online.target
+
+[Service]
+Environment=YT_HELPER_KEY_FILE=%h/.secrets/youtube-helper-key.txt
+Environment=YT_HELPER_HOST=127.0.0.1
+Environment=YT_HELPER_PORT=8096
+Environment=MAX_DURATION_SEC=5400
+Environment=MAX_BYTES=99614720
+Environment=MAX_CONCURRENT=2
+Environment=YTDLP_JS_RUNTIME=node:@NODE@
+# YouTube support breaks on stale yt-dlp releases: update on every start, but start anyway if PyPI is unreachable.
+ExecStartPre=-@VENV@/bin/pip install --quiet --upgrade --disable-pip-version-check yt-dlp[default]
+ExecStart=@VENV@/bin/python -u @STATE@/helper.py
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target

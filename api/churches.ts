@@ -139,7 +139,7 @@ const STAFF_WORK_ROUTES: Route[] = [
 	['POST', /^\/api\/events$/],
 	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],
 	['POST', /^\/api\/events\/summarize-all$/],
-	['DELETE', new RegExp(`^/api/(connections|requests)/${ID}$`)],
+	['DELETE', new RegExp(`^/api/(connections|requests|events)/${ID}$`)],
 	['PATCH', new RegExp(`^/api/requests/${ID}$`)],
 ];
 
