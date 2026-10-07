@@ -294,44 +294,77 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .request .actions { display: flex; gap: 8px; flex: none; }
 
 /* ---------- Sermon Notes ---------- */
-.pn-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.pn-bar .eyebrow { margin: 0; }
-.pn-grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 20px; align-items: start; }
-/* Lets a wide row inside a sermon shrink to the column instead of stretching it past the screen. */
-.pn-grid > * { min-width: 0; }
-.pn .card, .pn-key { display: flex; flex-direction: column; gap: 12px; padding: 22px; margin-bottom: 16px; }
+/* A reader: the sermon picker is the header, the transcript gets the full width. */
+.page:has(> .pn-reading) > .page-header { display: none; }
+.pn { display: flex; flex-direction: column; gap: 16px; }
+.pn .card, .pn-key { display: flex; flex-direction: column; gap: 12px; padding: 22px; }
 .pn .field { margin: 0; }
-.pn-key { max-width: 460px; align-items: flex-start; }
+.pn-key { max-width: 460px; align-items: flex-start; margin-bottom: 16px; }
 .pn-key .field { width: 100%; margin: 4px 0; }
-.pn-list h2 { display: flex; align-items: center; gap: 8px; }
-.pn-list h2 .count { margin-left: 0; background: var(--green-100); color: var(--green-800); }
-.pn-list ul { display: flex; flex-direction: column; gap: 6px; }
-.pn-list button { display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 56px; padding: 10px 14px; border-radius: 10px; text-align: left; background: #f7f8f5; border: 1px solid transparent; }
-.pn-list button:hover { border-color: var(--line-strong); }
-.pn-list button.selected { background: var(--green-100); border-color: var(--green-200); }
-.pn-list strong { color: var(--ink); font-size: 15px; }
-.pn-list small { display: inline-flex; align-items: center; gap: 6px; }
-.status { text-transform: capitalize; }
+.pn .banner { margin: 0; }
+.pn-head { position: sticky; top: 0; z-index: 20; display: flex; flex-direction: column; gap: 6px; margin: -12px -16px 0; padding: 12px 16px; background: rgb(246 247 243 / .94); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.pn-head-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 32px; }
+.pn-head-top .eyebrow { min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pn-head-top .ghost { flex: none; min-height: 32px; padding: 0 10px; font-size: 14px; white-space: nowrap; }
+.pn-head-main { display: flex; align-items: center; gap: 10px; }
+.pn-picker { position: relative; flex: 1 1 auto; min-width: 0; max-width: 680px; }
+.pn-picker-btn { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 14px 8px 16px; text-align: left; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--r); box-shadow: var(--shadow-sm); }
+.pn-picker-btn:hover:not(:disabled), .pn-picker-btn[aria-expanded=true] { border-color: var(--green-600); }
+.pn-picker-btn:focus-visible { outline: 3px solid #cfe3d4; border-color: var(--green-600); }
+.pn-picker-btn:disabled { cursor: default; }
+.pn-picker-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.pn-picker-text small { font-size: 12px; color: var(--muted); }
+.pn-picker-text strong { font-family: var(--display); font-size: 18px; line-height: 1.3; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pn-picker-inline-date { display: none; }
+.pn-picker-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pn-picker-meta .status { font-weight: 600; }
+.pn-chevron { flex: none; width: 9px; height: 9px; margin: 0 4px; border-right: 2px solid var(--green-700); border-bottom: 2px solid var(--green-700); transform: translateY(-3px) rotate(45deg); transition: transform .15s; }
+[aria-expanded=true] > .pn-chevron { transform: translateY(2px) rotate(-135deg); }
+.pn-picker-list { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 25; display: flex; flex-direction: column; gap: 2px; max-height: min(420px, 60vh); overflow-y: auto; padding: 6px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-lg); animation: pop .15s ease; }
+.pn-picker-list button { position: relative; display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 52px; padding: 9px 40px 9px 12px; border-radius: 9px; text-align: left; }
+.pn-picker-list button:hover, .pn-picker-list button:focus-visible { background: var(--green-50); outline: none; }
+.pn-picker-list button:focus-visible { box-shadow: inset 0 0 0 2px var(--green-600); }
+.pn-picker-list button[aria-current] { background: var(--green-100); }
+.pn-picker-list strong { color: var(--ink); font-size: 15px; }
+.pn-picker-list small { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.pn-picker-check { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--green-700); }
+.pn-add { flex: none; min-height: 56px; border-radius: var(--r); }
+.pn-controls { display: flex; align-items: center; gap: 2px; padding: 4px; background: #edf1ec; border-radius: 12px; }
+.pn-ctl-ts { margin-left: auto; }
+.pn-ctl { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 9px; color: var(--green-800); font-size: 15px; font-weight: 700; }
+.pn-ctl-big { font-size: 20px; }
+.pn-ctl-sign { font-size: .75em; margin-left: 1px; }
+.pn-ctl:hover:not(:disabled) { background: rgb(255 255 255 / .7); }
+.pn-ctl:focus-visible { outline: 3px solid #cfe3d4; }
+.pn-ctl:disabled { opacity: .4; cursor: default; }
+.pn-ctl-ts { font-size: 14px; font-weight: 600; color: var(--muted); }
+.pn-ctl-ts[aria-pressed=true], .pn-ctl-ts[aria-pressed=true]:hover:not(:disabled) { background: var(--card); color: var(--green-800); box-shadow: var(--shadow-sm); }
+.pn-ctl-ts[aria-pressed=false] span { text-decoration: line-through; text-decoration-thickness: 1.5px; }
 .status.ready { color: var(--green-700); }
 .status.failed { color: var(--danger); }
 .status.queued, .status.processing { color: var(--sand-700); }
-.pn-new .filters { align-self: flex-start; }
-.pn-pick { align-items: center; text-align: center; padding: 48px 24px !important; color: var(--green-200); }
-.pn-pick p { max-width: 360px; }
-/* Desktop keeps the list beside the open sermon, so Back only shows on phones. */
-.pn-back { display: none; }
+.pn-state { align-items: flex-start; max-width: 720px; }
+.pn-state > .status { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.pn-empty { align-items: center; text-align: center; max-width: none; padding: 48px 24px !important; color: var(--green-200); }
+.pn-empty p { max-width: 380px; }
+.pn-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .pn-ask { display: flex; gap: 10px; align-items: flex-end; }
 .pn-ask .field { flex: 1; }
 .pn-ask .primary { min-height: 48px; }
+.pn-askbox { display: flex; flex-direction: column; gap: 12px; }
 .pn-answer { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--r); background: var(--green-50); border: 1px solid var(--green-100); }
 .pn-answer p { color: var(--ink); }
 .pn-answer.none { background: var(--sand-50); border-color: var(--sand-100); }
-.pn-answer ol, .pn-segments { display: flex; flex-direction: column; gap: 8px; }
+.pn-answer ol { display: flex; flex-direction: column; gap: 8px; }
 .pn-answer li { line-height: 1.6; }
-.pn-segments { max-height: 460px; overflow: auto; padding-right: 6px; }
-.pn-segments li { line-height: 1.6; font-size: 15px; }
-.pn-segments b, .pn-answer b, .pn-answer a { font-variant-numeric: tabular-nums; margin-right: 8px; color: var(--green-700); font-weight: 700; }
+.pn-answer b, .pn-answer a { font-variant-numeric: tabular-nums; margin-right: 8px; color: var(--green-700); font-weight: 700; }
 .pn-error { color: var(--danger); }
+/* The transcript reads like an article: bigger type, open leading, about 75 characters a line. */
+.pn-transcript { --pn-size: 19px; min-width: 0; padding: 40px 28px 56px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+.pn-segments { display: flex; flex-direction: column; gap: .75em; max-width: 66ch; margin: 0 auto; font-size: var(--pn-size); line-height: 1.75; color: var(--ink); overflow-wrap: break-word; }
+.pn-ts { display: inline-block; margin-right: .55em; font-size: max(12px, .68em); font-weight: 700; letter-spacing: .02em; color: var(--green-700); font-variant-numeric: tabular-nums; vertical-align: .08em; }
+.pn-transcript.no-ts .pn-ts { display: none; }
+.pn-transcript-msg { padding: 24px 0; text-align: center; }
 
 /* Transcript category highlights: the toggle chip and the passage share a color. */
 .pn-cats { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -340,10 +373,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-cats button:disabled { opacity: .45; cursor: default; }
 .pn-cats button.selected { background: var(--hl-bg); border-color: var(--hl-edge); color: var(--ink); font-weight: 600; }
 .pn-cats small { font-variant-numeric: tabular-nums; color: var(--faint); }
-.pn-segments li.hl { background: var(--hl-bg); border-left: 3px solid var(--hl-edge); border-radius: 6px; padding: 4px 8px; }
-.hl-legend { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--hl-edge); }
+.pn-segments li.hl { background: var(--hl-bg); border-left: 3px solid var(--hl-edge); border-radius: 8px; padding: .35em .7em; margin: 0 calc(-.7em - 3px); }
+.hl-legend { display: block; font-size: max(11px, .6em); line-height: 1.6; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--hl-edge); }
 .hl-verse-btn { font: inherit; letter-spacing: inherit; text-transform: none; color: inherit; background: none; border: 0; padding: 0; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
-.verse-card { margin: 8px 0 4px; padding: 12px 14px; background: #fff; border: 1px solid var(--hl-edge, #ddd); border-radius: 10px; font-size: 15px; line-height: 1.5; }
+.verse-card { margin: 8px 0 4px; padding: 12px 14px; background: #fff; border: 1px solid var(--hl-edge, #ddd); border-radius: 10px; font-size: 16px; line-height: 1.55; }
 .verse-head { display: flex; align-items: center; gap: 8px; }
 .verse-version { font-size: 11px; font-weight: 700; color: #666; border: 1px solid #ccc; border-radius: 4px; padding: 0 5px; }
 .verse-close { margin-left: auto; background: none; border: 0; font-size: 20px; line-height: 1; padding: 0 4px; cursor: pointer; color: #666; }
@@ -358,6 +391,67 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .cat-political_event, .hl-political_event { --hl-bg: #fbe4e4; --hl-edge: #b03a3a; }
 .cat-personal_story, .hl-personal_story { --hl-bg: #f1e7f6; --hl-edge: #7d4f9c; }
 .cat-inerrancy_claim, .hl-inerrancy_claim { --hl-bg: #e3f2ee; --hl-edge: #2f7d6b; }
+/* Sermon Notes panels: a drawer from the right on desktop, a bottom sheet on phones. */
+.pn-sheet-wrap { position: fixed; inset: 0; z-index: 60; }
+.pn-sheet-backdrop { position: absolute; inset: 0; background: #172a2052; animation: fade .2s ease; }
+.pn-sheet { position: absolute; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(460px, 100%); background: var(--card); box-shadow: var(--shadow-lg); animation: pn-slide .2s ease; }
+.pn-sheet:focus { outline: none; }
+.pn-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 12px 12px 22px; border-bottom: 1px solid var(--line); }
+.pn-sheet-head h2 { font-size: 20px; }
+.pn-sheet-body { flex: 1; overflow-y: auto; padding: 20px 22px 28px; overscroll-behavior: contain; }
+.pn-new { display: flex; flex-direction: column; gap: 16px; }
+.pn-new .filters { align-self: flex-start; }
+@keyframes pn-slide { from { opacity: 0; transform: translateX(28px); } }
+@keyframes pn-rise { from { opacity: 0; transform: translateY(28px); } }
+/* Sermon Notes reader: Ask folds open from a slim bar above the transcript. */
+.pn-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pn-tools { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+.pn-tools-bar { display: flex; gap: 6px; padding: 6px; }
+.pn-tool { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 10px; color: var(--green-800); font-size: 15px; font-weight: 600; }
+.pn-tool:hover { background: var(--green-50); }
+.pn-tool:focus-visible { outline: 3px solid #cfe3d4; }
+.pn-tool[aria-expanded=true] { background: var(--green-100); }
+.pn-tool .pn-chevron { width: 7px; height: 7px; margin: 0 0 0 2px; }
+.pn-tool-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sand-700); }
+.pn-aa { font-family: var(--display); font-weight: 800; font-size: 15px; letter-spacing: -.02em; }
+.pn-tools-panel { padding: 14px 16px 16px; border-top: 1px solid var(--line); animation: pop .15s ease; }
+.pn-tools-ask .pn-ask-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Highlights and the Reading controls: a sticky panel beside the transcript on wide screens,
+   a sheet opened from the Ask bar on narrower ones. */
+.pn-side-block { display: flex; flex-direction: column; gap: 10px; }
+.pn-side-block h2 { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--font); }
+.pn-side-block > p { font-size: 13px; color: var(--muted); }
+.pn-side-highlights { padding-top: 18px; border-top: 1px solid var(--line); }
+.pn-side .pn-cats { flex-direction: column; flex-wrap: nowrap; margin: 0; padding: 0; overflow: visible; }
+.pn-side .pn-cats button { justify-content: flex-start; min-height: 40px; }
+.pn-side .pn-cats small { margin-left: auto; }
+@media (min-width: 1180px) {
+  .pn-split { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 20px; align-items: start; }
+  .pn-side-open, .pn-side-head, .pn-side-backdrop { display: none; }
+  /* Under the pinned header, and ending above the site's Ask Tekton button. */
+  .pn-side { position: sticky; top: 136px; display: flex; flex-direction: column; gap: 18px; max-height: calc(100vh - 232px); overflow-y: auto; padding: 18px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+}
+@media (max-width: 1179px) {
+  .pn-side-open { margin-left: auto; }
+  .pn-side { display: none; }
+  .pn-split.sheet-open .pn-side { position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; display: flex; flex-direction: column; gap: 18px; width: min(380px, 100%); overflow-y: auto; padding: 0 20px 24px; background: var(--card); box-shadow: var(--shadow-lg); animation: pn-slide .2s ease; overscroll-behavior: contain; }
+  .pn-side-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin: 0 -20px; padding: 10px 10px 10px 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .pn-side-head strong { font-family: var(--display); font-size: 18px; color: var(--ink); }
+  .pn-side-backdrop { position: fixed; inset: 0; z-index: 60; background: #172a2052; animation: fade .2s ease; }
+}
+@media (max-width: 860px) {
+  .pn-tool { flex: 1 1 0; justify-content: center; min-width: 0; padding: 0 10px; font-size: 14px; }
+  .pn-tool-more { display: none; }
+  .pn-side-open { margin-left: 0; }
+  .pn-tools-ask .pn-ask { flex-direction: row; align-items: stretch; }
+  .pn-tools-ask .pn-ask .primary { width: auto; flex: none; }
+  .pn-tools-panel { padding: 12px; }
+  .pn-split.sheet-open .pn-side { top: auto; left: 0; width: 100%; max-height: 85dvh; border-radius: var(--r-xl) var(--r-xl) 0 0; padding-bottom: calc(24px + var(--safe-bottom)); animation: pn-rise .2s ease; }
+  .pn-side-head { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+  .pn-side .pn-cats { flex-direction: row; flex-wrap: wrap; }
+  .pn-side .pn-cats button { min-height: 38px; }
+  .pn-side .pn-cats small { margin-left: 0; }
+}
 
 /* ---------- Give ---------- */
 .give { display: flex; flex-direction: column; gap: 16px; }
@@ -609,7 +703,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .home-hero p { font-size: 16px; }
   .hero-art { display: none; }
   .hero-actions > * { flex: 1 1 200px; }
-  .features, .services, .grid, .matching, .give-grid, .pn-grid { grid-template-columns: 1fr; }
+  .features, .services, .grid, .matching, .give-grid { grid-template-columns: 1fr; }
   .matching { grid-template-columns: minmax(0, 1fr); }
   .primary, .secondary, .ghost { white-space: normal; padding-top: 10px; padding-bottom: 10px; }
   .features { gap: 12px; }
@@ -628,13 +722,24 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .request .actions { width: 100%; }
   .request .actions > * { flex: 1; }
   .pn-ask { flex-direction: column; align-items: stretch; }
-  /* An open sermon (#/notes/<id>) takes over the page on phones: hide the header, list and add form. */
-  .page:has(> .pn-detail) > .page-header, .pn-detail .pn-bar, .pn-detail .pn-grid > :first-child { display: none; }
-  .pn-detail .pn-back { display: inline-flex; min-height: 44px; margin: 0 0 12px -12px; }
-  /* One swipeable row of category chips instead of four stacked rows above the transcript. */
-  .pn-cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -22px; padding: 0 22px 2px; }
+  /* Phones: picker full width with Add as an icon, reading controls on one compact row. */
+  .pn { gap: 12px; }
+  .pn-head { position: static; margin: 0; padding: 0; background: none; border: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .pn-head-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .pn-picker { max-width: none; }
+  .pn-picker-text strong { font-size: 16px; }
+  .pn-picker-meta { display: none; }
+  .pn-picker-inline-date { display: inline; }
+  .pn-add { width: 56px; padding: 0; }
+  .pn-add span { display: none; }
+  .pn-transcript { margin: 0 -16px; padding: 24px 18px 36px; border-left: 0; border-right: 0; border-radius: 0; box-shadow: none; }
+  .pn-segments li.hl { margin: 0 -10px; padding: .35em 10px .35em 7px; }
+  /* One swipeable row of category chips instead of several stacked rows above the transcript. */
+  .pn-cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 2px; }
   .pn-cats::-webkit-scrollbar { display: none; }
   .pn-cats button { flex: none; }
+  /* Panels rise from the bottom on phones. */
+  .pn-sheet { top: auto; left: 0; width: 100%; max-height: 88dvh; border-radius: var(--r-xl) var(--r-xl) 0 0; padding-bottom: var(--safe-bottom); animation: pn-rise .2s ease; }
   .site-footer small { margin-left: 0; width: 100%; }
   .chat { right: 0; bottom: 0; left: 0; }
   .chat-toggle { display: none; }
