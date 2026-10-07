@@ -1101,7 +1101,10 @@ def pattern_claims(source):
         if source.get('site_name') and CHURCH_WORDS.search(source['site_name']):
             name, quote = source['site_name'], source['site_name']
         if name:
-            claims.append({'field': 'name', 'value': name, 'quote': quote, 'source_id': sid, 'method': 'pattern'})
+            # Quote the name where the page shows it, so its source link lands on it; else the title it came from.
+            shown = re.search(re.escape(name).replace('\\ ', r'\s+'), text, re.I)
+            claims.append({'field': 'name', 'value': name, 'quote': shown.group(0) if shown else quote, 'source_id': sid,
+                           'method': 'pattern'})
     # Uploads and campus pages list several sets of times; each quote is its own set, so different campuses'
     # times become a question instead of being merged into one list.
     separate = source.get('url') is None or source.get('page_type') == 'locations'
@@ -1223,6 +1226,9 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
             continue
         if not grounded(quote, source['text']):
             builder_run.drop('its quote is not on the page')
+            continue
+        if field == 'name' and _key('name', value) not in re.sub(r'[^a-z0-9]', '', quote.lower()):
+            builder_run.drop('its quote does not name the church')
             continue
         if beliefs and field == 'about':
             continue  # a statement of faith is kept word for word for the pastor, never summarized (is_beliefs)
@@ -1619,14 +1625,36 @@ def collect(items, sources):
 
 # ---------------------------------------------------------------- 3. Clarify
 
+# "Forest Baptist Church (FBC)", "The Forest Baptist Church" and "Forest Baptist Church, Inc." are one name.
+NAME_EXTRAS = re.compile(r'^\s*the\s+|\s*\([A-Za-z.&\s]{1,12}\)\s*$|,?\s+(inc|incorporated|llc)\.?\s*$', re.I)
+
+
+def plain_name(value):
+    """A church name without a leading "The", trailing initials in parentheses or a corporate suffix."""
+    previous = None
+    while previous != value:
+        previous, value = value, NAME_EXTRAS.sub('', value).strip()
+    return value
+
+
 def _key(field, value):
     if field == 'name':
-        return re.sub(r'[^a-z0-9]', '', value.lower())
+        return re.sub(r'[^a-z0-9]', '', plain_name(value).lower())
     if field == 'address':
         return re.sub(r'[^a-z0-9]', '', value.lower())[:24]
     if isinstance(value, dict):
         return json.dumps(value, sort_keys=True)
     return _normalize_space(str(value))
+
+
+def _most_common(field, claims):
+    counts = {}
+    for claim in claims:
+        value = claim['value']
+        key = json.dumps(value, sort_keys=True) if isinstance(value, dict) else value
+        counts.setdefault(key, [0, value])[0] += 1
+    best = max(counts.values(), key=lambda pair: (pair[0], field == 'name' and pair[1] == plain_name(pair[1])))
+    return best[1]
 
 
 def _candidate(field, value, claims):
@@ -1654,9 +1682,10 @@ def reconcile(claims, source_count):
         groups = {}
         for claim in items:
             groups.setdefault(_key(field, claim['value']), []).append(claim)
-        candidates = [_candidate(field, g[0]['value'], g) for g in groups.values()]
+        # Each candidate shows its most common spelling (the plainest one on a tie).
+        candidates = [_candidate(field, _most_common(field, g), g) for g in groups.values()]
         candidates.sort(key=lambda c: -len(c['source_ids']))
-        if field in ('email', 'phone', 'address') and len(candidates) > 1:
+        if field in ('email', 'phone', 'address', 'name') and len(candidates) > 1:
             pages = len({c['source_id'] for c in items})
             if len(candidates[0]['source_ids']) * 2 > pages and len(candidates[0]['source_ids']) > len(candidates[1]['source_ids']):
                 candidates = candidates[:1]
