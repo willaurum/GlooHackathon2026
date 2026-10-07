@@ -6,11 +6,13 @@ complete and consistent. The AI step is replaced by a fake so the tests are dete
 
     python -m unittest backend.tests.test_builder
 """
+import io
 import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -20,6 +22,30 @@ from backend.app import builder, church_content, db, main
 from backend.tests.test_churches import ChurchTestCase
 
 FIXTURES = Path(__file__).resolve().parent / 'fixtures' / 'builder'
+
+
+def pdf_bytes(text='Sunday worship at 9am'):
+    stream = f'BT /F1 12 Tf 20 150 Td ({text}) Tj ET'.encode()
+    objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+               b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+               b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+               b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
+    data, offsets = b'%PDF-1.4\n', [0]
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f'{i} 0 obj\n'.encode() + obj + b'\nendobj\n'
+    xref = len(data)
+    data += f'xref\n0 {len(offsets)}\n0000000000 65535 f \n'.encode()
+    data += b''.join(f'{offset:010d} 00000 n \n'.encode() for offset in offsets[1:])
+    return data + f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+
+
+def docx_bytes(text='Sunday worship at 9am'):
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                         f'<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>')
+    return data.getvalue()
 
 
 def site(name):
@@ -143,6 +169,17 @@ class AiGroundingTests(BuilderTestCase):
 
 
 class ImageTests(BuilderTestCase):
+    def test_scan_vision_payload_uses_a_pdf_attachment(self):
+        from backend.app import chat
+        client = mock.MagicMock()
+        client.chat.completions.create.return_value.choices[0].message.content = 'Sunday worship at 9am'
+        with mock.patch.object(chat, 'make_clients', return_value=[('test', 'vision-test', None, client)]):
+            self.assertEqual(builder._ai_describe_impl(b'%PDF-test', 'application/pdf'), 'Sunday worship at 9am')
+        attachment = client.chat.completions.create.call_args.kwargs['messages'][0]['content'][1]
+        self.assertEqual(attachment['type'], 'file')
+        self.assertEqual(attachment['file']['filename'], 'material.pdf')
+        self.assertTrue(attachment['file']['file_data'].startswith('data:application/pdf;base64,'))
+
     def test_a_bulletin_image_adds_its_service_time_as_a_third_source(self):
         bulletin = ('HARBOR LIGHT\nWeekly Bulletin ~ Summer Schedule\nONE service this summer: Sundays at 10 AM\n'
                     '(June through Labor Day; two services return in the fall)')
@@ -383,6 +420,120 @@ class RouteTests(ChurchTestCase):
             r = self.client.post(f'/api/builder/drafts/{sid}/answers', json={'field': field, 'value': value})
             self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()['status'], 'review')
+
+    def upload(self, filename, data, content_type='application/octet-stream'):
+        return self.client.post('/api/builder/drafts/upload', files={'files': (filename, data, content_type)})
+
+    def test_blank_draft_asks_every_required_field_and_uses_existing_flow(self):
+        response = self.client.post('/api/builder/drafts/blank')
+        self.assertEqual(response.status_code, 201, response.text)
+        draft = response.json()
+        self.assertEqual(len(draft['id']), 24)
+        self.assertIsNone(draft['url'])
+        self.assertEqual(draft['sources'], [])
+        self.assertEqual(draft['claims'], [])
+        self.assertEqual({q['field'] for q in draft['questions']}, set(builder.REQUIRED))
+        self.assertTrue(all(q['kind'] == 'missing' for q in draft['questions']))
+        self.assertEqual(self.client.get('/api/builder/drafts/' + draft['id']).json(), draft)
+        self.confirm(draft['id'])
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{draft["id"]}/preview').status_code, 200)
+        self.assertEqual(set(self.fake.seen), {builder.DRAFT_SPACE})
+
+    def test_text_upload_conflicts_keep_filename_and_exact_quotes(self):
+        text = b'Come worship with us Sundays 9 & 11.\nSunday worship now starts at 10:30am.'
+        response = self.upload('../../bulletin.txt', text, 'image/png')
+        self.assertEqual(response.status_code, 201, response.text)
+        draft = response.json()
+        self.assertEqual(draft['sources'], [{'id': 's1', 'kind': 'file', 'url': None, 'title': 'bulletin.txt'}])
+        question = next(q for q in draft['questions'] if q['field'] == 'services')
+        self.assertEqual(question['kind'], 'conflict')
+        self.assertEqual({c['display'] for c in question['candidates']}, {'Sunday 9:00 AM, Sunday 11:00 AM', 'Sunday 10:30 AM'})
+        for candidate in question['candidates']:
+            for evidence in candidate['evidence']:
+                self.assertEqual(evidence['title'], 'bulletin.txt')
+                self.assertIsNone(evidence['url'])
+                self.assertIn(evidence['quote'], text.decode())
+        self.confirm(draft['id'])
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{draft["id"]}/preview').status_code, 200)
+
+    def test_generated_pdf_is_read_by_content(self):
+        response = self.upload('bulletin.bin', pdf_bytes(), 'text/plain')
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()['fields']['services']['value'], [{'day': 'Sunday', 'time': '09:00'}])
+        self.assertEqual(response.json()['sources'][0]['title'], 'bulletin.bin')
+
+    def test_docx_and_html_are_read_by_content(self):
+        for filename, data in [('welcome.bin', docx_bytes()),
+                               ('welcome.txt', b'<html><script>Sunday worship at 11am</script><p>Sunday worship at 9am</p></html>')]:
+            with self.subTest(filename=filename):
+                response = self.upload(filename, data)
+                self.assertEqual(response.status_code, 201, response.text)
+                self.assertEqual(response.json()['fields']['services']['value'], [{'day': 'Sunday', 'time': '09:00'}])
+
+    def test_oversized_and_unsupported_files_are_rejected(self):
+        for filename, data, message in [('large.txt', b'x' * (builder.MAX_FILE_BYTES + 1), '5 MB'),
+                                         ('fake.pdf', b'\x00\x01\x02\x03', 'Unsupported'),
+                                         ('archive.docx', b'PK\x03\x04not a document', 'Word document')]:
+            with self.subTest(filename=filename):
+                response = self.upload(filename, data)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn(message, response.json()['detail'])
+
+    def test_file_count_field_and_total_limits_are_rejected(self):
+        for files in [[], [('files', ('bulletin.txt', b'x'))] * 6,
+                      [('other', ('bulletin.txt', b'x'))],
+                      [('files', (f'{i}.txt', b'x' * (4 * 1024 * 1024))) for i in range(3)]]:
+            with self.subTest(count=len(files)):
+                response = self.client.post('/api/builder/drafts/upload', files=files)
+                self.assertEqual(response.status_code, 400, response.text)
+        response = self.client.post('/api/builder/drafts/upload', files={'files': ('bulletin.txt', b'x')}, data={'description': 'extra'})
+        self.assertEqual(response.status_code, 400, response.text)
+
+    def test_docx_zip_bomb_is_rejected(self):
+        response = self.upload('large.docx', docx_bytes('x' * (builder.MAX_FILE_BYTES + 1)))
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn('expands beyond', response.json()['detail'])
+
+    def test_images_and_scanned_pdf_without_vision_are_skipped_with_notes(self):
+        for filename, data in [('bulletin.png', b'\x89PNG\r\n\x1a\n'), ('bulletin.jpg', b'\xff\xd8\xff'),
+                               ('bulletin.webp', b'RIFF\x00\x00\x00\x00WEBP'), ('scan.pdf', pdf_bytes(''))]:
+            response = self.upload(filename, data)
+            self.assertEqual(response.status_code, 201, response.text)
+            draft = response.json()
+            self.assertEqual(draft['sources'], [])
+            self.assertEqual(draft['claims'], [])
+            self.assertTrue(any(filename in note and 'no vision model' in note for note in draft['notes']))
+
+    def test_images_and_scanned_pdf_use_the_same_vision_reader(self):
+        for filename, data, content_type in [('bulletin.png', b'\x89PNG\r\n\x1a\n', 'image/png'),
+                                               ('scan.pdf', pdf_bytes(''), 'application/pdf')]:
+            with mock.patch.object(builder, '_ai_available', return_value=True), \
+                    mock.patch.object(builder, '_ai_describe', return_value='Sunday worship at 10am') as describe:
+                response = self.upload(filename, data, 'text/plain')
+                self.assertEqual(response.status_code, 201, response.text)
+                describe.assert_called_once_with(data, content_type)
+                self.assertEqual(response.json()['sources'][0]['kind'], 'image')
+                self.assertEqual(response.json()['fields']['services']['value'], [{'day': 'Sunday', 'time': '10:00'}])
+
+    def test_rate_limit_is_shared_by_all_import_paths(self):
+        self.create()
+        for _ in range(2):
+            self.assertEqual(self.client.post('/api/builder/drafts/blank').status_code, 201)
+            self.assertEqual(self.upload('bulletin.txt', b'Sunday worship at 9am').status_code, 201)
+        for path in ('/blank', '/upload', ''):
+            response = self.client.post('/api/builder/drafts' + path, files={'files': ('bulletin.txt', b'x')} if path == '/upload' else None,
+                                        json={'url': 'https://church.test/'} if path == '' else None)
+            self.assertEqual(response.status_code, 429, response.text)
+        self.assertEqual(builder.import_limiter.running, 0)
+
+    def test_upload_and_blank_drafts_use_the_existing_expiry(self):
+        for response in [self.upload('bulletin.txt', b'Sunday worship at 9am'), self.client.post('/api/builder/drafts/blank')]:
+            self.assertEqual(response.status_code, 201, response.text)
+            sid = response.json()['id']
+            draft = builder._load(sid)
+            draft['created_at'] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+            builder._save(draft)
+            self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 404)
 
     def test_public_import_answer_and_preview_without_a_church(self):
         sid = self.create()

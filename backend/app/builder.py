@@ -14,6 +14,8 @@
 Public drafts live in the reserved platform space 'builder' as 'draft:<id>', expire after 24 hours,
 and can be applied once by staff into a new church.
 """
+import asyncio
+import io
 import ipaddress
 import json
 import logging
@@ -23,6 +25,8 @@ import secrets
 import socket
 import threading
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -33,6 +37,9 @@ from urllib.parse import urljoin, urldefrag, urlparse
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException
 
 from . import church_content, db
 
@@ -42,6 +49,9 @@ router = APIRouter()
 MAX_PAGES = 12
 MAX_PAGE_BYTES = 1_000_000
 MAX_SOURCE_CHARS = 20_000
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_UPLOAD_FILES = 5
 FETCH_TIMEOUT = 10.0
 IMPORT_BUDGET = float(os.environ.get('BUILDER_IMPORT_BUDGET', '75.0'))
 CRAWL_BUDGET = 30.0
@@ -272,15 +282,117 @@ def _ai_describe_impl(data, content_type):
         return ''
     name, model, extra_body, client = clients[0]
     url = f'data:{content_type};base64,' + base64.b64encode(data).decode()
+    attachment = ({'type': 'file', 'file': {'filename': 'material.pdf', 'file_data': url}}
+                  if content_type == 'application/pdf' else {'type': 'image_url', 'image_url': {'url': url}})
     response = client.chat.completions.create(model=model, temperature=0, max_tokens=800, messages=[
         {'role': 'user', 'content': [
             {'type': 'text', 'text': 'Copy out every word printed in this image, line by line, exactly as written. '
                                      'No commentary. If there is no text, reply with nothing.'},
-            {'type': 'image_url', 'image_url': {'url': url}}]}], **({'extra_body': extra_body} if extra_body else {}))
+            attachment]}], **({'extra_body': extra_body} if extra_body else {}))
     return response.choices[0].message.content or ''
 
 
 _ai_describe = _ai_describe_impl if os.environ.get('BUILDER_VISION', '1') != '0' and os.environ.get('BUILDER_AI', '1') != '0' else None
+
+
+def _file_title(filename):
+    title = re.split(r'[/\\]', filename or '')[-1]
+    return re.sub(r'[\x00-\x1f\x7f]', '', title).strip()[:120] or 'Church material'
+
+
+def _file_type(data):
+    if data.startswith(b'%PDF-'):
+        return 'application/pdf'
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if data.startswith(b'PK\x03\x04'):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                if 'word/document.xml' in archive.namelist():
+                    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        except zipfile.BadZipFile:
+            pass
+        raise ValueError('That archive is not a Word document. Upload a DOCX file.')
+    sample = data[:8192].decode('utf-8', errors='replace')
+    if any(ord(c) < 32 and c not in '\t\n\r\f' for c in sample) or sum(
+            c.isprintable() or c in '\t\n\r\f' for c in sample if c != '\ufffd') < len(sample) * 0.95:
+        raise ValueError('Unsupported file type. Upload PDF, plain text, HTML, DOCX, PNG, JPEG or WebP files.')
+    return 'text/html' if re.search(r'<(?:!doctype\s+html|html|head|body|title|p|div|h[1-6]|br)\b', sample, re.I) else 'text/plain'
+
+
+def _docx_text(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if sum(item.file_size for item in archive.infolist()) > MAX_FILE_BYTES:
+            raise ValueError('The Word document expands beyond the 5 MB limit.')
+        with archive.open('word/document.xml') as document:
+            xml = document.read(MAX_FILE_BYTES + 1)
+        if len(xml) > MAX_FILE_BYTES:
+            raise ValueError('The Word document expands beyond the 5 MB limit.')
+    root = ET.fromstring(xml)
+    ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    return '\n'.join(''.join(t.text or '' for t in p.iter(ns + 't')) for p in root.iter(ns + 'p'))
+
+
+def read_files(files, describe=None, deadline=None, notes=None):
+    """Sniff uploaded bytes; transcriptions use the same vision reader as crawled images."""
+    deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
+    notes = notes if notes is not None else []
+    describe = describe if describe is not None else (_ai_describe if _ai_available() else None)
+    typed = [(title, data, _file_type(data)) for title, data in files]
+
+    def read(item):
+        title, data, content_type = item
+        kind = 'file'
+        try:
+            if content_type == 'application/pdf':
+                from pypdf import PdfReader
+                parts, size = [], 0
+                for page in PdfReader(io.BytesIO(data)).pages:
+                    if size >= MAX_SOURCE_CHARS or _now() >= deadline:
+                        break
+                    parts.append((page.extract_text() or '')[:MAX_SOURCE_CHARS - size])
+                    size += len(parts[-1]) + 1
+                text = '\n'.join(parts)
+            elif content_type.endswith('document'):
+                text = _docx_text(data)
+            elif content_type.startswith('text/'):
+                text = data.decode('utf-8', errors='replace')
+                if content_type == 'text/html':
+                    text = parse_html(text)['text']
+            else:
+                text = ''
+            if content_type.startswith('image/') or content_type == 'application/pdf' and not text.strip():
+                kind = 'image'
+                if not describe:
+                    return None, f'{title} was skipped because no vision model is available to read it.'
+                try:
+                    text = describe(data, content_type) or ''
+                except Exception as error:
+                    log.info('builder: skipped file %s (%s)', title, error)
+                    return None, f'{title} was skipped because the vision model could not read it.'
+            source = {'kind': kind, 'url': None, 'title': title, 'text': text.strip()[:MAX_SOURCE_CHARS]}
+            return source, None
+        except ValueError:
+            raise
+        except Exception as error:
+            raise ValueError(f'{title} could not be read. Upload a valid, unlocked file.') from error
+
+    results, _ = _parallel(typed, read, deadline)
+    sources = []
+    for (title, _, _), result in zip(typed, results):
+        if result is None:
+            notes.append(f'{title} was skipped because reading took too long.')
+            continue
+        source, note = result
+        if note:
+            notes.append(note)
+        if source:
+            sources.append({'id': f's{len(sources) + 1}', **source})
+    return sources
 
 
 def _http_fetch(url):
@@ -372,12 +484,13 @@ def pattern_claims(source):
     for match in sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(text.replace('\n', ', ')))):
         claims.append({'field': 'address', 'value': match, 'quote': match, 'source_id': sid, 'method': 'pattern'})
     title = source.get('title', '')
-    if ' | ' in title:  # "Plan a Visit | Cedar Hollow Community Church"
+    if source.get('kind', 'page') == 'page' and ' | ' in title:  # "Plan a Visit | Cedar Hollow Community Church"
         name = title.rsplit(' | ', 1)[1].strip()
         claims.append({'field': 'name', 'value': name, 'quote': title, 'source_id': sid, 'method': 'pattern'})
     for day, times in service_times(text).items():
         for clock, quote in times:
-            claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote, 'source_id': sid, 'method': 'pattern'})
+            claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote,
+                           'source_id': sid, 'method': 'pattern', **({'service_group': quote} if source.get('url') is None else {})})
     return claims
 
 
@@ -551,7 +664,8 @@ def _reconcile_services(items):
     per_source = {}
     for claim in items:
         day, time = claim['value']['day'], claim['value']['time']
-        per_source.setdefault(day, {}).setdefault(claim['source_id'], {})[time] = claim
+        group = (claim['source_id'], claim.get('service_group'))
+        per_source.setdefault(day, {}).setdefault(group, {})[time] = claim
     days, candidates = [], []
     conflict = False
     for day in DAYS:
@@ -699,6 +813,11 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None)
         raise ValueError('No pages could be read from that address.')
     if describe is not None or (_ai_describe is not None and _ai_available()):
         sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes)
+    return session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+
+
+def session_from_sources(url, sources, complete=None, deadline=None, notes=None):
+    notes = notes if notes is not None else []
     claims = extract(sources, complete, deadline=deadline, notes=notes)
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
@@ -735,9 +854,9 @@ class ImportLimiter:
             if sum(client == ip for _, client in self.starts) >= 5:
                 raise HTTPException(status_code=429, detail='Too many imports from this address. Try again in an hour.')
             if len(self.starts) >= 60:
-                raise HTTPException(status_code=429, detail='Too many website imports this hour. Please try again later.')
+                raise HTTPException(status_code=429, detail='Too many imports this hour. Please try again later.')
             if self.running >= 3:
-                raise HTTPException(status_code=429, detail='Three website imports are already running. Please try again shortly.')
+                raise HTTPException(status_code=429, detail='Three imports are already running. Please try again shortly.')
             self.starts.append((now, ip))
             self.running += 1
         try:
@@ -799,6 +918,69 @@ def import_site(body: ImportBody, request: Request):
         try:
             session = new_session(body.url)
         except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        with _draft_lock:
+            return _public(_save(session))
+
+
+@router.post('/api/builder/drafts/blank', status_code=201)
+def import_blank(request: Request):
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with import_limiter.importing(ip):
+        with _draft_lock:
+            return _public(_save(session_from_sources(None, [])))
+
+
+async def _uploaded_files(request, deadline):
+    if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'multipart/form-data':
+        raise HTTPException(status_code=400, detail='Upload files using multipart/form-data with the field name files.')
+    received = 0
+
+    async def receive():
+        nonlocal received
+        try:
+            message = await asyncio.wait_for(request.receive(), max(0.0, deadline - _now()))
+        except asyncio.TimeoutError as error:
+            raise MultiPartException('The upload took too long. Please try again.') from error
+        received += len(message.get('body', b''))
+        if received > MAX_UPLOAD_BYTES + 64 * 1024:  # Allow bounded multipart headers.
+            raise MultiPartException('Upload at most 10 MB of files in total.')
+        return message
+
+    bounded = Request(request.scope, receive=receive)
+    async with bounded.form(max_files=MAX_UPLOAD_FILES, max_fields=0) as form:
+        items = form.multi_items()
+        if not 1 <= len(items) <= MAX_UPLOAD_FILES or any(key != 'files' or not isinstance(file, UploadFile) for key, file in items):
+            raise HTTPException(status_code=400, detail='Choose 1 to 5 files using the field name files.')
+        files, total = [], 0
+        for _, file in items:
+            data = bytearray()
+            while chunk := await file.read(64 * 1024):
+                total += len(chunk)
+                if len(data) + len(chunk) > MAX_FILE_BYTES:
+                    raise HTTPException(status_code=400, detail='Each file must be 5 MB or smaller.')
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=400, detail='Upload at most 10 MB of files in total.')
+                data.extend(chunk)
+            files.append((_file_title(file.filename), bytes(data)))
+        return files
+
+
+def _upload_session(files, deadline):
+    notes = []
+    sources = read_files(files, deadline=deadline, notes=notes)
+    return session_from_sources(None, sources, deadline=deadline, notes=notes)
+
+
+@router.post('/api/builder/drafts/upload', status_code=201)
+async def import_upload(request: Request):
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with import_limiter.importing(ip):
+        deadline = _now() + IMPORT_BUDGET
+        try:
+            files = await _uploaded_files(request, deadline)
+            session = await run_in_threadpool(_upload_session, files, deadline)
+        except (ValueError, MultiPartException) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         with _draft_lock:
             return _public(_save(session))

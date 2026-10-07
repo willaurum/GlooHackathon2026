@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { createFromDraft, draftApi } from './builderApi.js';
+import { createBlank, createFromDraft, createFromFiles, draftApi } from './builderApi.js';
 import { BUILDER_LABELS, builderEvidence, builderPage, builderValue, canReviewBuilder } from './builder.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
@@ -34,6 +34,7 @@ export default function Builder() {
   const church = useChurch();
   const [session, setSession] = useState(null), [sessionId, setSessionId] = useState(savedDraft);
   const [url, setUrl] = useState(''), [busy, setBusy] = useState('');
+  const [importMode, setImportMode] = useState('website'), [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(!!sessionId), [retry, setRetry] = useState(0);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null), [editing, setEditing] = useState('');
@@ -45,7 +46,7 @@ export default function Builder() {
     const controller = new AbortController();
     setLoading(true); setError('');
     draftApi('/' + encodeURIComponent(sessionId), { signal: controller.signal })
-      .then(saved => { if (live) { setSession(saved); setUrl(saved.url); } })
+      .then(saved => { if (live) { setSession(saved); setUrl(saved.url || ''); } })
       .catch(err => {
         if (!live) return;
         setError(err.message);
@@ -55,12 +56,17 @@ export default function Builder() {
     return () => { live = false; controller.abort(); };
   }, [sessionId, retry]);
 
-  async function readWebsite(e) {
+  async function importDraft(e) {
     e.preventDefault();
     if (busy || loading) return;
-    setBusy('reading'); setError('');
+    setBusy(importMode === 'questions' ? 'blank' : 'reading'); setError('');
     try {
-      const draft = await draftApi('', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
+      if (importMode === 'files' && (files.length > 5 || files.some(file => file.size > 5 * 1024 * 1024)
+          || files.reduce((total, file) => total + file.size, 0) > 10 * 1024 * 1024)) {
+        throw new Error('Choose 1 to 5 files, each 5 MB or smaller and at most 10 MB in total.');
+      }
+      const draft = importMode === 'questions' ? await createBlank() : importMode === 'files' ? await createFromFiles(files)
+        : await draftApi('', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
       rememberDraft(draft.id); setSession(draft); setSessionId(draft.id);
     } catch (err) { setError(err.message); }
     finally { setBusy(''); }
@@ -91,6 +97,7 @@ export default function Builder() {
 
   function startOver() {
     rememberDraft(''); rememberCreated(null); setSessionId(''); setSession(null); setUrl('');
+    setFiles([]); setImportMode('website');
     setPreview(null); setEditing(''); setError(''); setCreating(false);
   }
 
@@ -108,17 +115,32 @@ export default function Builder() {
   const step = creating ? 3 : questions.length ? 1 : review ? 2 : 0;
   return <>
     <PageHeader eyebrow="Tekton" title="Create your church site"
-      text="Start with your current website. Confirm its details, then create a new site for your church."
+      text="Start with your website, church materials, or answers to a few questions. Confirm the details, then create a new site for your church."
       action={(session || sessionId) && !created && <button type="button" className="secondary" disabled={locked} onClick={startOver}>Start over</button>} />
     <div className="builder">
       <ol className="builder-steps" aria-label="Create your site steps">{['Import', 'Clarify', 'Review', 'Create your church'].map((label, i) => <li key={label} aria-current={step === i ? 'step' : undefined}><span aria-hidden="true">{i + 1}</span>{label}</li>)}</ol>
-      <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your website import…' : busy === 'reading' ? 'Reading your website… This can take up to a minute.' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Start with your website address.'}</p>
+      <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your draft…' : busy === 'reading' ? (importMode === 'files' ? 'Reading your church materials…' : 'Reading your website…') + ' This can take up to a minute.' : busy === 'blank' ? 'Preparing your questions…' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Choose how to start your draft.'}</p>
       {session?.notes?.length > 0 && <ul className="builder-notes">{session.notes.map((note, i) => <li key={i}>{note}</li>)}</ul>}
       {error && <div className="banner error" role="alert"><p>{error}</p></div>}
       {!loading && !session && sessionId && !created && <div className="card give-pad"><p>Your saved import could not be loaded.</p><button type="button" className="secondary" onClick={() => setRetry(v => v + 1)}>Try again</button></div>}
-      {!loading && !session && !sessionId && <form className="card give-pad" onSubmit={readWebsite}>
-        <label className="field">Current website URL<input type="url" placeholder="https://church.example.org" required maxLength={500} value={url} disabled={locked} onChange={e => setUrl(e.target.value)} /></label>
-        <button className="primary" disabled={locked || !url.trim()}>{busy === 'reading' ? 'Reading your website…' : 'Read my website'}</button>
+      {!loading && !session && !sessionId && <form className="card give-pad" onSubmit={importDraft}>
+        <div className="builder-actions" role="group" aria-label="How to start your draft">{[
+          ['website', 'Use my website'], ['files', 'Upload church materials'], ['questions', 'Answer questions instead'],
+        ].map(([mode, label]) => <button key={mode} type="button" className={importMode === mode ? 'primary' : 'secondary'} aria-pressed={importMode === mode} disabled={locked} onClick={() => { if (importMode !== mode) setFiles([]); setImportMode(mode); setError(''); }}>{label}</button>)}</div>
+        {importMode === 'website' && <>
+          <label className="field">Current website URL<input type="url" placeholder="https://church.example.org" required maxLength={500} value={url} disabled={locked} onChange={e => setUrl(e.target.value)} /></label>
+          <button className="primary" disabled={locked || !url.trim()}>{busy === 'reading' ? 'Reading your website…' : 'Read my website'}</button>
+        </>}
+        {importMode === 'files' && <>
+          <label className="field">Church materials<input type="file" multiple accept=".pdf,.txt,.html,.htm,.docx,.png,.jpg,.jpeg,.webp" required disabled={locked} aria-describedby="builder-file-limits" onChange={e => setFiles(Array.from(e.target.files || []))} /></label>
+          <p className="form-note" id="builder-file-limits">Choose 1–5 files: PDF, text, HTML, Word documents or images. Each file must be 5 MB or smaller, with at most 10 MB in total.</p>
+          {files.length > 0 && <ul>{files.map((file, i) => <li key={i}>{file.name} ({(file.size / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB)</li>)}</ul>}
+          <button className="primary" disabled={locked || !files.length}>{busy === 'reading' ? 'Reading your materials…' : 'Read my materials'}</button>
+        </>}
+        {importMode === 'questions' && <>
+          <p>Tell us your church name, address, contact details and service times, then review and preview your site.</p>
+          <button className="primary" disabled={locked}>{busy === 'blank' ? 'Preparing your questions…' : 'Start answering questions'}</button>
+        </>}
         <p className="form-note">Drafts expire 24 hours after import. Keep this browser tab to resume your draft.</p>
       </form>}
       {!loading && !creating && questions.map(question => <Question key={session.id + ':' + question.field} question={question} answer={answer} disabled={locked} />)}
@@ -248,7 +270,7 @@ function ReviewField({ field, label, session, editing, onEdit, onCancel, answer,
     try { await answer(field, value); } catch (err) { setError(err.message); }
   }
   return <div className="builder-review-field">
-    <div className="builder-field-heading"><h3>{label}</h3>{info && <span className="badge">{info.status === 'confirmed' ? 'You confirmed' : 'From your website'}</span>}</div>
+    <div className="builder-field-heading"><h3>{label}</h3>{info && <span className="badge">{info.status === 'confirmed' ? 'You confirmed' : session.url ? 'From your website' : 'From your materials'}</span>}</div>
     <p className="builder-value">{builderValue(field, info?.value) || 'Not provided'}</p>
     <div className="builder-actions">
       <button type="button" className="link" disabled={disabled} aria-expanded={editing} onClick={() => { setValue(builderValue(field, info?.value)); setError(''); onEdit(); }}>Edit<span className="builder-sr-only"> {label}</span></button>

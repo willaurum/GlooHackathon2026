@@ -1,6 +1,6 @@
 # How the agentic builder works
 
-The builder turns an existing church website into a Tekton site. Open `#/new`, paste a web address, answer a few questions, and preview the result. This doc covers how it decides what to trust, how it is tested, and what went wrong along the way.
+The builder turns a church website, uploaded materials, or answers to questions into a Tekton site. Open `#/new`, choose how to start, answer the missing or conflicting details, and preview the result. This doc covers how it decides what to trust, how it is tested, and what went wrong along the way.
 
 Code: `backend/app/builder.py` (pipeline and routes), `frontend/src/Builder.jsx` (the `#/new` page), `backend/tests/test_builder.py` (tests), `backend/tests/fixtures/builder/` (made-up church sites).
 
@@ -10,7 +10,7 @@ The team agreed on five steps:
 
 | Step | What happens | Where |
 |---|---|---|
-| **Import** | Read up to 12 pages on the same site, plus up to 5 same-site images | `crawl`, `read_images` |
+| **Import** | Read up to 12 pages and 5 same-site images, read uploaded materials, or start with no sources | `crawl`, `read_images`, `read_files`, `session_from_sources` |
 | **Extract** | Collect every candidate value as a *claim*, each with the page and exact quote it came from | `pattern_claims`, `ai_claims` |
 | **Clarify** | Plain code compares the claims. If they disagree or are missing, it asks the person | `reconcile`, `questions` |
 | **Confirm** | The person picks a candidate, types their own, or edits on the review screen | `apply_answer` |
@@ -42,6 +42,7 @@ Each AI suggestion must come with the **exact quote** from the page it read. `gr
 
 ## Safety and limits
 
+- **Uploads:** 1–5 files, each up to 5 MB, at most 10 MB total. PDF, plain text, HTML, DOCX and PNG/JPEG/WebP are detected from their contents. DOCX extraction caps the uncompressed size at 5 MB. Images and scanned PDFs are skipped with a note when no vision model is available. File evidence uses the sanitized filename and exact quote, with no URL.
 - **No private addresses.** Import refuses `localhost`, private networks and link-local addresses, including after redirects (`_check_public`). `BUILDER_ALLOW_PRIVATE=1` turns this off for local testing only.
 - **Same site only.** The crawler never follows links to other domains.
 - **Time budget.** An import finishes within 75 seconds, safely under Cloudflare's ~100 second request limit:
@@ -96,7 +97,6 @@ Each AI suggestion must come with the **exact quote** from the page it read. `gr
 
 ## Not done yet
 
-- **Uploading files** (PDF bulletins, Word docs, images) and **starting from questions** instead of a website.
 - **JavaScript-only sites** (the Riverstone fixture) need a real browser to render them, e.g. Cloudflare Browser Rendering.
 - **More content:** events, groups and ministries aren't imported yet.
 - **Provisioning:** how a builder draft becomes a real church now that public sign-up is off. For example, a platform key or an invite code.

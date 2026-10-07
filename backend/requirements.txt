@@ -4,3 +4,5 @@ httpx>=0.27,<1
 yt-dlp[default,deno]>=2026.8.19
 openai>=1.60,<3
 python-dotenv>=1.0.0
+pypdf==6.1.1
+python-multipart==0.0.20

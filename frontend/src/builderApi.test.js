@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setApiChurch } from './api.js';
-import { createFromDraft, draftApi } from './builderApi.js';
+import { createBlank, createFromDraft, createFromFiles, draftApi } from './builderApi.js';
 import { getVerifiedStaffToken } from './church.js';
 
 const storage = new Map();
@@ -25,6 +25,36 @@ test('public drafts use the bare API without staff credentials or the current ch
     assert.equal((await draftApi('/draft-id/preview', { method: 'POST' })).content.info.name, 'Hope Chapel');
     globalThis.fetch = async () => Response.json({ detail: 'Answer the open questions first.' }, { status: 400 });
     await assert.rejects(draftApi('/draft-id/preview', { method: 'POST' }), error => error.status === 400 && /open questions/.test(error.message));
+  } finally { globalThis.fetch = originalFetch; storage.clear(); }
+});
+
+test('blank drafts and file uploads use public routes and preserve multipart boundaries', async () => {
+  const originalFetch = globalThis.fetch;
+  setApiChurch('missing-church');
+  const file = new File(['Sunday worship at 9am'], 'bulletin.txt', { type: 'text/plain' });
+  try {
+    globalThis.fetch = async (url, options) => {
+      assert.equal(options.method, 'POST');
+      if (url.endsWith('/blank')) {
+        assert.equal(url, '/api/builder/drafts/blank');
+        assert.equal(options.headers.Authorization, undefined);
+        return Response.json({ id: 'blank-draft', sources: [], claims: [] }, { status: 201 });
+      }
+      assert.equal(url, '/api/builder/drafts/upload');
+      assert.equal(options.headers, undefined);
+      assert.ok(options.body instanceof FormData);
+      const uploaded = options.body.getAll('files');
+      assert.equal(uploaded.length, 2);
+      assert.equal(uploaded[0].name, file.name);
+      assert.equal(await uploaded[0].text(), await file.text());
+      assert.equal(uploaded[1].name, 'welcome.html');
+      return Response.json({ id: 'file-draft' }, { status: 201 });
+    };
+    assert.equal((await createBlank()).id, 'blank-draft');
+    assert.equal((await createFromFiles([file, new File(['<p>Welcome</p>'], 'welcome.html')])).id, 'file-draft');
+    globalThis.fetch = async () => Response.json({ detail: 'Each file must be 5 MB or smaller.' }, { status: 400 });
+    await assert.rejects(createFromFiles([file]), error => error.status === 400 && /5 MB/.test(error.message));
+    await assert.rejects(createBlank(), error => error.status === 400);
   } finally { globalThis.fetch = originalFetch; storage.clear(); }
 });
 

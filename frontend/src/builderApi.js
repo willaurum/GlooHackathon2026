@@ -17,6 +17,14 @@ export const draftApi = (path = '', options = {}) => request(apiUrl('/builder/dr
   ...options, headers: { 'Content-Type': 'application/json' },
 });
 
+export const createBlank = () => draftApi('/blank', { method: 'POST' });
+
+export function createFromFiles(files) {
+  const body = new FormData();
+  for (const file of files) body.append('files', file);
+  return request(apiUrl('/builder/drafts/upload', DEMO_CHURCH), { method: 'POST', body });
+}
+
 export async function createFromDraft(draftId, account, created, onCreated) {
   let church = created;
   if (!church) {

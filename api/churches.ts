@@ -126,6 +126,7 @@ const ID = '[^/]+';
 // Public imports use capability ids; malformed ids are the container's 404.
 const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['POST', /^\/api\/builder\/drafts$/],
+	['POST', /^\/api\/builder\/drafts\/(blank|upload)$/],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/site$`)],
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|preview)$`)],

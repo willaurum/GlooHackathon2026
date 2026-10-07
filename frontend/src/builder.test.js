@@ -60,3 +60,16 @@ test('embedded evidence works without claims, with title or URL path as the page
   assert.equal(builderPage({ url: 'https://church.test/' }), 'church.test');
   assert.equal(builderPage({}), 'Website page');
 });
+
+test('file evidence keeps the filename and quote without a page URL', () => {
+  const source = { id: 's1', kind: 'file', url: null, title: 'bulletin.txt' };
+  const quote = 'Sunday worship at 9am.';
+  const session = {
+    fields: { services: { candidates: [{ claim_ids: ['c1'] }] } }, sources: [source],
+    claims: [{ id: 'c1', source_id: 's1', field: 'services', quote }],
+  };
+  const [evidence] = builderEvidence(session, 'services');
+  assert.equal(evidence.url, null);
+  assert.equal(evidence.quote, quote);
+  assert.equal(builderPage(evidence), 'bulletin.txt');
+});
