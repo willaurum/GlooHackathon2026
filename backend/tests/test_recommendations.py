@@ -93,10 +93,23 @@ class RecommendationTests(unittest.TestCase):
     def test_endpoint_reports_unconfigured_and_provider_errors(self):
         client = TestClient(main.app)
         with patch.object(main.db, 'list_ministries', return_value=self.ministries):
-            for error, code in [(recommendations.NotConfigured('Not configured'), 503),
-                                (recommendations.Unavailable('Try again'), 502)]:
-                with patch.object(recommendations, 'recommend', side_effect=error):
-                    self.assertEqual(client.post('/api/matches', json={'description': 'My story'}).status_code, code)
+            with patch.object(recommendations, 'recommend', side_effect=recommendations.NotConfigured('Not configured')):
+                self.assertEqual(client.post('/api/matches', json={'description': 'My story'}).status_code, 503)
+            # When every model fails, the visitor still gets teams to explore rather than a 502.
+            with patch.object(recommendations, 'recommend', side_effect=recommendations.Unavailable('Try again')):
+                response = client.post('/api/matches', json={'description': 'My story'})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()['engine'], 'browse')
+                self.assertTrue(response.json()['matches'])
+
+    def test_reply_json_is_found_inside_thinking_and_prose(self):
+        plan = '{"summary": "Hi", "matches": []}'
+        for reply in (plan, '```json\n' + plan + '\n```', '<think>Let me look {at} this.</think>\n' + plan,
+                      'Here you go: ' + plan + ' Hope that helps.'):
+            self.assertEqual(recommendations.json_object(reply), plan)
+
+    def test_hosted_models_get_the_chat_timeout_not_25_seconds(self):
+        self.assertGreaterEqual(recommendations.chat.provider_timeout('gloo'), 60)
 
 
     def test_endpoint_passes_structured_preferences_to_ai(self):

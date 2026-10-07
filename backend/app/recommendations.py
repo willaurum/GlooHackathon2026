@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,6 +59,28 @@ Return only a JSON object with this shape, without markdown:
 "reason": "Why this fits you", "considerations": "What to confirm"}]}"""
 
 
+THINKING = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
+
+
+def json_object(content):
+    """The JSON object in a model reply. Reasoning models may add thinking, a code fence or a sentence
+    around it, so take the outermost {...} rather than requiring the reply to be bare JSON."""
+    text = THINKING.sub('', content or '').strip()
+    start, end = text.find('{'), text.rfind('}')
+    return text[start:end + 1] if 0 <= start < end else text
+
+
+def browse_fallback(ministries, preferences=None):
+    """What the visitor sees when no model answers: the teams that fit their structured answers (or all
+    teams), laid out like the no-answers browse view, so Find a place never ends in an error page."""
+    candidates, _ = eligibility.eligible_ministries(ministries, preferences or {})
+    return {'engine': 'browse',
+            'summary': 'Our assistant is busy right now, so here are teams that fit your answers. Reach out to a ministry lead to talk about getting involved.',
+            'matches': [{**m, 'reason': 'Learn more about this team and ask the ministry lead about ways to get involved.',
+                         'considerations': 'You can discuss availability, next steps, and any questions together.'}
+                        for m in (candidates or ministries)]}
+
+
 def recommend(description, ministries, clients=None, preferences=None):
     if not description.strip() and not any((preferences or {}).values()):
         return {'engine': 'browse',
@@ -93,12 +116,11 @@ def recommend(description, ministries, clients=None, preferences=None):
                         'name': 'ministry_recommendations', 'schema': RecommendationPlan.model_json_schema()}}
                     if model.startswith('gpt-oss:'):
                         options['reasoning_effort'] = 'low'
-                response = client.with_options(timeout=chat.provider_timeout('ollama') if provider == 'ollama' else 25, max_retries=0).chat.completions.create(
+                # Same per-call limit as the chat: hosted reasoning models (such as Gloo's qwen) can take
+                # well over 25 seconds on this long, structured prompt.
+                response = client.with_options(timeout=chat.provider_timeout(provider), max_retries=0).chat.completions.create(
                     model=model, messages=messages, extra_body=extra_body, **options)
-                content = (response.choices[0].message.content or '').strip()
-                if content.startswith('```') and content.endswith('```'):
-                    content = content.split('\n', 1)[1].rsplit('```', 1)[0].strip()
-                plan = RecommendationPlan.model_validate_json(content)
+                plan = RecommendationPlan.model_validate_json(json_object(response.choices[0].message.content))
                 ids = [item.ministry_id for item in plan.matches]
                 if len(ids) != len(set(ids)) or any(key not in available for key in ids):
                     raise ValueError('The model returned duplicate or unavailable ministry IDs')
@@ -107,7 +129,7 @@ def recommend(description, ministries, clients=None, preferences=None):
                     for item in plan.matches
                 ]}
             except Exception as error:
-                log.warning('Recommendation provider %s failed (%s)', provider, type(error).__name__)
+                log.warning('Recommendation provider %s (%s) failed: %s', provider, model, type(error).__name__)
         raise Unavailable('We could not generate recommendations right now. Please try again, or browse Ministries to contact a team directly.')
     finally:
         if owned_clients:
