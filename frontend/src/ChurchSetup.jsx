@@ -61,6 +61,7 @@ export function StaffSignIn() {
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
     <p className="form-note">Need an account? Ask your church Owner to add you in Church staff → Team.</p>
+    <p className="form-note">Starting a new church site? <a href="/#/new">Create it from your current website</a>.</p>
   </form>;
 }
 

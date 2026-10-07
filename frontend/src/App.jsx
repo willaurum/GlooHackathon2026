@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api, churchCapabilities, gapi, setApiChurch, whenCapabilitiesKnown } from './api.js';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { api, churchCapabilities, gapi, setApiChurch, startApiPreview, stopApiPreview, whenCapabilitiesKnown } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
 import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
+import Builder from './Builder.jsx';
+import { draftApi } from './builderApi.js';
 import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { ABOUT_DEMO_ONLY, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import { ABOUT_DEMO_ONLY, Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -22,7 +24,7 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -55,6 +57,12 @@ const onGivePath = () => window.location.pathname.startsWith('/give');
 
 /** The church and page in the address bar. See church.js for the order churches are picked in. */
 function readLocation() {
+  const preview = /^#\/new\/preview(?:\/(.*))?$/.exec(window.location.hash);
+  if (preview) {
+    const route = preview[1] || '';
+    return { slug: 'builder-preview', source: 'preview',
+      route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) ? route : '', false) };
+  }
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
@@ -80,24 +88,78 @@ function churchIcon(name) {
 
 const titleCase = slug => slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
+const inPreview = () => /^#\/new\/preview(?:\/|$)/.test(window.location.hash);
+
 export default function App() {
+  const [preview, setPreview] = useState(inPreview);
+  useEffect(() => {
+    const sync = () => {
+      if (!inPreview()) stopApiPreview();
+      setPreview(inPreview());
+    };
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+  if (preview) return <BuilderPreview />;
+  stopApiPreview();
+  return <SiteApp />;
+}
+
+function BuilderPreview() {
+  const [snapshot, setSnapshot] = useState(null), [error, setError] = useState('');
+  useEffect(() => {
+    document.title = 'Site preview · Tekton';
+    let live = true;
+    const controller = new AbortController();
+    let id;
+    try { id = sessionStorage.getItem('tekton-new-draft'); } catch { /* Storage may be unavailable. */ }
+    if (!id) setError('Open the builder and import your website to preview your site.');
+    else draftApi('/' + encodeURIComponent(id) + '/site', { signal: controller.signal })
+      .then(data => { if (live) setSnapshot(data); })
+      .catch(err => { if (live) setError(err.status === 404 ? 'This draft has expired or could not be found. Start a new import in the builder.' : err.message); });
+    return () => { live = false; controller.abort(); stopApiPreview(); };
+  }, []);
+  if (!snapshot) return <div className="standalone-builder">
+    <header><Brand /></header>
+    <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to the builder</a></main>
+  </div>;
+  return <SiteApp snapshot={snapshot} />;
+}
+
+function SiteApp({ snapshot }) {
+  const previewBanner = useRef(null);
   const [where, setWhere] = useState(readLocation),
     [chatOpen, setChatOpen] = useState(false),
     [requestsVersion, setRequestsVersion] = useState(0),
     [savedCount, setSavedCount] = useState(0),
     [scrollTarget, setScrollTarget] = useState(null),
     [apiReady, setApiReady] = useState(null),
-    [listing, setListing] = useState(null),
+    [listing, setListing] = useState(snapshot?.info || null),
     [listingVersion, setListingVersion] = useState(0),
     [staffVersion, setStaffVersion] = useState(0);
   const { slug, source, route } = where;
-  const demo = slug === DEMO_CHURCH;
+  const demo = !snapshot && slug === DEMO_CHURCH;
+  if (snapshot) startApiPreview(snapshot);
   // Every api() call from here down is for this church.
   setApiChurch(slug);
   const params = new URLSearchParams(window.location.search);
-  const giveSession = onGivePath() ? params.get('session_id') || '' : '';
+  const giveSession = !snapshot && onGivePath() ? params.get('session_id') || '' : '';
   const giveStatus = giveSession ? params.get('status') || '' : '';
   const giveChurch = giveSession ? params.get('church') || '' : '';
+
+  useLayoutEffect(() => {
+    if (!snapshot) return;
+    const banner = previewBanner.current;
+    const resize = () => banner.parentElement.style.setProperty('--preview-height', banner.offsetHeight + 'px');
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(banner);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const sync = () => setWhere(readLocation());
@@ -113,9 +175,10 @@ export default function App() {
       window.removeEventListener('belong-staff', staffChanged);
     };
   }, []);
-  useEffect(() => whenCapabilitiesKnown(churchCapabilities, setApiReady), []);
+  useEffect(() => snapshot ? undefined : whenCapabilitiesKnown(churchCapabilities, setApiReady), []);
   // The name and city come from the church registry (the giving service), then the church API.
   useEffect(() => {
+    if (snapshot) { setListing(snapshot.info); return; }
     let live = true;
     setListing(demo ? DEMO_INFO : null);
     if (demo) return;
@@ -136,7 +199,7 @@ export default function App() {
     return () => { live = false; };
   }, [slug, listingVersion]);
   // Restored tokens require validation. Fresh login/password responses already verified the session.
-  const staffToken = getStaffToken(slug);
+  const staffToken = snapshot ? '' : getStaffToken(slug);
   useEffect(() => {
     let live = true, retry;
     if (!staffToken || getVerifiedStaffToken(slug) === staffToken) return;
@@ -160,13 +223,15 @@ export default function App() {
   function go(next, sectionId) {
     next = withDefault(['start', 'give/start', 'give/staff'].includes(next) ? 'staff' : next === 'prayer/map' ? 'prayer' : next, demo);
     // Drops any /give?session_id=… left over from a checkout return.
-    if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hashFor(slug, next, source));
+    const hash = snapshot ? '#/new/preview' + (next ? '/' + next : '') : hashFor(slug, next, source);
+    if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hash);
     setWhere(w => ({ ...w, route: next }));
     setChatOpen(false);
     setScrollTarget({ id: sectionId ?? null });
   }
   // Open an existing church, or the demo church from the not-found page.
   function choose(next, nextRoute = '') {
+    if (snapshot) { go(nextRoute); return; }
     saveChurch(next);
     if (source === 'subdomain') {
       window.location.href = shareLink(next, nextRoute);
@@ -197,13 +262,14 @@ export default function App() {
 
   const name = listing?.name || (demo ? DEMO_INFO.name : '');
   useEffect(() => {
+    if (route === 'new') { document.title = 'Create your church site · Tekton'; return; }
     if (!name) return;
     document.title = name;
     let icon = document.querySelector('link[rel="icon"]');
     if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
     icon.href = churchIcon(name);
-  }, [name]);
-  const ready = demo || apiReady === true;
+  }, [name, route]);
+  const ready = !!snapshot || demo || apiReady === true;
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
@@ -212,6 +278,12 @@ export default function App() {
   }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion]);
 
   const section = route.split('/')[0];
+  if (section === 'new') return <ChurchContext.Provider value={church}>
+    <div className="standalone-builder">
+      <header><Brand /></header>
+      <main><Builder /></main>
+    </div>
+  </ChurchContext.Provider>;
   // A new church on an older church API: everything but giving waits for the deploy.
   const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
   let page;
@@ -256,7 +328,8 @@ export default function App() {
   </>;
 
   return <ChurchContext.Provider value={church}>
-    <div className="app">
+    <div className={'app' + (snapshot ? ' site-preview' : '')}>
+      {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to the builder</a></div>}
       <Sidebar route={route} go={go} savedCount={savedCount} />
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">

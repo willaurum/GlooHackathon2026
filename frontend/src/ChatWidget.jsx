@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiUrl } from './api.js';
+import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import { chatHistory } from './chatHistory.js';
@@ -30,7 +30,7 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
     log = useRef(null);
   useEffect(() => {
     if (!church.ready) return;
-    fetch(apiUrl('/chat/status')).then(r => r.json()).then(s => setConfigured(s.configured)).catch(() => {});
+    api('/chat/status').then(s => setConfigured(s.configured)).catch(() => {});
   }, []);
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, busy, open]);
   async function send(text) {
@@ -40,13 +40,11 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
     const history = [...messages, { role: 'user', content: text }];
     setMessages(history); setInput(''); setBusy(true);
     try {
-      const response = await fetch(apiUrl('/chat'), {
+      const body = await api('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, messages: chatHistory(history) })
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Something went wrong. Please try again.');
       setConfigured(body.configured);
       setMessages(previous => [...previous, { role: 'assistant', content: body.reply, actions: body.actions }]);
       if (body.actions?.some(a => a.request_id)) onRequestFiled?.();

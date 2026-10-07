@@ -117,12 +117,13 @@ test('who may call what', () => {
 });
 
 test('the container gets the church from the Worker, never from the browser', () => {
-  const spoofed = new Headers({ 'X-Church': 'grace-community', 'X-Church-Name': 'Evil', Authorization: 'Bearer ' + 'a'.repeat(32), 'Content-Type': 'application/json' });
+  const spoofed = new Headers({ 'X-Church': 'grace-community', 'X-Church-Name': 'Evil', Authorization: 'Bearer ' + 'a'.repeat(32), 'Content-Type': 'application/json', 'cf-connecting-ip': '192.0.2.1' });
   const out = churchHeaders(spoofed, { slug: 'hope-chapel', name: 'Hope Chapel & Friends', city: 'Austin', demo: false });
   assert.equal(out.get('X-Church'), 'hope-chapel');
   assert.equal(decodeURIComponent(out.get('X-Church-Name')), 'Hope Chapel & Friends');
   assert.equal(out.get('Authorization'), null);
   assert.equal(out.get('Content-Type'), 'application/json');
+  assert.equal(out.get('cf-connecting-ip'), '192.0.2.1');
 });
 
 test('church subdomains of BASE_DOMAIN are allowed origins', () => {
@@ -200,4 +201,41 @@ test('a rejected staff session is flagged so the browser drops it; no session se
   assert.equal((await outage.json()).code, undefined);
   assert.equal(sentStaffToken(asStaff('short')), true);
   assert.equal(sentStaffToken(new Request('https://api.test', { headers: { 'X-API-Key': 'k' } })), false);
+});
+
+test('drafts are public; apply and all unknown builder routes stay staff only', () => {
+  for (const demo of [true, false]) {
+    assert.equal(access('POST', '/api/builder/drafts', demo), 'public');
+    for (const action of ['blank', 'upload']) {
+      assert.equal(access('POST', `/api/builder/drafts/${action}`, demo), 'public');
+      for (const method of ['PUT', 'PATCH', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${action}`, demo), 'staff');
+      assert.equal(access('POST', `/api/builder/drafts/${action}/extra`, demo), 'staff');
+    }
+    for (const id of ['abc123def', '+1', '01', '1_0', ' 1', 'odd.id']) {
+      for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
+        ['GET', `/api/builder/drafts/${id}/site`],
+        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/preview`]])
+        assert.equal(access(m, p, demo), 'public', m + ' ' + p);
+      assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${id}/site`, demo), 'staff');
+    }
+    for (const p of ['/api/builder', '/api/builder/sessions', '/api/builder/unknown',
+      '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra', '/api/builder/drafts/x/site/extra'])
+      for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+        if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
+  }
+});
+
+test('multipart headers and file bytes reach the container unchanged', async () => {
+  const body = new FormData();
+  body.append('files', new File(['Sunday worship at 9am'], 'bulletin.txt', { type: 'text/plain' }));
+  const original = new Request('https://api.test/api/builder/drafts/upload', { method: 'POST', body });
+  const bytes = await original.clone().arrayBuffer();
+  const forwarded = new Request(original.url, { method: original.method,
+    headers: churchHeaders(original.headers, { slug: 'materials-test', name: 'Materials Test Chapel', city: 'Thistlemere', demo: false }),
+    body: original.body, redirect: 'manual', duplex: 'half' });
+  assert.equal(forwarded.headers.get('Content-Type'), original.headers.get('Content-Type'));
+  assert.deepEqual(await forwarded.arrayBuffer(), bytes);
 });
