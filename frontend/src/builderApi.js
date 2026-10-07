@@ -19,6 +19,9 @@ export const draftApi = (path = '', options = {}) => request(apiUrl('/builder/dr
 
 export const createBlank = () => draftApi('/blank', { method: 'POST' });
 
+/** Where a draft's church.json or site.json downloads from (built from the draft as it is now). */
+export const draftFileUrl = (draftId, name) => apiUrl('/builder/drafts/' + encodeURIComponent(draftId) + '/' + name + '.json', DEMO_CHURCH);
+
 export const itemApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/items', { method: 'POST', body: JSON.stringify(body) });
 
 export const partApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/parts', { method: 'POST', body: JSON.stringify(body) });
@@ -29,6 +32,15 @@ export const draftPageApi = (draftId, pageId) => draftApi('/' + encodeURICompone
 export const editApi = (draftId, request) => draftApi('/' + encodeURIComponent(draftId) + '/edits', { method: 'POST', body: JSON.stringify({ request }) });
 
 export const undoEditApi = draftId => draftApi('/' + encodeURIComponent(draftId) + '/edits/undo', { method: 'POST' });
+
+/** Import the upcoming events of a calendar Tekton found on the church's site (only after the church says yes),
+ * or leave it out. Tekton reads the feed it found itself; the page never sends an address. */
+export const calendarApi = (draftId, calendarId, action) => draftApi('/' + encodeURIComponent(draftId) + '/calendars/'
+  + encodeURIComponent(calendarId) + '/' + (action === 'import' ? 'import' : 'decline'), { method: 'POST' });
+
+/** "Add it anyway": something the fact check removed, added back by the church (marked as added by the church). */
+export const removedApi = (draftId, removedId) => draftApi('/' + encodeURIComponent(draftId) + '/removed/'
+  + encodeURIComponent(removedId) + '/add', { method: 'POST' });
 
 /** The pastor confirms (or takes back) the statement of faith Tekton kept word for word. */
 export const beliefsApi = (draftId, confirmed) => draftApi('/' + encodeURIComponent(draftId) + '/beliefs', { method: 'POST', body: JSON.stringify({ confirmed }) });

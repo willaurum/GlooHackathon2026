@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, getApiKey } from './api.js';
+import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import { eventsToList, isoDay, listHeading } from './calendarList.js';
 
@@ -28,19 +28,15 @@ const CATEGORY_COLORS = {
 
 export default function Calendar({ setError = () => {} }) {
   const church = useChurch();
-  // Calendar writes and summary generation require staff, including on the demo church.
+  // Calendar writes require staff, including on the demo church.
   const canEdit = church.staff;
-  const canChooseModel = canEdit && !!getApiKey();
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [aiStatus, setAiStatus] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedDate, setSelectedDate] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   // 'month': the month the grid shows. 'upcoming': today or later, from any month.
   const [listView, setListView] = useState('month');
-  const [summarizingId, setSummarizingId] = useState(null);
-  const [cardErrors, setCardErrors] = useState({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -73,169 +69,9 @@ export default function Calendar({ setError = () => {} }) {
     }
   }
 
-  async function loadAiStatus() {
-    try {
-      let status;
-      try {
-        status = await api('/ai/status');
-      } catch {
-        status = await api('/ollama/status');
-      }
-      setAiStatus(status);
-    } catch {
-      setAiStatus({ connected: false, error: 'AI endpoint unreachable' });
-    }
-  }
-
-  async function handleModelChange(e) {
-    const newModel = e.target.value;
-    try {
-      try {
-        await api('/ai/model', {
-          method: 'POST',
-          body: JSON.stringify({ model: newModel }),
-        });
-      } catch {
-        await api('/ollama/model', {
-          method: 'POST',
-          body: JSON.stringify({ model: newModel }),
-        });
-      }
-      await loadAiStatus();
-    } catch (err) {
-      setError('Failed to switch model: ' + err.message);
-    }
-  }
-
   useEffect(() => {
     loadEvents();
-    loadAiStatus();
-    const timer = setInterval(loadAiStatus, 10000);
-    return () => clearInterval(timer);
   }, []);
-
-  async function handleSummarize(eventId) {
-    setSummarizingId(eventId);
-    setCardErrors(prev => {
-      const copy = { ...prev };
-      delete copy[eventId];
-      return copy;
-    });
-    setError('');
-    try {
-      const updated = await api(`/events/${eventId}/summarize`, { method: 'POST' });
-      setEvents(prev => prev.map(e => (e.id === eventId ? updated : e)));
-    } catch (err) {
-      const isTimeout =
-        err.message &&
-        (err.message.includes('504') ||
-          err.message.toLowerCase().includes('timeout') ||
-          err.message.toLowerCase().includes('timed out'));
-
-      if (isTimeout) {
-        // Check if event summary was saved despite gateway timeout
-        try {
-          const freshEvent = await api(`/events/${eventId}`);
-          if (freshEvent && freshEvent.ai_summary) {
-            setEvents(prev => prev.map(e => (e.id === eventId ? freshEvent : e)));
-            setError('');
-            return;
-          }
-        } catch {}
-      }
-
-      const msg = err.message || 'AI summarization failed';
-      setCardErrors(prev => ({ ...prev, [eventId]: msg }));
-      setError(`AI summary failed for event #${eventId}: ${msg}`);
-    } finally {
-      setSummarizingId(null);
-    }
-  }
-
-  async function handleSummarizeBatch(onlyMissing = false) {
-    const mode = onlyMissing ? 'missing' : 'all';
-    setSummarizingId(mode);
-    setCardErrors({});
-    setError('');
-    try {
-      const res = await api('/events/summarize-all', {
-        method: 'POST',
-        body: JSON.stringify({ only_missing: onlyMissing }),
-      });
-      if (res.events) {
-        setEvents(res.events);
-      } else {
-        await loadEvents();
-      }
-      if (res.errors && res.errors.length > 0) {
-        const newCardErrors = {};
-        for (const err of res.errors) {
-          newCardErrors[err.event_id] = err.error;
-        }
-        setCardErrors(newCardErrors);
-        setError(`Summarized with ${res.errors.length} AI model error(s).`);
-      } else {
-        setError('');
-      }
-    } catch (err) {
-      const isTimeout =
-        err.message &&
-        (err.message.includes('504') ||
-          err.message.toLowerCase().includes('timeout') ||
-          err.message.toLowerCase().includes('timed out'));
-
-      if (isTimeout) {
-        // The HTTP request timed out at the gateway (504), but the backend often
-        // finishes generating summaries in the database. Poll /events to verify actual status.
-        let allSucceeded = false;
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try {
-            if (attempt > 0) {
-              await new Promise(r => setTimeout(r, 1500));
-            }
-            const freshEvents = await api('/events');
-            setEvents(freshEvents);
-            const missing = freshEvents.filter(e => !e.ai_summary).length;
-            if (missing === 0 || (onlyMissing && missing === 0)) {
-              allSucceeded = true;
-              break;
-            }
-          } catch {
-            // ignore network glitch during check
-          }
-        }
-
-        if (allSucceeded) {
-          // All targeted events have summaries successfully generated!
-          // Clear any error so no false 504 banner is shown.
-          setError('');
-          return;
-        }
-
-        // If not all finished, show whatever completed
-        try {
-          const freshEvents = await api('/events');
-          setEvents(freshEvents);
-          const completedCount = freshEvents.filter(e => !!e.ai_summary).length;
-          if (completedCount > 0) {
-            setError(
-              `Summarization took longer than the gateway timeout, but ${completedCount}/${freshEvents.length} event summaries are saved.`
-            );
-            return;
-          }
-        } catch {}
-      } else {
-        // Non-timeout error: still reload events to show any that were saved
-        try {
-          await loadEvents();
-        } catch {}
-      }
-
-      setError(`AI summarization failed: ${err.message}`);
-    } finally {
-      setSummarizingId(null);
-    }
-  }
 
   async function handleCreateEvent(e) {
     e.preventDefault();
@@ -250,14 +86,12 @@ export default function Calendar({ setError = () => {} }) {
       setFormData({
         title: '',
         category: 'Worship',
-        date: '2026-09-27',
+        date: isoDay(),
         time: '10:00 AM - 11:30 AM',
         location: 'Main Sanctuary',
         ministry_name: 'Worship collective',
         description: '',
       });
-      // Optionally trigger AI summary for newly added event immediately
-      handleSummarize(created.id);
     } catch (err) {
       setError('Could not create event: ' + err.message);
     } finally {
@@ -346,78 +180,24 @@ export default function Calendar({ setError = () => {} }) {
     }
   }
 
-  const unsummarizedCount = events.filter(e => !e.ai_summary).length;
 
   return (
     <div className="calendar-section">
       {/* Top Controls Bar */}
-      <div className="calendar-banner">
-        <div className="calendar-banner-left">
-          <div className="ai-status-pill">
-            <span className={`status-dot ${aiStatus?.connected ? 'connected' : 'offline'}`} />
-            <span>
-              AI Endpoint: {aiStatus?.connected ? 'Connected' : 'Offline'}
-            </span>
-            {canChooseModel && aiStatus?.connected && aiStatus?.available_models && aiStatus.available_models.length > 0 ? (
-              <select
-                className="model-select"
-                value={aiStatus.default_model}
-                onChange={handleModelChange}
-                title="Active AI model (change anytime)"
-              >
-                {!aiStatus.available_models.includes(aiStatus.default_model) && (
-                  <option value={aiStatus.default_model}>{aiStatus.default_model} (configured)</option>
-                )}
-                {aiStatus.available_models.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            ) : (
-              aiStatus?.default_model && <b> ({aiStatus.default_model})</b>
-            )}
+      {canEdit && (
+        <div className="calendar-banner">
+          <div className="calendar-banner-left">
+            <p className="calendar-subtitle">
+              Manage gatherings, services, and outreach on the church calendar.
+            </p>
           </div>
-          <p className="calendar-subtitle">
-            All summaries are generated dynamically via our connected <b>AI endpoint</b>, never pre-written.
-          </p>
+          <div className="calendar-banner-actions">
+            <button className="primary" onClick={() => setShowAddModal(true)}>
+              + Add New Event
+            </button>
+          </div>
         </div>
-        {canEdit && <div className="calendar-banner-actions">
-          <button
-            className="secondary summary-btn"
-            disabled={summarizingId !== null || loading || !aiStatus?.connected || unsummarizedCount === 0}
-            onClick={() => handleSummarizeBatch(true)}
-            title={
-              !aiStatus?.connected
-                ? 'AI endpoint offline'
-                : unsummarizedCount === 0
-                ? 'All events already have AI summaries'
-                : `Generate summaries for ${unsummarizedCount} event(s) without summaries`
-            }
-          >
-            {summarizingId === 'missing' ? (
-              <>✦ Summarizing missing…</>
-            ) : unsummarizedCount === 0 ? (
-              <>✓ All Summarized</>
-            ) : (
-              <>✧ Summarize Missing ({unsummarizedCount})</>
-            )}
-          </button>
-          <button
-            className="secondary summary-btn"
-            disabled={summarizingId !== null || loading || !aiStatus?.connected}
-            onClick={() => handleSummarizeBatch(false)}
-            title={!aiStatus?.connected ? 'AI endpoint offline' : 'Regenerate summaries for all events'}
-          >
-            {summarizingId === 'all' ? (
-              <>✦ Remaking all summaries…</>
-            ) : (
-              <>↻ Remake All Summaries</>
-            )}
-          </button>
-          {canEdit && <button className="primary" onClick={() => setShowAddModal(true)}>
-            + Add New Event
-          </button>}
-        </div>}
-      </div>
+      )}
 
       {/* Main Layout: Split Calendar View & Event Cards */}
       <div className="calendar-layout">
@@ -546,7 +326,7 @@ export default function Calendar({ setError = () => {} }) {
               ⌕{' '}
               <input
                 type="text"
-                placeholder="Search events, topics, or AI summaries..."
+                placeholder="Search events or topics..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
@@ -582,121 +362,53 @@ export default function Calendar({ setError = () => {} }) {
             </div>
           ) : (
             <div className="events-list">
-              {filteredEvents.map(event => {
-                const isSummarizingThis =
-                  summarizingId === event.id ||
-                  summarizingId === 'all' ||
-                  (summarizingId === 'missing' && !event.ai_summary);
-                return (
-                  <article key={event.id} className="panel event-card">
-                    <div className="event-card-header">
-                      <div className="event-meta-tags">
-                        <span
-                          className="category-badge"
-                          style={{
-                            backgroundColor: `${CATEGORY_COLORS[event.category] || '#729564'}22`,
-                            color: CATEGORY_COLORS[event.category] || '#314c37',
-                            borderColor: `${CATEGORY_COLORS[event.category] || '#729564'}44`,
-                          }}
-                        >
-                          {event.category}
+              {filteredEvents.map(event => (
+                <article key={event.id} className="panel event-card">
+                  <div className="event-card-header">
+                    <div className="event-meta-tags">
+                      <span
+                        className="category-badge"
+                        style={{
+                          backgroundColor: `${CATEGORY_COLORS[event.category] || '#729564'}22`,
+                          color: CATEGORY_COLORS[event.category] || '#314c37',
+                          borderColor: `${CATEGORY_COLORS[event.category] || '#729564'}44`,
+                        }}
+                      >
+                        {event.category}
+                      </span>
+                      {event.ministry_name && (
+                        <span className="ministry-badge">
+                          ◈ {event.ministry_name}
                         </span>
-                        {event.ministry_name && (
-                          <span className="ministry-badge">
-                            ◈ {event.ministry_name}
-                          </span>
-                        )}
-                      </div>
-                      <div className="event-datetime-badge">
-                        <span>🗓 {event.date}</span>
-                        <span>·</span>
-                        <span>◷ {event.time}</span>
-                      </div>
+                      )}
                     </div>
-
-                    <div className="event-title-row">
-                      <h3 className="event-title">{event.title}</h3>
-                      {canEdit && <button className="ghost event-delete" onClick={() => handleDelete(event)}
-                        aria-label={`Delete ${event.title}`}>Delete</button>}
+                    <div className="event-datetime-badge">
+                      <span>🗓 {event.date}</span>
+                      <span>·</span>
+                      <span>◷ {event.time}</span>
                     </div>
+                  </div>
 
-                    <div className="event-location">
-                      <span>📍</span> {event.location}
-                    </div>
+                  <div className="event-title-row">
+                    <h3 className="event-title">{event.title}</h3>
+                    {canEdit && (
+                      <button
+                        className="ghost event-delete"
+                        onClick={() => handleDelete(event)}
+                        aria-label={`Delete ${event.title}`}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
 
-                    <p className="event-description">{event.description}</p>
+                  <div className="event-location">
+                    <span>📍</span> {event.location}
+                  </div>
 
-                    {/* AI SUMMARY BOX */}
-                    <div className="ai-summary-container">
-                      <div className="ai-summary-header">
-                        <div className="ai-summary-label">
-                          <span className="sparkle-icon">✧</span>
-                          <strong>AI Summary</strong>
-                        </div>
-                        {canEdit && <button
-                          className="ai-refresh-btn"
-                          disabled={isSummarizingThis || !aiStatus?.connected}
-                          onClick={() => handleSummarize(event.id)}
-                          title={!aiStatus?.connected ? 'AI endpoint offline' : event.ai_summary ? 'Regenerate AI summary' : 'Generate AI summary'}
-                        >
-                          {isSummarizingThis ? 'Generating…' : event.ai_summary ? '↻ Regenerate' : '✧ Generate AI Summary'}
-                        </button>}
-                      </div>
-
-                      <div className="ai-summary-body">
-                        {isSummarizingThis ? (
-                          <div className="ai-loading-state">
-                            <span className="loading-pulse">✦</span>
-                            <span>Generating AI summary…</span>
-                          </div>
-                        ) : event.ai_summary ? (
-                          <>
-                            <blockquote className="ai-summary-quote">
-                              "{event.ai_summary}"
-                            </blockquote>
-                            {cardErrors[event.id] && (
-                              <div className="ai-card-error" style={{ marginTop: '8px' }}>
-                                <span>⚠ Update failed: {cardErrors[event.id]}</span>
-                                <button
-                                  className="retry-btn"
-                                  onClick={() => handleSummarize(event.id)}
-                                >
-                                  ↻ Retry
-                                </button>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="ai-empty-prompt">
-                            {cardErrors[event.id] ? (
-                              <div className="ai-card-error">
-                                <span>⚠ {cardErrors[event.id]}</span>
-                                <button
-                                  className="retry-btn"
-                                  onClick={() => handleSummarize(event.id)}
-                                >
-                                  ↻ Retry
-                                </button>
-                              </div>
-                            ) : (
-                              <>
-                                <p>No AI summary generated for this event yet.</p>
-                                <button
-                                  className="secondary generate-btn"
-                                  disabled={!aiStatus?.connected}
-                                  onClick={() => handleSummarize(event.id)}
-                                >
-                                  ✧ Generate AI Summary
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
+                  <p className="event-description">{event.description}</p>
+                </article>
+              ))}
             </div>
           )}
         </section>
@@ -795,10 +507,6 @@ export default function Calendar({ setError = () => {} }) {
                 />
               </label>
 
-              <p className="disclaimer">
-                After saving, our AI endpoint will automatically be triggered to draft a welcoming 2-sentence bulletin summary.
-              </p>
-
               <div className="modal-actions">
                 <button
                   type="button"
@@ -812,7 +520,7 @@ export default function Calendar({ setError = () => {} }) {
                   className="primary"
                   disabled={busy}
                 >
-                  {busy ? 'Saving…' : 'Create & Generate AI Summary →'}
+                  {busy ? 'Saving…' : 'Create Event'}
                 </button>
               </div>
             </form>

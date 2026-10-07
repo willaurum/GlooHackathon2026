@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setApiChurch } from './api.js';
-import { createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft } from './builderApi.js';
+import { calendarApi, createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft, removedApi } from './builderApi.js';
 import { getVerifiedStaffToken } from './church.js';
 
 const storage = new Map();
@@ -150,5 +150,29 @@ test('list edits go to the public items route', async () => {
       return Response.json({ id: 'draft-id', collections: {} });
     };
     assert.equal((await itemApi('draft-id', { collection: 'staff', id: 'staff-1', include: true })).id, 'draft-id');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('calendar import and decline post to the draft calendar routes without an address', async () => {
+  const originalFetch = globalThis.fetch;
+  const seen = [];
+  try {
+    globalThis.fetch = async (url, options) => { seen.push([url, options.method, options.body]); return Response.json({ id: 'draft-id' }); };
+    await calendarApi('draft-id', 'cal1', 'import');
+    await calendarApi('draft-id', 'cal2', 'decline');
+    assert.deepEqual(seen, [['/api/builder/drafts/draft-id/calendars/cal1/import', 'POST', undefined],
+      ['/api/builder/drafts/draft-id/calendars/cal2/decline', 'POST', undefined]]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('adding back a removed claim posts to its draft route', async () => {
+  const originalFetch = globalThis.fetch;
+  const seen = [];
+  try {
+    globalThis.fetch = async (url, options) => { seen.push([url, options.method, options.headers.Authorization]); return Response.json({ id: 'draft-id', removed: [] }); };
+    assert.deepEqual(await removedApi('draft-id', 'r3'), { id: 'draft-id', removed: [] });
+    assert.deepEqual(seen, [['/api/builder/drafts/draft-id/removed/r3/add', 'POST', undefined]]);
+    globalThis.fetch = async () => Response.json({ detail: 'Not found' }, { status: 404 });
+    await assert.rejects(removedApi('draft-id', 'r9'), error => error.status === 404);
   } finally { globalThis.fetch = originalFetch; }
 });

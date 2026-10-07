@@ -4,11 +4,12 @@ The builder reads a few dozen pages of a site that may have hundreds, so it read
 staff, events, ministries, groups, sermons, locations and visit pages, then about and contact pages, and only
 a few blog or news posts. Everything here is plain code; nothing is decided by an AI.
 """
+import base64
 import re
 import threading
 import time
 import xml.etree.ElementTree as ET
-from urllib.parse import unquote, urldefrag, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urldefrag, urljoin, urlparse
 
 USER_AGENT = 'Tekton'
 MAX_SITEMAPS = 5
@@ -81,8 +82,18 @@ def skippable(url):
     return bool(SKIP_RE.search(url) or FILE_RE.search(urlparse(url).path))
 
 
+# Copies of pages made for a church app ("/staff-app", "Kids - App only", "Staff (App)") and the index pages of a
+# sermon library (/media/topic, /sermons/speaker...) repeat what other pages say; they are read last.
+APP_ONLY_RE = re.compile(r'(?<![a-z])app[-_\s]?only(?![a-z])|[-_]app/?$|\(app\)', re.I)
+SERMON_INDEX_RE = re.compile(r'/(media|sermons?|messages?|podcasts?)/(topics?|speakers?|scriptures?|series|books?|tags?|'
+                             r'categor(y|ies)|archives?)/?$', re.I)
+
+
 def score(url, anchor='', in_nav=False):
     """Higher is read sooner. Kind pages beat posts, navigation links beat links in body text."""
+    path = urlparse(url).path
+    if APP_ONLY_RE.search(path) or APP_ONLY_RE.search(anchor or '') or SERMON_INDEX_RE.search(path):
+        return -10
     kind = page_type(url, anchor)
     value = WEIGHTS.get(kind, 2)
     if kind == 'other' and anchor:
@@ -101,6 +112,55 @@ def score(url, anchor='', in_nav=False):
 
 def is_feed(url):
     return bool(FEED_RE.search(url))
+
+
+# Podcast hosts whose feed addresses can be read like any other sermon feed (robots.txt and the feed limit apply).
+PODCAST_FEEDS = re.compile(
+    r'^https?://(?:www\.spreaker\.com/show/[\w-]+/episodes/feed'
+    r'|anchor\.fm/s/[\w-]+/podcast/rss'
+    r'|feeds\.buzzsprout\.com/\d+\.rss'
+    r'|feeds\.captivate\.fm/[\w-]+/?'
+    r'|feed\.podbean\.com/[\w.-]+/feed\.xml'
+    r'|[\w-]+\.podbean\.com/feed(?:\.xml)?/?'
+    r'|rss\.libsyn\.com/shows/\d+/destinations/\d+\.xml'
+    r'|feeds\.simplecast\.com/[\w-]+'
+    r'|(?:feeds\.)?subsplash\.com/[^?#]*(?:podcast|rss|feed)[^?#]*)$', re.I)
+
+
+def podcast_feed(url):
+    """The RSS feed behind a podcast link, or ''. A Google Podcasts link names its feed in base64
+    (podcasts.google.com/feed/<base64>); a Spreaker show page has one at /episodes/feed. Apple Podcasts links
+    name only an id, which needs Apple's lookup service, so they stay links."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower()
+    if host == 'podcasts.google.com':
+        match = re.match(r'^/feed/([\w-]+)', parsed.path)
+        if not match:
+            return ''
+        encoded = match.group(1)
+        try:
+            url = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode('utf-8').strip()
+        except (ValueError, UnicodeDecodeError):
+            return ''
+        if urlparse(url).scheme not in ('http', 'https'):
+            return ''
+        parsed, host = urlparse(url), (urlparse(url).hostname or '').lower()
+    show = re.match(r'^/show/([\w-]+)/?$', parsed.path) if host in ('spreaker.com', 'www.spreaker.com') else None
+    if show:
+        return f'https://www.spreaker.com/show/{show.group(1)}/episodes/feed'
+    return url if PODCAST_FEEDS.match(url) else ''
+
+
+def unwrap(url):
+    """The real address behind a redirect wrapper. Google Sites sends every outside link through
+    https://www.google.com/url?q=<address>&sa=D...; the address it goes to is the link."""
+    parsed = urlparse(url)
+    if (parsed.hostname or '').lower() in ('google.com', 'www.google.com') and parsed.path == '/url':
+        query = parse_qs(parsed.query)
+        target = (query.get('q') or query.get('url') or [''])[0]
+        if urlparse(target).scheme in ('http', 'https'):
+            return urldefrag(target)[0]
+    return url
 
 
 def feed_url(url):
