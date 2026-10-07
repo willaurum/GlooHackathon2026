@@ -1218,10 +1218,16 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
         return []
     claims = []
     beliefs = is_beliefs(source)
-    for fact in args.get('facts', []) if isinstance(args, dict) else []:
+    facts = builder_agents.entries(args, 'facts')
+    if facts is None:
+        if args:
+            builder_run.drop('not in the expected shape')  # one answer that could not be read, counted once
+        facts = []
+    for fact in facts:
         if not isinstance(fact, dict):
             builder_run.drop('not in the expected shape')
             continue
+        fact = builder_agents.clean(fact)
         field, value, quote = fact.get('field'), str(fact.get('value', '')).strip(), str(fact.get('quote', '')).strip()
         if field not in AI_FIELDS and field != 'faq' or not value:
             builder_run.drop('not a detail Tekton asked for')
@@ -1368,6 +1374,13 @@ def _structured_answer(response, tool):
     if not isinstance(answer, dict):
         return None
     required = tool['function']['parameters'].get('required', [])
+    for key in required:
+        # A list sent as a JSON string is read as the list; one that cannot be read asks the tool call instead.
+        if key in answer and not isinstance(answer[key], list) \
+                and tool['function']['parameters']['properties'].get(key, {}).get('type') == 'array':
+            answer[key] = builder_agents.entries(answer, key)
+            if answer[key] is None:
+                return None
     return without_nulls(answer) if all(key in answer for key in required) else None
 
 
@@ -1550,9 +1563,9 @@ def extract_all(sources, complete=None, deadline=None, notes=None):
 def _specialist_drops(name, raw, kept):
     """How many items a specialist reader returned that builder_agents.check left out as unsupported (its quote,
     name or details were not on the page). Events that are already past are skipped, not counted."""
-    entries = raw.get('items') if isinstance(raw, dict) else None
-    if not isinstance(entries, list):
-        return 0
+    entries = builder_agents.entries(raw, 'items')
+    if entries is None:
+        return 0  # an answer that could not be read is counted once by builder_agents.check
     today = builder_structured._today()
     past = 0
     if name == 'events':
