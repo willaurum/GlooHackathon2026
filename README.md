@@ -682,3 +682,10 @@ A world map of the countries a church prays for, with news headlines and dated u
 - `GET /api/regions` (each region carries its `updates`, newest first), `GET /api/news`. Updates live in the `field_updates` table; an older single `testimony` becomes the region's first update. Prayer points were removed. The demo church's news is the real headlines in `backend/app/news_live.json` when that snapshot exists, replaced on every backend start; the fictional `backend/app/news.json` is only the fallback.
 - `POST /api/news/refresh` (staff or API key): pulls live English stories for the region countries from NewsData.io (`NEWSDATA_API_KEY`), keeps each story's source link, and replaces that church's news. Answers 503 when `NEWSDATA_API_KEY` is not set.
 - To refresh the snapshot instead: `cd backend && python -m scripts.fetch_news` (needs `NEWSDATA_API_KEY`), then commit `backend/app/news_live.json`.
+
+## License
+
+Copyright (c) 2026 Isaac Smith, Ben Peterson, Will Cook, Jaron Wilson, Isaiah Mellace and Erik Ellis. **All rights reserved**; see [LICENSE](LICENSE). Licenses to use Tekton are available on request: ilsmith2@liberty.edu.
+
+- The build documentation in [build-docs/](build-docs/) is licensed under [CC BY 4.0](build-docs/LICENSE).
+- Third-party libraries, services and data keep their own licenses and terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -1,0 +1,29 @@
+Tekton
+Copyright (c) 2026 Isaac Smith, Ben Peterson, Will Cook, Jaron Wilson, Isaiah Mellace and Erik Ellis.
+All rights reserved.
+
+This software and its source code, documentation and associated files (the "Software") are
+proprietary and confidential to the copyright holders named above. No license or right is granted,
+by implication or otherwise, except as expressly stated below.
+
+Without the prior written permission of the copyright holders, you may not use, copy, modify, merge,
+publish, distribute, sublicense, sell, host, provide as a service, or create derivative works of the
+Software, in whole or in part.
+
+Evaluation. The judges, code verification team and organizers of the 2026 Gloo AI Hackathon may
+access, run and review the Software solely to evaluate it as a Hackathon entry.
+
+Commercial licensing. Licenses to use the Software are available on request. Contact
+ilsmith2@liberty.edu.
+
+Exceptions.
+  - The build documentation in the build-docs/ folder is licensed under the Creative Commons
+    Attribution 4.0 International License (CC BY 4.0). See build-docs/LICENSE.
+  - Third-party components, libraries, services and data used by the Software remain under their
+    own licenses and terms. See THIRD_PARTY_NOTICES.md.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
