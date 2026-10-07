@@ -24,6 +24,7 @@ import socket
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -42,6 +43,9 @@ MAX_PAGES = 12
 MAX_PAGE_BYTES = 1_000_000
 MAX_SOURCE_CHARS = 20_000
 FETCH_TIMEOUT = 10.0
+IMPORT_BUDGET = float(os.environ.get('BUILDER_IMPORT_BUDGET', '75.0'))
+CRAWL_BUDGET = 30.0
+_now = time.monotonic
 # Fields the builder asks about when nothing is found. Optional fields are simply left empty.
 REQUIRED = ('name', 'address', 'phone', 'email', 'services')
 FIELD_LABELS = {'name': 'Church name', 'address': 'Street address', 'phone': 'Phone number', 'email': 'Email',
@@ -53,6 +57,31 @@ DAY_RE = {d: re.compile(rf'\b(?:{d}|{d[:3]})s?\b', re.I) for d in DAYS}
 
 
 # ---------------------------------------------------------------- 1. Import
+
+def _parallel(items, read, deadline, workers=4):
+    """Collect in source order; never join work that outlives the deadline."""
+    if not items or _now() >= deadline:
+        return [None] * len(items), len(items)
+
+    def run(item):
+        if _now() >= deadline:
+            return None, deadline + 1
+        value = read(item)
+        return value, _now()
+
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = [pool.submit(run, item) for item in items]
+        done, _ = wait(futures, timeout=max(0.0, deadline - _now()))
+        values, skipped = [], 0
+        for future in futures:
+            value, finished = future.result() if future in done else (None, deadline + 1)
+            skipped += finished > deadline
+            values.append(value if finished <= deadline else None)
+        return values, skipped
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
 
 class _PageText(HTMLParser):
     """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page."""
@@ -124,17 +153,28 @@ def _check_public(url):
             raise ValueError('That address is on a private network and cannot be imported.')
 
 
-def crawl(start_url, fetch=None, max_pages=MAX_PAGES):
+def crawl(start_url, fetch=None, max_pages=MAX_PAGES, deadline=None, notes=None):
     """Breadth-first over same-site HTML pages. `fetch(url) -> (final_url, content_type, text)` can be injected."""
     start_url = urldefrag(start_url.strip())[0]
-    _check_public(start_url)
+    deadline = deadline if deadline is not None else _now() + min(CRAWL_BUDGET, IMPORT_BUDGET)
+    _, skipped = _parallel([start_url], _check_public, deadline, workers=1)
+    if skipped:
+        if notes is not None:
+            notes.append('Stopped reading before the first page to stay within the time limit.')
+        return []
     origin = urlparse(start_url).netloc
     fetch = fetch or _http_fetch
     queue, seen, sources = [start_url], {start_url}, []
     while queue and len(sources) < max_pages:
+        if _now() >= deadline:
+            break
         url = queue.pop(0)
         try:
-            final_url, content_type, body = fetch(url)
+            results, skipped = _parallel([url], fetch, deadline, workers=1)
+            if skipped:
+                queue.insert(0, url)
+                break
+            final_url, content_type, body = results[0]
         except Exception as error:  # one broken page must not stop the import
             log.info('builder: skipped %s (%s)', url, error)
             continue
@@ -153,6 +193,9 @@ def crawl(start_url, fetch=None, max_pages=MAX_PAGES):
             if urlparse(link).netloc == origin and link not in seen and not re.search(r'\.(pdf|jpe?g|png|gif|zip|docx?)$', link, re.I):
                 seen.add(link)
                 queue.append(link)
+    if queue and len(sources) < max_pages and notes is not None:
+        total = min(max_pages, len(sources) + len(queue))
+        notes.append(f'Stopped reading after {len(sources)} of {total} pages to stay within the time limit.')
     return sources
 
 
@@ -161,29 +204,51 @@ MAX_IMAGES = 5
 MAX_IMAGE_BYTES = 4_000_000
 
 
-def read_images(sources, fetch_bytes=None, describe=None):
+def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=None):
     """Image sources: a bulletin or flyer often holds the only copy of a service time. Each same-site image
     (at most MAX_IMAGES) is transcribed by a vision model into text that the same rules then read. With no
     vision model, images are skipped."""
     describe = describe if describe is not None else _ai_describe
     if not describe:
         return []
+    deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
     fetch_bytes = fetch_bytes or _http_fetch_bytes
-    out, seen = [], set()
+    out, seen, images = [], set(), []
     for page in sources:
         for url in page.get('images', []):
-            if url in seen or len(out) >= MAX_IMAGES:
+            if url in seen:
                 continue
             seen.add(url)
-            try:
-                content_type, data = fetch_bytes(url)
-                text = (describe(data, content_type) or '').strip()
-            except Exception as error:
-                log.info('builder: skipped image %s (%s)', url, error)
-                continue
-            if len(text) >= 20:
-                out.append({'id': f's{len(sources) + len(out) + 1}', 'kind': 'image', 'url': url,
-                            'title': f"Image on {page.get('title') or page['url']}", 'text': text[:MAX_SOURCE_CHARS]})
+            images.append((page, url))
+
+    def read(image):
+        page, url = image
+        try:
+            content_type, data = fetch_bytes(url)
+            if _now() >= deadline:
+                return None
+            text = (describe(data, content_type) or '').strip()
+        except Exception as error:
+            log.info('builder: skipped image %s (%s)', url, error)
+            return None
+        if len(text) >= 20:
+            return {'kind': 'image', 'url': url, 'title': f"Image on {page.get('title') or page['url']}",
+                    'text': text[:MAX_SOURCE_CHARS]}
+
+    pos = 0
+    while pos < len(images) and len(out) < MAX_IMAGES:
+        batch = images[pos:pos + MAX_IMAGES - len(out)]
+        results, skipped = _parallel(batch, read, deadline)
+        pos += len(batch)
+        for source in results:
+            if source:
+                out.append({'id': f's{len(sources) + len(out) + 1}', **source})
+        if skipped or _now() >= deadline:
+            skipped += min(len(images) - pos, MAX_IMAGES - len(out))
+            if skipped and notes is not None:
+                subject = '1 image was' if skipped == 1 else f'{skipped} images were'
+                notes.append(f'{subject} skipped because reading took too long.')
+            break
     return out
 
 
@@ -412,13 +477,19 @@ def _ai_available():
 _ai_complete = _ai_complete_impl if os.environ.get('BUILDER_AI', '1') != '0' else None
 
 
-def extract(sources, complete=None):
+def extract(sources, complete=None, deadline=None, notes=None):
     claims = []
     use_ai = complete is not None or (_ai_complete is not None and _ai_available())
-    for source in sources:
+    deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
+    results = [None] * len(sources)
+    if use_ai:
+        results, skipped = _parallel(sources, lambda source: ai_claims(source, complete), deadline)
+        if skipped and notes is not None:
+            subject = '1 source was' if skipped == 1 else f'{skipped} sources were'
+            notes.append(f'{subject} read without AI because it took too long.')
+    for source, result in zip(sources, results):
         claims += pattern_claims(source)
-        if use_ai:
-            claims += ai_claims(source, complete)
+        claims += result or []
     for i, claim in enumerate(claims, 1):
         claim['id'] = f'c{i}'
     return claims
@@ -620,17 +691,19 @@ def build_content(session):
 
 
 def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None):
-    sources = crawl(url, fetch)
+    started, notes = _now(), []
+    deadline = started + IMPORT_BUDGET
+    sources = crawl(url, fetch, deadline=min(deadline, started + CRAWL_BUDGET), notes=notes)
     if not sources:
         raise ValueError('No pages could be read from that address.')
     if describe is not None or (_ai_describe is not None and _ai_available()):
-        sources += read_images(sources, fetch_bytes, describe)
-    claims = extract(sources, complete)
+        sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes)
+    claims = extract(sources, complete, deadline=deadline, notes=notes)
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
     return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(),
             'url': url, 'status': 'clarifying' if qs else 'review',
-            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs}
+            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes}
 
 
 # ---------------------------------------------------------------- storage and routes
@@ -704,7 +777,8 @@ def _load(draft_id):
 
 def _public(session):
     """The draft for the page, without the full page texts (the evidence quotes are enough)."""
-    return {**session, 'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title')} for s in session['sources']]}
+    return {**session, 'notes': session.get('notes', []),
+            'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title')} for s in session['sources']]}
 
 
 class ImportBody(BaseModel):

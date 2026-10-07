@@ -7,6 +7,7 @@ complete and consistent. The AI step is replaced by a fake so the tests are dete
     python -m unittest backend.tests.test_builder
 """
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 import unittest
@@ -166,6 +167,171 @@ class ImageTests(BuilderTestCase):
         self.assertEqual([x for x in s['sources'] if x['kind'] == 'image'], [])
 
 
+class BudgetTests(BuilderTestCase):
+    def test_ai_calls_run_with_four_workers(self):
+        sources = [{'id': f's{i}', 'url': f'https://church.test/{i}', 'text': f'Page {i}'} for i in range(4)]
+        lock = threading.Lock()
+        running, peak = 0, 0
+
+        def complete(messages, tools):
+            nonlocal running, peak
+            with lock:
+                running += 1
+                peak = max(peak, running)
+            time.sleep(0.3)
+            with lock:
+                running -= 1
+            return {'facts': [{'field': 'about', 'value': 'A test page.', 'quote': messages[1]['content'].split('\n')[-1]}]}
+
+        started = time.monotonic()
+        claims = builder.extract(sources, complete)
+        self.assertLess(time.monotonic() - started, 0.9)
+        self.assertEqual(peak, 4)
+        self.assertEqual([c['source_id'] for c in claims], [s['id'] for s in sources])
+
+    def test_hung_ai_is_dropped_and_pattern_claims_remain(self):
+        release, started, finished = threading.Event(), threading.Event(), threading.Event()
+
+        def complete(messages, tools):
+            if 'Page: https://church.test/\n' in messages[1]['content']:
+                started.set()
+                release.wait(2)
+                finished.set()
+                return {'facts': [{'field': 'about', 'value': 'Late result.', 'quote': 'Sundays 9 & 11'}]}
+            quote = messages[1]['content'].split('\n\n', 1)[1].split('\n')[0]
+            return {'facts': [{'field': 'about', 'value': quote, 'quote': quote}]}
+
+        try:
+            before = time.monotonic()
+            with mock.patch.object(builder, 'IMPORT_BUDGET', 0.15):
+                s = self.session('harborlight-messy', complete)
+            self.assertLess(time.monotonic() - before, 0.5)
+            self.assertTrue(started.is_set())
+            self.assertTrue(any(c['method'] == 'pattern' and c['field'] == 'services' for c in s['claims']))
+            self.assertEqual({c['source_id'] for c in s['claims'] if c['method'] == 'ai'},
+                             {source['id'] for source in s['sources'][1:]})
+            self.assertEqual(s['notes'], ['1 source was read without AI because it took too long.'])
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(1))
+        self.assertFalse(any(c['value'] == 'Late result.' for c in s['claims']))
+
+    def test_crawl_stops_at_its_budget_without_sleeping(self):
+        now, fetched = [0.0], []
+
+        def fetch(url):
+            fetched.append(url)
+            now[0] += 10
+            links = ''.join(f'<a href="/{i}">Page {i}</a>' for i in range(1, 12))
+            return url, 'text/html', f'<p>{url} Sundays 9 & 11</p>{links}'
+
+        with mock.patch.object(builder, '_now', lambda: now[0]):
+            s = builder.new_session('https://church.test/', fetch=fetch, complete=lambda m, t: None, describe=False)
+        self.assertEqual(fetched, ['https://church.test/', 'https://church.test/1', 'https://church.test/2'])
+        self.assertEqual(len(s['sources']), 3)
+        self.assertEqual(s['notes'], ['Stopped reading after 3 of 12 pages to stay within the time limit.'])
+
+    def test_total_budget_includes_time_spent_crawling(self):
+        now, called = [0.0], []
+
+        def fetch(url):
+            now[0] = 0.5
+            return url, 'text/html', '<p>Sundays 9 & 11</p><a href="/next">Next</a>'
+
+        with mock.patch.object(builder, '_now', lambda: now[0]), mock.patch.object(builder, 'IMPORT_BUDGET', 0.5):
+            s = builder.new_session('https://church.test/', fetch=fetch, complete=lambda m, t: called.append(m), describe=False)
+        self.assertEqual(called, [])
+        self.assertEqual(len(s['sources']), 1)
+        self.assertTrue(s['claims'])
+        self.assertEqual(len(s['notes']), 2)
+
+    def test_images_are_concurrent_and_keep_source_order(self):
+        barrier = threading.Barrier(4)
+        sources = [{'id': 's1', 'url': 'https://church.test/', 'title': 'Test page',
+                    'images': [f'https://church.test/{i}.png' for i in range(4)]}]
+
+        def describe(data, content_type):
+            barrier.wait(timeout=1)
+            time.sleep((3 - int(data)) * 0.01)
+            return f'Test bulletin {int(data)}: Sundays at 10 AM'
+
+        out = builder.read_images(sources, fetch_bytes=lambda url: ('image/png', url.rsplit('/', 1)[1][0].encode()),
+                                  describe=describe)
+        self.assertEqual([s['url'] for s in out], sources[0]['images'])
+        self.assertEqual([s['id'] for s in out], ['s2', 's3', 's4', 's5'])
+
+    def test_hung_image_does_not_block_the_import(self):
+        release, started, finished = threading.Event(), threading.Event(), threading.Event()
+
+        def describe(data, content_type):
+            started.set()
+            release.wait(2)
+            finished.set()
+            return 'Late bulletin: Sundays at 10 AM'
+
+        try:
+            before = time.monotonic()
+            with mock.patch.object(builder, 'IMPORT_BUDGET', 0.15):
+                s = builder.new_session('https://church.test/', fetch=site('harborlight-messy'),
+                                        complete=lambda m, t: None, fetch_bytes=lambda url: ('image/png', b'png'),
+                                        describe=describe)
+            self.assertLess(time.monotonic() - before, 0.5)
+            self.assertTrue(started.is_set())
+            self.assertTrue(s['claims'])
+            self.assertFalse(any(x['kind'] == 'image' for x in s['sources']))
+            self.assertIn('1 image was skipped because reading took too long.', s['notes'])
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(1))
+
+    def test_hung_fetch_stops_the_crawl(self):
+        release, finished = threading.Event(), threading.Event()
+        fetched = []
+
+        def fetch(url):
+            fetched.append(url)
+            if url.endswith('/next'):
+                release.wait(2)
+                finished.set()
+            return url, 'text/html', '<p>Sundays 9 & 11</p><a href="/next">Next</a>'
+
+        try:
+            before = time.monotonic()
+            with mock.patch.object(builder, 'CRAWL_BUDGET', 0.15):
+                s = builder.new_session('https://church.test/', fetch=fetch, complete=lambda m, t: None, describe=False)
+            self.assertLess(time.monotonic() - before, 0.5)
+            self.assertEqual(len(s['sources']), 1)
+            self.assertEqual(s['notes'], ['Stopped reading after 1 of 2 pages to stay within the time limit.'])
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(1))
+        self.assertEqual(fetched, ['https://church.test/', 'https://church.test/next'])
+
+    def test_fixture_claims_and_evidence_match_sequential_extraction(self):
+        for name in ('harborlight-messy', 'cedar-hollow-static'):
+            with self.subTest(name=name):
+                sources = builder.crawl('https://church.test/', fetch=site(name))
+                delays = {s['url']: (len(sources) - i) * 0.01 for i, s in enumerate(sources)}
+
+                def complete(messages, tools):
+                    url = messages[1]['content'].split('\n')[0].removeprefix('Page: ')
+                    time.sleep(delays[url])
+                    quote = messages[1]['content'].split('\n\n', 1)[1].split('\n')[0]
+                    return {'facts': [{'field': 'about', 'value': quote, 'quote': quote}]}
+
+                expected = []
+                for source in sources:
+                    expected += builder.pattern_claims(source) + builder.ai_claims(source, complete)
+                for i, claim in enumerate(expected, 1):
+                    claim['id'] = f'c{i}'
+                s = self.session(name, complete)
+                fields = builder.reconcile(expected, len(sources))
+                self.assertEqual(s['claims'], expected)
+                self.assertEqual(s['fields'], fields)
+                self.assertEqual(s['questions'], builder.questions(fields, expected, sources))
+                self.assertEqual(s['notes'], [])
+
+
 class SafetyTests(unittest.TestCase):
     def test_private_and_local_addresses_are_refused(self):
         with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '0'}):
@@ -208,6 +374,7 @@ class RouteTests(ChurchTestCase):
         self.assertEqual(response.status_code, 201, response.text)
         self.assertNotIn('text', response.json()['sources'][0])
         self.assertEqual(len(response.json()['id']), 24)
+        self.assertEqual(response.json()['notes'], [])
         return response.json()['id']
 
     def confirm(self, sid):
@@ -226,6 +393,16 @@ class RouteTests(ChurchTestCase):
         self.assertEqual(preview.status_code, 200, preview.text)
         self.assertEqual(preview.json()['content']['info']['name'], 'Harborlight Chapel')
         self.assertEqual(set(self.fake.seen), {builder.DRAFT_SPACE})
+
+    def test_notes_survive_storage_and_get_with_legacy_default(self):
+        sid = self.create()
+        draft = builder._load(sid)
+        draft['notes'] = ['Stopped reading to stay within the time limit.']
+        builder._save(draft)
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).json()['notes'], draft['notes'])
+        del draft['notes']
+        builder._save(draft)
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).json()['notes'], [])
 
     def test_drafts_live_outside_the_requesting_church(self):
         sid = self.create(self.hope())
