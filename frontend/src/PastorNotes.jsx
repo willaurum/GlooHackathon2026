@@ -402,7 +402,11 @@ export default function PastorNotes({ route, go }) {
     const timer = setTimeout(load, 5000);
     return () => clearTimeout(timer);
   }, [notes]);
-  if (!hasKey) return <KeyForm onChange={() => setHasKey(true)} />;
+  // Without the key, visitors still see the sermons the church publishes on its website.
+  if (!hasKey) return <>
+    <KeyForm onChange={() => setHasKey(true)} />
+    {published.length > 0 && <PublishedSermons sermons={published} notes={[]} onTranscribe={null} />}
+  </>;
   // Visitors see only sermons ready to read; staff also see queued and failed ones, to retry or delete.
   const shown = visibleNotes(notes, church.staff);
   const current = pickCurrent(shown, selected);
@@ -440,7 +444,7 @@ const YOUTUBE = /^https:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)/;
 function PublishedSermons({ sermons, notes, onTranscribe }) {
   const transcribed = new Set(notes.map(n => n.source_url).filter(Boolean));
   return <section className="card give-pad pn-published">
-    <h2>Sermons on your website</h2>
+    <h2>{onTranscribe ? 'Sermons on your website' : 'Sermons online'}</h2>
     <ul>{sermons.slice(0, 12).map(s => <li key={s.id}>
       {s.url ? <a href={s.url} target="_blank" rel="noreferrer">{s.title}</a> : <strong>{s.title}</strong>}
       <small>{[s.date && formatNoteDate(s.date), s.speaker, s.scripture].filter(Boolean).join(' · ')}</small>

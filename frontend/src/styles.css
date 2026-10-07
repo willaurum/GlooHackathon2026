@@ -1270,3 +1270,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .builder-asset { display: block; max-width: 160px; max-height: 90px; margin: 6px 0; border-radius: 6px; border: 1px solid var(--line); object-fit: contain; background: #fff; }
 .builder-page-preview { margin-top: 8px; padding: 10px 12px; border-left: 3px solid var(--green-100); font-size: 14px; display: grid; gap: 8px; overflow-wrap: anywhere; }
 .builder-page-preview p { margin: 2px 0; }
+/* What Tekton imported: a church's campuses and common questions on Plan your visit, its sermons and sign-ups. */
+.campus-card .link { display: inline-block; margin-top: 8px; font-size: 12px; }
+.faq-list { display: grid; gap: 8px; margin-top: 14px; }
+.faq { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 14px; background: var(--card); }
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq p { margin-top: 8px; }
+.home-sermons ul, .connect-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.home-sermons li, .connect-list li { display: grid; gap: 2px; }
+.home-sermons small, .connect-list small { color: var(--muted); }
+.give-elsewhere { margin-bottom: 16px; }

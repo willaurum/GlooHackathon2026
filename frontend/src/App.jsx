@@ -10,7 +10,7 @@ import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { ABOUT_DEMO_ONLY, Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import { Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -18,12 +18,13 @@ import Calendar from './Calendar.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
-import About from './About.jsx';
+import About, { ChurchBeliefs, ChurchStory } from './About.jsx';
 import Beliefs from './Beliefs.jsx';
 import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 import SitePage from './SitePages.jsx';
+import { footerLinks } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
 
@@ -35,7 +36,7 @@ const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
 
 // [eyebrow, title, intro] for each About page.
 const ABOUT_PAGES = {
-  about: ['About', 'Who we are.', 'The story, the people and the heart behind Grace Community Church.'],
+  about: ['About', 'Who we are.', 'The story, the people and the heart behind {name}.'],
   'about/beliefs': ['About', 'What we believe.', 'The convictions that shape our teaching and our life together.'],
   'about/news': ['News', 'What’s happening.', 'Quick updates on what’s coming up, and longer articles from our pastors and ministry leaders.'],
   'about/directory': ['About', 'Who to contact.', 'Pastors, staff and ministry leaders, and how to reach them.'],
@@ -48,9 +49,7 @@ const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'staff', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
-// Other churches have no Our story, Beliefs, Directory or Connect content yet, so About opens News.
 function withDefault(route, demo = true) {
-  if (!demo && ABOUT_DEMO_ONLY.has(route)) return 'about/news';
   const s = SECTIONS.find(x => x.route === route);
   return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
 }
@@ -314,13 +313,14 @@ function SiteApp({ snapshot }) {
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
     {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
     {section === 'about' && <div className="page">
-      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]} text={ABOUT_PAGES[route]?.[2]} />
-      {demo && <SubNav tabs={aboutTabsFor(demo)} route={route} go={go} />}
+      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]}
+        text={ABOUT_PAGES[route]?.[2]?.replace('{name}', demo ? 'Grace Community Church' : name || 'our church')} />
+      <SubNav tabs={aboutTabsFor(demo, church.pages)} route={route} go={go} />
       {route === 'about/news' && <News go={go} />}
-      {demo && route === 'about' && <About go={go} />}
-      {demo && route === 'about/beliefs' && <Beliefs />}
-      {demo && route === 'about/directory' && <Directory />}
-      {demo && route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
+      {route === 'about' && (demo ? <About go={go} /> : <ChurchStory go={go} />)}
+      {route === 'about/beliefs' && (demo ? <Beliefs /> : <ChurchBeliefs go={go} />)}
+      {route === 'about/directory' && <Directory />}
+      {route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
     </div>}
     {section === 'notes' && <div className="page">
       <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
@@ -360,6 +360,10 @@ function SiteApp({ snapshot }) {
           {page}
           <footer className="site-footer">
             <span>{name || 'Your church'} · Helping people find their people.</span>
+            {/* The church's social accounts and app, from its imported website. */}
+            {footerLinks(website?.site).length > 0 && <nav className="footer-links" aria-label="Follow us">
+              {footerLinks(website?.site).map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}
+            </nav>}
             {demo && <small>Demo site. Church details, people and contacts are fictional.</small>}
             <small className="powered-by">Powered by Tekton</small>
           </footer>

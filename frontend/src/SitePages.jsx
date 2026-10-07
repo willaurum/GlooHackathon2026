@@ -5,9 +5,8 @@ import Icon from './Icon.jsx';
 import { PageHeader } from './Layout.jsx';
 import { embedSrc, paragraphs, safeHref } from './site.js';
 
-// A page of the church's own website, imported by the site builder: headed sections of text, buttons and players.
-export default function SitePage({ slug }) {
-  const church = useChurch();
+// One imported page, loaded by its slug: { page, error }.
+function usePage(slug) {
   const [page, setPage] = useState(null), [error, setError] = useState('');
   useEffect(() => {
     let live = true;
@@ -18,14 +17,33 @@ export default function SitePage({ slug }) {
       .catch(err => { if (live) setError(err.status === 404 ? 'This page could not be found.' : err.message); });
     return () => { live = false; };
   }, [slug]);
+  return { page, error };
+}
+
+// The page title is shown once, so a first section headed with the same words starts without its heading.
+function SiteSections({ page }) {
+  const sections = page.sections.map((s, i) => i === 0 && s.heading === page.title ? { ...s, heading: '' } : s);
+  return sections.map((section, i) => <SiteSection key={i} section={section} />);
+}
+
+// A page of the church's own website, imported by Tekton: headed sections of text, buttons and players.
+export default function SitePage({ slug }) {
+  const church = useChurch();
+  const { page, error } = usePage(slug);
   if (error) return <div className="page"><p role="alert">{error}</p></div>;
   if (!page) return <div className="page"><p role="status">Loading…</p></div>;
-  // The page title is shown once, so a first section headed with the same words starts without its heading.
-  const sections = page.sections.map((s, i) => i === 0 && s.heading === page.title ? { ...s, heading: '' } : s);
   return <div className="page site-page">
     <PageHeader eyebrow={church?.name || ''} title={page.title} />
-    {sections.map((section, i) => <SiteSection key={i} section={section} />)}
+    <SiteSections page={page} />
   </div>;
+}
+
+/** An imported page's sections under another page's header (Our story, Beliefs). */
+export function SitePageBody({ slug }) {
+  const { page, error } = usePage(slug);
+  if (error) return <p role="alert">{error}</p>;
+  if (!page) return <p role="status">Loading…</p>;
+  return <div className="site-page"><SiteSections page={page} /></div>;
 }
 
 function SiteSection({ section }) {
