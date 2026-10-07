@@ -562,7 +562,10 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
             for href in page['feeds']:
                 add_feed(urljoin(final_url, href))
             for link, text, nav in anchors:
-                if builder_crawl.is_feed(link):
+                podcast = builder_crawl.podcast_feed(link)
+                if podcast:
+                    add_feed(podcast)  # a sermon podcast's own feed (Spreaker, Anchor, Buzzsprout...), read like any feed
+                elif builder_crawl.is_feed(link):
                     add_feed(link)
                 elif builder_crawl.same_site(link, origin) and link not in seen and not builder_crawl.skippable(link):
                     seen.add(link)

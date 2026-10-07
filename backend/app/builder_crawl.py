@@ -4,6 +4,7 @@ The builder reads a few dozen pages of a site that may have hundreds, so it read
 staff, events, ministries, groups, sermons, locations and visit pages, then about and contact pages, and only
 a few blog or news posts. Everything here is plain code; nothing is decided by an AI.
 """
+import base64
 import re
 import threading
 import time
@@ -101,6 +102,43 @@ def score(url, anchor='', in_nav=False):
 
 def is_feed(url):
     return bool(FEED_RE.search(url))
+
+
+# Podcast hosts whose feed addresses can be read like any other sermon feed (robots.txt and the feed limit apply).
+PODCAST_FEEDS = re.compile(
+    r'^https?://(?:www\.spreaker\.com/show/[\w-]+/episodes/feed'
+    r'|anchor\.fm/s/[\w-]+/podcast/rss'
+    r'|feeds\.buzzsprout\.com/\d+\.rss'
+    r'|feeds\.captivate\.fm/[\w-]+/?'
+    r'|feed\.podbean\.com/[\w.-]+/feed\.xml'
+    r'|[\w-]+\.podbean\.com/feed(?:\.xml)?/?'
+    r'|rss\.libsyn\.com/shows/\d+/destinations/\d+\.xml'
+    r'|feeds\.simplecast\.com/[\w-]+'
+    r'|(?:feeds\.)?subsplash\.com/[^?#]*(?:podcast|rss|feed)[^?#]*)$', re.I)
+
+
+def podcast_feed(url):
+    """The RSS feed behind a podcast link, or ''. A Google Podcasts link names its feed in base64
+    (podcasts.google.com/feed/<base64>); a Spreaker show page has one at /episodes/feed. Apple Podcasts links
+    name only an id, which needs Apple's lookup service, so they stay links."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower()
+    if host == 'podcasts.google.com':
+        match = re.match(r'^/feed/([\w-]+)', parsed.path)
+        if not match:
+            return ''
+        encoded = match.group(1)
+        try:
+            url = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode('utf-8').strip()
+        except (ValueError, UnicodeDecodeError):
+            return ''
+        if urlparse(url).scheme not in ('http', 'https'):
+            return ''
+        parsed, host = urlparse(url), (urlparse(url).hostname or '').lower()
+    show = re.match(r'^/show/([\w-]+)/?$', parsed.path) if host in ('spreaker.com', 'www.spreaker.com') else None
+    if show:
+        return f'https://www.spreaker.com/show/{show.group(1)}/episodes/feed'
+    return url if PODCAST_FEEDS.match(url) else ''
 
 
 def unwrap(url):

@@ -217,5 +217,45 @@ class LinkTests(unittest.TestCase):
             self.assertEqual(builder_crawl.unwrap(url), url)
 
 
+class PodcastTests(unittest.TestCase):
+    """Forest Baptist's Media page links its sermon podcast through Google Podcasts
+    (podcasts.google.com/feed/<base64 of its Spreaker feed>) and Apple Podcasts; no sermons were read."""
+
+    SPREAKER = 'https://www.spreaker.com/show/5253062/episodes/feed'
+
+    def test_podcast_links_name_their_feed(self):
+        google = ('https://podcasts.google.com/feed/aHR0cHM6Ly93d3cuc3ByZWFrZXIuY29tL3Nob3cvNTI1MzA2Mi9lcGlzb2Rlcy9mZWVk'
+                  '?sa=X&ved=0CBoQ27cFahcKEwi4u8T107KDAxUAAAAAHQAAAAAQBg')
+        self.assertEqual(builder_crawl.podcast_feed(google), self.SPREAKER)
+        self.assertEqual(builder_crawl.podcast_feed('https://www.spreaker.com/show/5253062'), self.SPREAKER)
+        for url in ('https://anchor.fm/s/abc123/podcast/rss', 'https://feeds.buzzsprout.com/12345.rss',
+                    'https://feeds.captivate.fm/grace-sermons/', 'https://feed.podbean.com/grace/feed.xml',
+                    'https://gracechurch.podbean.com/feed.xml', 'https://rss.libsyn.com/shows/123/destinations/456.xml',
+                    'https://feeds.simplecast.com/AbC123', 'https://feeds.subsplash.com/abc/podcast.rss'):
+            self.assertEqual(builder_crawl.podcast_feed(url), url)
+        for url in ('https://podcasts.apple.com/us/podcast/forest-baptist-church-podcast/id1596222749',
+                    'https://open.spotify.com/show/1FG3BwqoREPN7Lv7i5bDr8', 'https://podcasts.google.com/feed/!!!',
+                    'https://podcasts.google.com/feed/amF2YXNjcmlwdDphbGVydCgxKQ', 'https://www.spreaker.com/user/x/episodes/feed'):
+            self.assertEqual(builder_crawl.podcast_feed(url), '', url)
+
+    def test_the_import_reads_the_sermon_podcast(self):
+        fetch, fixture_feed = builder_score.fixture_fetchers(FBC)
+        read = []
+
+        def fetch_feed(url):
+            read.append(url)
+            return fixture_feed(url + '.xml' if url == self.SPREAKER else url)
+        with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1'}):
+            session = builder.new_session('https://church.test/home', fetch=fetch, fetch_feed=fetch_feed,
+                                          complete=lambda m, t: None, describe=False)
+        self.assertIn('https://www.spreaker.com/robots.txt', read)
+        self.assertIn(self.SPREAKER, read)
+        titles = [e['value'].get('title') for e in session['collections'].get('sermons', [])]
+        self.assertIn('Luke 20:20-26', titles)
+        self.assertIn('Summer In The Psalms: Psalm 88', titles)
+        self.assertFalse([u for u in read if 'apple.com' in u])
+        self.assertTrue(session['file_check']['valid'], session['file_check'])
+
+
 if __name__ == '__main__':
     unittest.main()
