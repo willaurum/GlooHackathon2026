@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations
+from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, recommendations
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ app = FastAPI(title="Tekton API", lifespan=lifespan)
 app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
 app.include_router(church_content.router)
+app.include_router(builder.router)
 
 
 class AvailabilityWindow(BaseModel):

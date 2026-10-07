@@ -201,3 +201,12 @@ test('a rejected staff session is flagged so the browser drops it; no session se
   assert.equal(sentStaffToken(asStaff('short')), true);
   assert.equal(sentStaffToken(new Request('https://api.test', { headers: { 'X-API-Key': 'k' } })), false);
 });
+
+test('the agentic builder is staff only on every church, the demo church included', () => {
+  for (const demo of [true, false]) {
+    for (const [m, p] of [['POST', '/api/builder/sessions'], ['GET', '/api/builder/sessions/abc123def'],
+      ['POST', '/api/builder/sessions/abc123def/answers'], ['POST', '/api/builder/sessions/abc123def/build']]) {
+      assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
+    }
+  }
+});

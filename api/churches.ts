@@ -147,6 +147,9 @@ const STAFF_ROUTES: Route[] = [
 	['PUT', /^\/api\/blog(?:\/.*)?$/],
 	['PATCH', /^\/api\/blog(?:\/.*)?$/],
 	['DELETE', /^\/api\/blog(?:\/.*)?$/],
+	// The agentic builder fetches websites from the server and can replace a church's content: staff only.
+	['GET', /^\/api\/builder(?:\/.*)?$/],
+	['POST', /^\/api\/builder(?:\/.*)?$/],
 ];
 
 export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';

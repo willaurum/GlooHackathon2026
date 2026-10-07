@@ -1,0 +1,622 @@
+"""Agentic builder: turn an existing church website into a church profile, with every value traced to its source.
+
+    1. Import   fetch the site (same-site pages) into sources: [{id, url, title, text}]
+    2. Extract  read each source into claims: {field, value, quote, source_id, method}. Pattern rules catch
+                phones, emails, addresses and service times; the AI (when configured) adds the name, prose and
+                FAQs. Every AI claim must quote its source exactly, or it is dropped.
+    3. Clarify  plain code compares the claims field by field: one agreeing value is prefilled, different
+                values are a conflict, nothing found for a required field is missing. Nothing is decided by
+                the AI, and a conflict is never resolved without the church's answer.
+    4. Confirm  the church answers the questions and reviews the profile.
+    5. Build    the confirmed profile becomes ChurchContent JSON (church_content.py) and can be loaded into a
+                church, whose own site is then the preview.
+
+A session is stored per church in the config table as 'builder:<id>'.
+"""
+import ipaddress
+import json
+import logging
+import os
+import re
+import secrets
+import socket
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urldefrag, urlparse
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+
+from . import church_content, db
+
+log = logging.getLogger(__name__)
+router = APIRouter()
+
+MAX_PAGES = 12
+MAX_PAGE_BYTES = 1_000_000
+MAX_SOURCE_CHARS = 20_000
+FETCH_TIMEOUT = 10.0
+# Fields the builder asks about when nothing is found. Optional fields are simply left empty.
+REQUIRED = ('name', 'address', 'phone', 'email', 'services')
+FIELD_LABELS = {'name': 'Church name', 'address': 'Street address', 'phone': 'Phone number', 'email': 'Email',
+                'services': 'Service times', 'office_hours': 'Office hours', 'about': 'About the church',
+                'first_visit': 'What to expect on a first visit'}
+DAYS = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+
+
+# ---------------------------------------------------------------- 1. Import
+
+class _PageText(HTMLParser):
+    """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page."""
+    # Form dropdowns are choices, not content (a "Which service?" list would read as service times).
+    SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'select', 'textarea'}
+    BLOCK = {'p', 'div', 'br', 'li', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article',
+             'header', 'footer', 'nav', 'main', 'aside', 'dt', 'dd', 'table', 'form', 'blockquote', 'label', 'button'}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.links, self.title, self._skip, self._in_title = [], [], '', 0, False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in self.SKIP:
+            self._skip += 1
+        elif tag == 'title':
+            self._in_title = True
+        elif tag == 'a' and attrs.get('href'):
+            self.links.append(attrs['href'])
+        elif tag == 'img' and attrs.get('alt'):
+            self.parts.append(f" [image: {attrs['alt']}] ")
+        if tag in self.BLOCK:
+            self.parts.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag == 'title':
+            self._in_title = False
+        if tag in self.BLOCK:
+            self.parts.append('\n')
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+        elif not self._skip:
+            self.parts.append(data)
+
+    def text(self):
+        lines = (re.sub(r'[ \t\r\f\v]+', ' ', line).strip() for line in ''.join(self.parts).split('\n'))
+        return '\n'.join(line for line in lines if line)
+
+
+def parse_html(html):
+    page = _PageText()
+    page.feed(html)
+    page.close()
+    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links}
+
+
+def _check_public(url):
+    """Refuse URLs that would make the server fetch its own network (SSRF), unless BUILDER_ALLOW_PRIVATE=1."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+        raise ValueError('Enter a website address starting with http:// or https://')
+    if os.environ.get('BUILDER_ALLOW_PRIVATE') == '1':
+        return
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80))
+    except socket.gaierror as error:
+        raise ValueError('That website address could not be found.') from error
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise ValueError('That address is on a private network and cannot be imported.')
+
+
+def crawl(start_url, fetch=None, max_pages=MAX_PAGES):
+    """Breadth-first over same-site HTML pages. `fetch(url) -> (final_url, content_type, text)` can be injected."""
+    start_url = urldefrag(start_url.strip())[0]
+    _check_public(start_url)
+    origin = urlparse(start_url).netloc
+    fetch = fetch or _http_fetch
+    queue, seen, sources = [start_url], {start_url}, []
+    while queue and len(sources) < max_pages:
+        url = queue.pop(0)
+        try:
+            final_url, content_type, body = fetch(url)
+        except Exception as error:  # one broken page must not stop the import
+            log.info('builder: skipped %s (%s)', url, error)
+            continue
+        if 'html' not in content_type:
+            continue
+        page = parse_html(body)
+        # The same page under two addresses ("/" and "/index.html") is one source, or it would count twice.
+        if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] for s in sources):
+            continue
+        sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
+                        'text': page['text'][:MAX_SOURCE_CHARS]})
+        for href in page['links']:
+            link = urldefrag(urljoin(final_url, href))[0]
+            if urlparse(link).netloc == origin and link not in seen and not re.search(r'\.(pdf|jpe?g|png|gif|zip|docx?)$', link, re.I):
+                seen.add(link)
+                queue.append(link)
+    return sources
+
+
+def _http_fetch(url):
+    _check_public(url)
+    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
+        response = client.get(url)
+        hops = 0
+        while response.is_redirect and hops < 5:
+            url = urljoin(url, response.headers['location'])
+            _check_public(url)  # a redirect must not lead into a private network either
+            response = client.get(url)
+            hops += 1
+        response.raise_for_status()
+        return str(response.url), response.headers.get('content-type', ''), response.text[:MAX_PAGE_BYTES]
+
+
+# ---------------------------------------------------------------- 2. Extract
+
+PHONE_RE = re.compile(r'\(?\b\d{3}\)?[\s.\-]?\d{3}[\s.\-]\d{4}\b')
+EMAIL_RE = re.compile(r'\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b')
+STREET_RE = re.compile(r'\b\d{1,6}\s+(?:[A-Z][\w.\'-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Boulevard|Blvd|Way|Court|Ct|Place|Pl|Parkway|Pkwy|Highway|Hwy|Circle|Terrace)\b\.?(?:,?\s+[A-Z][\w\s.\'-]{1,40},\s*[A-Z]{2}\b)?')
+TIME_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\b', re.I)
+BARE_TIMES_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+)\s*(\d{1,2})(?::(\d{2}))?\b')
+WORSHIP_WORDS = re.compile(r'\b(worship|service|services|gathering|mass|traditional|contemporary|join us)\b', re.I)
+NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry)\b', re.I)
+# A calendar date ("Sunday, November 1, 2026") is a one-off event, not a weekly service time.
+DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b', re.I)
+
+
+def _digits(phone):
+    return re.sub(r'\D', '', phone)[-10:]
+
+
+def _clock(hour, minute, ampm):
+    """24-hour 'HH:MM'. With no am/pm, 7–11 read as morning and 1–6 as afternoon (church times)."""
+    hour, minute = int(hour), int(minute or 0)
+    if ampm:
+        hour = hour % 12 + (12 if ampm.lower() == 'p' else 0)
+    elif 1 <= hour <= 6:
+        hour += 12
+    return f'{hour:02d}:{minute:02d}'
+
+
+def _sentences(text):
+    for line in text.split('\n'):
+        yield from (s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip())
+
+
+def service_times(text):
+    """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times."""
+    found = {}
+    lines = text.split('\n')
+    for i, sentence in enumerate(_sentences(text)):
+        days = [d for d in DAYS if re.search(rf'\b{d[:3]}(?:day)?s?\b', sentence)]
+        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence):
+            continue
+        times = [_clock(h, m, ap) for h, m, ap in TIME_RE.findall(sentence)]
+        if not times and WORSHIP_WORDS.search(sentence) or re.search(r'\bsundays?\b\s+\d', sentence, re.I):
+            for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
+                times += [_clock(h1, m1, None), _clock(h2, m2, None)]
+        if not times or not (WORSHIP_WORDS.search(sentence) or len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
+            continue
+        for day in days[:1]:
+            found.setdefault(day, [])
+            found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
+    # Tables and footers: a "Sunday" cell or heading followed by times on the next lines.
+    for i, line in enumerate(lines):
+        day = next((d for d in DAYS if re.fullmatch(rf'{d}s?( services?| worship)?', line.strip(), re.I)), None)
+        if not day:
+            continue
+        for nxt in lines[i + 1:i + 4]:
+            if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
+                break
+            for h, m, ap in TIME_RE.findall(nxt):
+                clock = _clock(h, m, ap)
+                found.setdefault(day, [])
+                if clock not in [x for x, _ in found[day]]:
+                    found[day].append((clock, f'{line} {nxt}'.strip()))
+    return found
+
+
+def pattern_claims(source):
+    """Claims from plain rules: no AI involved, so they work offline and are easy to explain."""
+    text, sid, claims = source['text'], source['id'], []
+    for match in sorted(set(EMAIL_RE.findall(text))):
+        claims.append({'field': 'email', 'value': match.lower(), 'quote': match, 'source_id': sid, 'method': 'pattern'})
+    for match in sorted(set(PHONE_RE.findall(text))):
+        claims.append({'field': 'phone', 'value': _digits(match), 'quote': match, 'source_id': sid, 'method': 'pattern'})
+    for match in sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(text.replace('\n', ', ')))):
+        claims.append({'field': 'address', 'value': match, 'quote': match, 'source_id': sid, 'method': 'pattern'})
+    title = source.get('title', '')
+    if ' | ' in title:  # "Plan a Visit | Cedar Hollow Community Church"
+        name = title.rsplit(' | ', 1)[1].strip()
+        claims.append({'field': 'name', 'value': name, 'quote': title, 'source_id': sid, 'method': 'pattern'})
+    for day, times in service_times(text).items():
+        for clock, quote in times:
+            claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote, 'source_id': sid, 'method': 'pattern'})
+    return claims
+
+
+AI_FIELDS = {
+    'name': 'The church\'s name as the site states it.',
+    'about': 'A short description of the church (history, beliefs), copied from the page.',
+    'first_visit': 'What a first-time visitor should expect (dress, length, greeters, kids).',
+    'office_hours': 'Church office hours.',
+}
+AI_TOOL = {
+    'type': 'function',
+    'function': {
+        'name': 'record_church_facts',
+        'description': 'Record facts about the church found on this page. Only facts the page states; each with an exact quote copied from the page.',
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'facts': {'type': 'array', 'items': {
+                    'type': 'object',
+                    'properties': {
+                        'field': {'type': 'string', 'enum': list(AI_FIELDS) + ['faq']},
+                        'value': {'type': 'string', 'description': 'The fact. For faq: "Question? || Answer".'},
+                        'quote': {'type': 'string', 'description': 'Exact text copied from the page that supports the value.'},
+                    },
+                    'required': ['field', 'value', 'quote'],
+                }},
+            },
+            'required': ['facts'],
+        },
+    },
+}
+
+
+def _normalize_space(s):
+    return re.sub(r'\s+', ' ', s).strip().lower()
+
+
+def grounded(quote, text):
+    """True when the quote really appears in the source (ignoring whitespace and case)."""
+    q = _normalize_space(quote)
+    return len(q) >= 3 and q in _normalize_space(text)
+
+
+def ai_claims(source, complete=None):
+    """Claims from the AI. `complete(messages, tools) -> tool arguments dict` can be injected for tests.
+    Any claim whose quote is not found in the source is dropped: the AI can propose, never invent."""
+    complete = complete or _ai_complete
+    if not complete:
+        return []
+    fields = '\n'.join(f'- {k}: {v}' for k, v in AI_FIELDS.items())
+    messages = [
+        {'role': 'system', 'content': 'You read one page of a church website and record facts with record_church_facts. '
+                                      'Only record what the page says. Every fact needs an exact quote copied from the page. '
+                                      f'Fields:\n{fields}\n- faq: a question and answer the page gives (value "Question? || Answer").'},
+        {'role': 'user', 'content': f"Page: {source['url']}\nTitle: {source.get('title', '')}\n\n{source['text'][:12000]}"},
+    ]
+    try:
+        args = complete(messages, [AI_TOOL]) or {}
+    except Exception as error:
+        log.warning('builder: AI extraction failed for %s: %s', source['url'], error)
+        return []
+    claims = []
+    for fact in args.get('facts', []) if isinstance(args, dict) else []:
+        field, value, quote = fact.get('field'), str(fact.get('value', '')).strip(), str(fact.get('quote', '')).strip()
+        if field not in AI_FIELDS and field != 'faq' or not value or not grounded(quote, source['text']):
+            continue
+        if field == 'faq':
+            if '||' not in value:
+                continue
+            q, a = (part.strip() for part in value.split('||', 1))
+            value = {'question': q, 'answer': a}
+        claims.append({'field': field, 'value': value, 'quote': quote, 'source_id': source['id'], 'method': 'ai'})
+    return claims
+
+
+def _ai_complete_impl(messages, tools):
+    from . import chat
+    clients = chat.make_clients()
+    if not clients:
+        return None
+    name, model, extra_body, client = clients[0]
+    response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                              tool_choice={'type': 'function', 'function': {'name': 'record_church_facts'}},
+                                              temperature=0, **({'extra_body': extra_body} if extra_body else {}))
+    calls = response.choices[0].message.tool_calls or []
+    return json.loads(calls[0].function.arguments) if calls else None
+
+
+def _ai_available():
+    try:
+        from . import chat
+        return bool(chat.provider_chain())
+    except Exception:
+        return False
+
+
+_ai_complete = _ai_complete_impl if os.environ.get('BUILDER_AI', '1') != '0' else None
+
+
+def extract(sources, complete=None):
+    claims = []
+    use_ai = complete is not None or (_ai_complete is not None and _ai_available())
+    for source in sources:
+        claims += pattern_claims(source)
+        if use_ai:
+            claims += ai_claims(source, complete)
+    for i, claim in enumerate(claims, 1):
+        claim['id'] = f'c{i}'
+    return claims
+
+
+# ---------------------------------------------------------------- 3. Clarify
+
+def _key(field, value):
+    if field == 'name':
+        return re.sub(r'[^a-z0-9]', '', value.lower())
+    if field == 'address':
+        return re.sub(r'[^a-z0-9]', '', value.lower())[:24]
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True)
+    return _normalize_space(str(value))
+
+
+def _candidate(field, value, claims):
+    return {'value': value, 'claim_ids': [c['id'] for c in claims], 'source_ids': sorted({c['source_id'] for c in claims})}
+
+
+def reconcile(claims, source_count):
+    """{field: {status, value, candidates}}. Plain rules, no AI:
+    - email/phone: a value on more than half the pages that mention one is the church's (staff addresses on a
+      single page are not); otherwise different values are a conflict.
+    - services: per day, each page's set of times; if one page's set contains all the others it is used, else
+      the different sets are a conflict ("9 & 11" on one page, "10:30" on another).
+    - anything else: one distinct value is prefilled, more than one is a conflict.
+    """
+    by_field = {}
+    for claim in claims:
+        by_field.setdefault(claim['field'], []).append(claim)
+    fields = {}
+    for field, items in by_field.items():
+        if field == 'faq':
+            continue
+        if field == 'services':
+            fields[field] = _reconcile_services(items)
+            continue
+        groups = {}
+        for claim in items:
+            groups.setdefault(_key(field, claim['value']), []).append(claim)
+        candidates = [_candidate(field, g[0]['value'], g) for g in groups.values()]
+        candidates.sort(key=lambda c: -len(c['source_ids']))
+        if field in ('email', 'phone') and len(candidates) > 1:
+            pages = len({c['source_id'] for c in items})
+            if len(candidates[0]['source_ids']) * 2 > pages and len(candidates[0]['source_ids']) > len(candidates[1]['source_ids']):
+                candidates = candidates[:1]
+        if field in ('about', 'first_visit', 'office_hours') and len(candidates) > 1:
+            candidates = candidates[:1]  # prose: keep the most widely stated, the church edits it on review
+        fields[field] = ({'status': 'prefilled', 'value': candidates[0]['value'], 'candidates': candidates}
+                         if len(candidates) == 1 else {'status': 'conflict', 'value': None, 'candidates': candidates})
+    for field in REQUIRED:
+        fields.setdefault(field, {'status': 'missing', 'value': None, 'candidates': []})
+    return fields
+
+
+def _reconcile_services(items):
+    per_source = {}
+    for claim in items:
+        day, time = claim['value']['day'], claim['value']['time']
+        per_source.setdefault(day, {}).setdefault(claim['source_id'], {})[time] = claim
+    days, candidates = [], []
+    conflict = False
+    for day in DAYS:
+        if day not in per_source:
+            continue
+        sets = {sid: frozenset(times) for sid, times in per_source[day].items()}
+        largest = max(sets.values(), key=len)
+        if all(s <= largest for s in sets.values()):
+            days.append((day, sorted(largest)))
+        else:
+            conflict = True
+        distinct = {}
+        for sid, times in sets.items():
+            distinct.setdefault(times, []).append(sid)
+        for times, sids in distinct.items():
+            claims = [per_source[day][sid][t] for sid in sids for t in times]
+            candidates.append(_candidate('services', [{'day': day, 'time': t} for t in sorted(times)], claims))
+    if conflict:
+        return {'status': 'conflict', 'value': None, 'candidates': candidates}
+    value = [{'day': day, 'time': t} for day, times in days for t in times]
+    return {'status': 'prefilled', 'value': value, 'candidates': candidates}
+
+
+def _show(field, value):
+    if field == 'services' and isinstance(value, list):
+        return ', '.join(f"{v['day']} {_twelve(v['time'])}" for v in value)
+    if field == 'phone' and isinstance(value, str) and len(value) == 10:
+        return f'({value[:3]}) {value[3:6]}-{value[6:]}'
+    return str(value)
+
+
+def _twelve(clock):
+    h, m = map(int, clock.split(':'))
+    return f"{h % 12 or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+def _evidence(candidate, by_id, src):
+    """Where a candidate value came from: each source and quote once."""
+    seen, out = set(), []
+    for cid in candidate['claim_ids']:
+        claim = by_id[cid]
+        key = (claim['source_id'], claim['quote'])
+        if key not in seen:
+            seen.add(key)
+            source = src[claim['source_id']]
+            out.append({'source_id': source['id'], 'url': source['url'], 'title': source.get('title', ''), 'quote': claim['quote']})
+    return out
+
+
+def questions(fields, claims, sources):
+    """One question per conflict or missing required field, each candidate with its sources and quotes."""
+    by_id = {c['id']: c for c in claims}
+    src = {s['id']: s for s in sources}
+    out = []
+    for field, info in fields.items():
+        label = FIELD_LABELS.get(field, field)
+        if info['status'] == 'conflict':
+            out.append({
+                'field': field, 'kind': 'conflict',
+                'prompt': f'We found {len(info["candidates"])} different answers for {label.lower()}. Which is right?',
+                'candidates': [{'value': c['value'], 'display': _show(field, c['value']), 'evidence': _evidence(c, by_id, src)}
+                               for c in info['candidates']],
+            })
+        elif info['status'] == 'missing':
+            out.append({'field': field, 'kind': 'missing', 'prompt': f'We could not find the {label.lower()}. What is it?', 'candidates': []})
+    return out
+
+
+# ---------------------------------------------------------------- 4–5. Answer, confirm, build
+
+def _parse_services(text):
+    found = service_times(text if re.search(r'\b(sun|mon|tue|wed|thu|fri|sat)', text, re.I) else 'Sunday worship ' + text)
+    return [{'day': day, 'time': t} for day in DAYS for t, _ in found.get(day, [])]
+
+
+def apply_answer(session, field, value):
+    """The church's answer becomes a confirmed value (and a claim from 'the church itself')."""
+    if field not in FIELD_LABELS:
+        raise ValueError('Unknown field')
+    if field == 'services':
+        value = value if isinstance(value, list) else _parse_services(str(value))
+        if not value:
+            raise ValueError('Write the service times with a day, e.g. "Sundays 9:00 AM and 11:00 AM".')
+        value = [{'day': v['day'], 'time': _clock(*v['time'].split(':'), None) if ':' in v['time'] else v['time']} for v in value]
+    elif field == 'phone':
+        if len(_digits(str(value))) != 10:
+            raise ValueError('Enter a 10-digit phone number.')
+        value = _digits(str(value))
+    elif field == 'email':
+        if not EMAIL_RE.fullmatch(str(value).strip()):
+            raise ValueError('Enter a valid email.')
+        value = str(value).strip().lower()
+    else:
+        value = str(value).strip()
+        if not value:
+            raise ValueError('Enter an answer.')
+    session['fields'][field] = {**session['fields'].get(field, {'candidates': []}), 'status': 'confirmed', 'value': value}
+    session['questions'] = [q for q in session['questions'] if q['field'] != field]
+    session['status'] = 'clarifying' if session['questions'] else 'review'
+    return session
+
+
+def build_content(session):
+    """The confirmed profile as ChurchContent (only the sections the builder fills)."""
+    open_items = [q['field'] for q in session['questions']]
+    if open_items:
+        raise ValueError('Answer the open questions first: ' + ', '.join(FIELD_LABELS.get(f, f) for f in open_items))
+    f = {k: v.get('value') for k, v in session['fields'].items() if v.get('value') is not None}
+    phone = _show('phone', f['phone']) if f.get('phone') else ''
+    info = {
+        'name': f.get('name', ''), 'address': f.get('address', ''), 'phone': phone, 'email': f.get('email', ''),
+        'office_hours': f.get('office_hours', ''), 'about': f.get('about', ''), 'first_visit': f.get('first_visit', ''),
+        'services': [{'day': s['day'], 'time': _twelve(s['time']), 'note': ''} for s in f.get('services', [])],
+        'map_query': f.get('address', ''),
+    }
+    faqs, seen = [], set()
+    for claim in session['claims']:
+        if claim['field'] == 'faq' and _normalize_space(claim['value']['question']) not in seen:
+            seen.add(_normalize_space(claim['value']['question']))
+            faqs.append({'question': claim['value']['question'], 'answer': claim['value']['answer']})
+    content = {'info': info}
+    if faqs:
+        content['faqs'] = faqs
+    return church_content.normalize(church_content.ChurchContent(**content))
+
+
+def new_session(url, fetch=None, complete=None):
+    sources = crawl(url, fetch)
+    if not sources:
+        raise ValueError('No pages could be read from that address.')
+    claims = extract(sources, complete)
+    fields = reconcile(claims, len(sources))
+    qs = questions(fields, claims, sources)
+    return {'id': secrets.token_urlsafe(9), 'created_at': datetime.now(timezone.utc).isoformat(),
+            'url': url, 'status': 'clarifying' if qs else 'review',
+            'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs}
+
+
+# ---------------------------------------------------------------- storage and routes
+
+def _save(session):
+    db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+            ('builder:' + session['id'], json.dumps(session))))
+    return session
+
+
+def _load(session_id):
+    if not re.fullmatch(r'[\w-]{6,40}', session_id):
+        raise HTTPException(status_code=404, detail='Builder session not found')
+    row = db.one('SELECT data FROM config WHERE key = ?', ('builder:' + session_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail='Builder session not found')
+    return json.loads(row['data'])
+
+
+def _public(session):
+    """The session for the page, without the full page texts (the evidence quotes are enough)."""
+    return {**session, 'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title')} for s in session['sources']]}
+
+
+class ImportBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    url: str = Field(min_length=4, max_length=500)
+
+
+class AnswerBody(BaseModel):
+    field: str = Field(min_length=1, max_length=40)
+    value: str | list | dict
+
+
+class BuildBody(BaseModel):
+    apply: bool = False
+
+
+@router.post('/api/builder/sessions', status_code=201)
+def import_site(body: ImportBody):
+    try:
+        session = new_session(body.url)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return _public(_save(session))
+
+
+@router.get('/api/builder/sessions/{session_id}')
+def get_session(session_id: str):
+    return _public(_load(session_id))
+
+
+@router.post('/api/builder/sessions/{session_id}/answers')
+def answer(session_id: str, body: AnswerBody):
+    session = _load(session_id)
+    try:
+        apply_answer(session, body.field, body.value)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return _public(_save(session))
+
+
+@router.post('/api/builder/sessions/{session_id}/build')
+def build(session_id: str, body: BuildBody):
+    """The profile as ChurchContent. With apply, it replaces this church's info (and FAQs if any were found)."""
+    session = _load(session_id)
+    try:
+        content = build_content(session)
+    except (ValueError, church_content.ContentError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if body.apply:
+        if db.current_church() == db.DEMO_CHURCH:
+            raise HTTPException(status_code=403, detail='The demo church cannot be replaced. Sign up a church to build into.')
+        db.replace_content(content)
+        session['status'] = 'built'
+        _save(session)
+    return {'content': content, 'applied': body.apply, 'church': db.current_church()}
