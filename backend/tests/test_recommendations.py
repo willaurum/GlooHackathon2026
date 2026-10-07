@@ -108,6 +108,15 @@ class RecommendationTests(unittest.TestCase):
                       'Here you go: ' + plan + ' Hope that helps.'):
             self.assertEqual(recommendations.json_object(reply), plan)
 
+    def test_gloo_uses_the_fast_match_model_unless_configured(self):
+        with patch.dict('os.environ', {}, clear=False):
+            import os
+            os.environ.pop('GLOO_MATCH_MODEL', None)
+            self.assertEqual(recommendations.match_model('gloo', 'gloo-qwen-3.7-flash'), 'gloo-anthropic-claude-haiku-4.5')
+            os.environ['GLOO_MATCH_MODEL'] = 'gloo-openai-gpt-5-nano'
+            self.assertEqual(recommendations.match_model('gloo', 'gloo-qwen-3.7-flash'), 'gloo-openai-gpt-5-nano')
+        self.assertEqual(recommendations.match_model('ollama', 'qwen3.8:27b'), 'qwen3.8:27b')
+
     def test_hosted_models_get_the_chat_timeout_not_25_seconds(self):
         self.assertGreaterEqual(recommendations.chat.provider_timeout('gloo'), 60)
 

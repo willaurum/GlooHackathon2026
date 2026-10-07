@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,6 +60,16 @@ Return only a JSON object with this shape, without markdown:
 "reason": "Why this fits you", "considerations": "What to confirm"}]}"""
 
 
+# Find a place sends the whole catalog and needs strict JSON. A reasoning model (such as the chat's
+# gloo-qwen-3.7-flash) spends 30+ seconds thinking first, so this job has its own Gloo model.
+MATCH_MODEL = 'gloo-anthropic-claude-haiku-4.5'
+
+
+def match_model(provider, model):
+    """The model to use for recommendations: GLOO_MATCH_MODEL (or the fast default) on Gloo."""
+    return (os.environ.get('GLOO_MATCH_MODEL') or MATCH_MODEL) if provider == 'gloo' else model
+
+
 THINKING = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
 
@@ -109,6 +120,7 @@ def recommend(description, ministries, clients=None, preferences=None):
     ]
     try:
         for provider, model, extra_body, client in clients:
+            model = match_model(provider, model)
             try:
                 options = {}
                 if provider == 'ollama':

@@ -64,8 +64,9 @@ jobs:
           GLOO_EMBED_MODEL: ${{ vars.GLOO_EMBED_MODEL }}
           # Also a variable: the Gloo model that tags sermon highlights (default: GLOO_MODEL, then gloo-qwen-3.7-flash).
           GLOO_NOTES_MODEL: ${{ vars.GLOO_NOTES_MODEL }}
+          GLOO_MATCH_MODEL: ${{ vars.GLOO_MATCH_MODEL }}
         run: |
-          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL GLOO_EMBED_MODEL GLOO_NOTES_MODEL; do
+          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL GLOO_EMBED_MODEL GLOO_NOTES_MODEL GLOO_MATCH_MODEL; do
             value="${!name}"
             if [ -n "$value" ]; then
               printf '%s' "$value" | npx wrangler secret put "$name"
