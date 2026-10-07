@@ -261,6 +261,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `NOTES_ADMIN_KEY` | `api/` | Changing the church config. |
 | `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the version (default `3034`, Berean Standard Bible). |
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
+| `YT_HELPER_URL` / `YT_HELPER_KEY` | `api/` | Optional. The [YouTube helper](#youtube-links-the-youtube-helper) that downloads YouTube audio from Jaron's dev server. Set `YT_HELPER_URL` as a GitHub Actions **variable** and `YT_HELPER_KEY` as a GitHub **secret**; Deploy backend copies both to the Worker. The key stays in the Worker. |
 | `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. `GLOO_API_KEY` also turns on sermon-note embeddings. |
 | `GLOO_EMBED_MODEL` | `api/` | Optional, not secret. The Gloo embedding model for sermon-note search (default `gloo-baai-bge-base-en-v1.5`). Set it as a GitHub Actions **variable**, next to `GLOO_MODEL`; Deploy backend copies both to the Worker. |
 | `GLOO_NOTES_MODEL` | `api/` | Optional, not secret. The Gloo model that tags sermon highlights (default: `GLOO_MODEL`, then `gloo-qwen-3.7-flash`). Also a GitHub Actions **variable**; Deploy backend copies it to the Worker, which passes it to the container. |
@@ -277,6 +278,7 @@ Workers secrets cannot be read back once set, so Jaron keeps a copy of each key 
 | `PLATFORM_ADMIN_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-platform-admin-key.txt` |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-stripe-key-encryption-key.txt` |
 | `YOUVERSION_APP_KEY` | `gloo-hackathon2026-api-pastor-notes` | `~/.secrets/youversion-app-key.txt` (app `belong-Gloo-Hackathon2026` on platform.youversion.com) |
+| `YT_HELPER_KEY` | GitHub secret, copied to `gloo-hackathon2026-api-pastor-notes` | `~/.secrets/youtube-helper-key.txt` (the helper reads the same file) |
 
 - **Opening the platform list:** run `cat ~/.secrets/gloo-platform-admin-key.txt` on the dev server, open `<site>/#/platform` and paste the key. Share it with the team in person or through a password manager, never in chat or in a commit.
 - **Seeing what is set:** `npx wrangler secret list --name <worker>` shows the names (never the values).
@@ -515,14 +517,62 @@ The transcript is highlighted by category (Bible quotes, Bible references, curre
 - `GET /api/verse?usfm=JHN.3.16-17` (public) reads the passage from the YouVersion Platform API with `YOUVERSION_APP_KEY` and caches it for 7 days. It returns 404 when no key is set and 400 for a bad reference.
 - If the API has no key or fails, the page falls back to the public-domain World English Bible from bible-api.com.
 
-### Known limitation: YouTube egress
+### YouTube links: the YouTube helper
 
-YouTube intermittently refuses downloads from Cloudflare's server IPs, so a
-YouTube link can fail with a clear `youtube_blocked` error. Two workarounds:
+YouTube refuses most downloads from Cloudflare's data-center IPs, so a YouTube
+link sent straight from the container usually fails. The **YouTube helper**
+(`scripts/youtube-helper/`) fixes that: a small Python service that runs on
+Jaron's dev server (`jaron-dev-server`, a home internet connection YouTube
+accepts) and downloads only the audio with yt-dlp.
+
+- **Order:** with `YT_HELPER_URL` and `YT_HELPER_KEY` set on the API Worker, a
+  YouTube note is fetched through the helper first. If the helper is down or
+  fails, the container tries yt-dlp directly (the old path, below). If that
+  fails too, the note fails with "YouTube wouldn't let us download this video.
+  Upload the video file instead (in YouTube Studio: Content > the video > ⋮ >
+  Download)." A private or too-long video fails right away with its own message.
+- **Wiring:** the container calls `http://youtube-helper/fetch`; the Worker's
+  `youtube-helper` outbound handler (`api/ythelper.ts`) adds the key and forwards
+  only `POST /fetch` to `YT_HELPER_URL`, so the container never sees the key.
+- **The helper:** `POST /fetch {"url": ...}` with `Authorization: Bearer <key>`
+  (checked in constant time) returns the audio (m4a when YouTube has it), or a
+  JSON error. It accepts only youtube.com and youtu.be video links and hands
+  yt-dlp the canonical `watch?v=<id>` link, so it cannot be pointed anywhere
+  else. It enforces the same limits as the backend (`MAX_DURATION_SEC` 5400 and
+  the 95 MB upload cap), runs at most two downloads at once, deletes its temp
+  files, never logs the key, and updates yt-dlp every time it starts. A
+  50-minute sermon downloads in about 12 seconds.
+- **Where it runs:** a systemd user service, `youtube-helper`, on
+  `127.0.0.1:8096`, published with Tailscale Funnel at
+  `https://jaron-dev-server.tail90b62a.ts.net:8443` (that is `YT_HELPER_URL`).
+  Funnel on port 443 is not used, so the dev server's tailnet-only pages stay
+  private. The key is `~/.secrets/youtube-helper-key.txt`.
+
+On the dev server:
+
+```bash
+scripts/youtube-helper/install.sh              # first time, or after changing helper.py: venv, key, unit, start
+systemctl --user status youtube-helper         # is it running?
+systemctl --user restart youtube-helper        # restart (also updates yt-dlp)
+systemctl --user stop youtube-helper           # stop it; Sermon Notes falls back as described above
+journalctl --user -u youtube-helper -f         # logs
+tailscale funnel --bg --https=8443 http://127.0.0.1:8096   # publish it (once; survives restarts)
+tailscale funnel --https=8443 off              # unpublish it
+curl https://jaron-dev-server.tail90b62a.ts.net:8443/health
+```
+
+**When the helper is down** (the dev server is off or the service is stopped),
+nothing breaks: YouTube links fall back to the direct download, and if YouTube
+blocks that, the page asks for a file upload, which always works.
+
+#### Direct download (the fallback)
+
+Without the helper, YouTube intermittently refuses downloads from Cloudflare's
+server IPs, so a YouTube link can fail with `youtube_blocked`. Workarounds:
 
 1. **Upload the video file instead**: the "Upload a file" tab. 100%
    reliable, never touches YouTube's servers.
-2. **Set the `YTDLP_COOKIES` secret**: a permanent fix for YouTube links.
+2. **Set the `YTDLP_COOKIES` secret**.
 
 The block is flaky, not total, so the container retries on its own: yt-dlp
 paces its requests and backs off on transient errors, and a bot check or rate
@@ -532,6 +582,13 @@ the note fails with `youtube_blocked`. The delays come from
 default `30,120`). yt-dlp is pinned with a minimum version rather than an exact
 one, since YouTube support breaks on stale releases; a rebuild picks up the
 latest.
+
+#### Tests
+
+```bash
+python -m unittest backend.tests.test_youtube_helper backend.tests.test_youtube_helper_service backend.tests.test_youtube_download
+node --test api/test/ythelper.test.mjs frontend/src/noteErrors.test.js
+```
 
 ## Give
 

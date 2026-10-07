@@ -4,6 +4,7 @@ import { handleVerse } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
 import { DEMO_SLUG, STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
+import { YT_HELPER_HOST, ytHelperBridge, ytHelperEnvVars } from './ythelper';
 
 // Outbound interception needs ContainerProxy exported from the entrypoint.
 export { ContainerProxy };
@@ -44,7 +45,8 @@ export class ChurchDB extends DurableObject<AppEnv> {
 	}
 }
 
-// yt-dlp talks to these directly; with no outbound handler they fall through to the internet.
+// The direct yt-dlp fallback talks to these; with no outbound handler they fall through to the internet.
+// YouTube links go to the YouTube helper (YT_HELPER_HOST, see ythelper.ts) first.
 const YOUTUBE_HOSTS = ['youtube.com', '*.youtube.com', 'youtu.be', '*.googlevideo.com', '*.ytimg.com', '*.googleapis.com'];
 // The website chat (backend/app/chat.py) calls these AI providers when a key is set.
 const AI_PROVIDER_HOSTS = ['platform.ai.gloo.com', 'api.openai.com', 'api.anthropic.com'];
@@ -59,7 +61,7 @@ export class ChurchAPI extends Container<AppEnv> {
 	// Outbound HTTPS goes through the Worker; start.sh makes the container trust its CA.
 	interceptHttps = true;
 	// allowedHosts gates everything, including outboundByHost, so the bridge hosts must be listed.
-	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS, ...NEWS_HOSTS];
+	allowedHosts = ['church-db', 'notes-media', 'workers-ai', TEAM_AI_HOST, YT_HELPER_HOST, ...YOUTUBE_HOSTS, ...AI_PROVIDER_HOSTS, ...NEWS_HOSTS];
 
 	// The container and the Worker's /ask share each church's database.
 	// Assigned (not declared as a class field) so the library's static setter registers it.
@@ -74,6 +76,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			'workers-ai': (request: Request, env: AppEnv) => aiBridge(request, env),
 			// The team's HPC model through scripts/team-ai-bridge (a stopgap until the Gloo key); see teamai.ts.
 			[TEAM_AI_HOST]: (request: Request, env: AppEnv) => teamAiBridge(request, env),
+			// YouTube downloads from Jaron's dev server (scripts/youtube-helper); the handler adds the key.
+			[YT_HELPER_HOST]: (request: Request, env: AppEnv) => ytHelperBridge(request, env),
 		};
 	}
 
@@ -101,6 +105,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
 			NEWSDATA_API_KEY: env.NEWSDATA_API_KEY ?? '',
 			...teamAiEnvVars(env),
+			// http://youtube-helper when YT_HELPER_URL and YT_HELPER_KEY are set; the key stays in the Worker.
+			...ytHelperEnvVars(env),
 		};
 	}
 
