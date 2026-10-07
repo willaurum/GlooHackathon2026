@@ -287,11 +287,47 @@ function Transcript({ segments, bySegment, activeCats, prefs }) {
 }
 
 // Where Ask and the highlight chips sit around the transcript.
-function ReaderBody({ asker, toggles, transcript }) {
-  return <div className="pn-body">
-    <AskBox asker={asker} />
-    {toggles}
+// Here: a side panel to the right of the transcript on wide screens. On narrower ones two buttons
+// above the transcript open the same panel as a sheet, so the transcript still comes first.
+function ReaderBody({ asker, toggles, transcript, highlightCount }) {
+  const [sheet, setSheet] = useState(null), sideId = useId(), side = useRef(null), opener = useRef(null);
+  useEffect(() => {
+    if (!sheet) return;
+    const el = side.current;
+    const target = sheet === 'highlights' ? el.querySelector('.pn-side-highlights') : el.querySelector('.pn-side-ask');
+    target?.scrollIntoView({ block: 'start' });
+    (sheet === 'ask' ? el.querySelector('.pn-side-ask input') : el.querySelector('.pn-side-head button'))?.focus({ preventScroll: true });
+    const onKey = e => { if (e.key === 'Escape') setSheet(null); };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); opener.current?.focus(); };
+  }, [sheet]);
+  const open = (which, e) => { opener.current = e.currentTarget; setSheet(which); };
+  return <div className={'pn-body pn-split' + (sheet ? ' sheet-open' : '')}>
+    <div className="pn-side-open" role="group" aria-label="Sermon tools">
+      <button type="button" className="secondary" data-ask-open aria-expanded={sheet === 'ask'} aria-controls={sideId} aria-label="Ask about this sermon" onClick={e => open('ask', e)}>
+        <Icon name="sparkle" size={16} /><span>Ask<span className="pn-side-more"> about this sermon</span></span>
+      </button>
+      {toggles && <button type="button" className="secondary" aria-expanded={sheet === 'highlights'} aria-controls={sideId} onClick={e => open('highlights', e)}>
+        <Icon name="tag" size={16} />Highlights<small className="count">{highlightCount}</small>
+      </button>}
+    </div>
     {transcript}
+    {sheet && <div className="pn-side-backdrop" onClick={() => setSheet(null)} />}
+    <aside id={sideId} ref={side} className="pn-side" aria-label="Ask and highlights">
+      <div className="pn-side-head">
+        <strong>Sermon tools</strong>
+        <button type="button" className="icon-btn" aria-label="Close" onClick={() => setSheet(null)}><Icon name="x" /></button>
+      </div>
+      <section className="pn-side-block pn-side-ask">
+        <h2>Ask about this sermon</h2>
+        <AskBox asker={asker} label="Your question" />
+      </section>
+      {toggles && <section className="pn-side-block pn-side-highlights">
+        <h2>Highlights</h2>
+        <p>Color passages in the transcript by kind.</p>
+        {toggles}
+      </section>}
+    </aside>
   </div>;
 }
 
