@@ -176,6 +176,29 @@ class ContentError(ValueError):
     pass
 
 
+def public_info(content):
+    return content.get('info', {})
+
+
+def public_church(content):
+    return {'info': public_info(content), 'faqs': content.get('faqs', []), 'events': content.get('events', [])}
+
+
+def public_ministries(content):
+    return [db.with_shift_coverage(m) for m in sorted(content.get('ministries', []), key=lambda m: m['id'])]
+
+
+def public_events(content):
+    return [{key: event.get(key) for key in ('id', *db.EVENT_COLUMNS)}
+            for event in sorted(content.get('calendar', []), key=lambda e: (e.get('date') or '', e.get('time') or ''))]
+
+
+def public_site(content):
+    """The public site responses, without reading or writing a church database."""
+    return {'info': public_info(content), 'church': public_church(content),
+            'ministries': public_ministries(content), 'events': public_events(content)}
+
+
 def with_ids(items, label):
     """Give items without an id the next free one, keeping the ids they have."""
     given = [item['id'] for item in items if item.get('id') is not None]

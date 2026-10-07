@@ -142,6 +142,8 @@ function withCors(response: Response, env: AppEnv, request: Request): Response {
 const STARTS_NOTE = /^\/api\/notes(\/upload|\/[0-9a-f-]{36}\/retry)?$/;
 // The content import carries a whole church (FAQs, ministries, calendar), so it may be larger.
 const MAX_IMPORT_BYTES = 512 * 1024;
+// Builder uploads: 10 MB of files plus multipart overhead; the container enforces the exact limits.
+const MAX_BUILDER_UPLOAD_BYTES = 11 * 1024 * 1024;
 
 async function route(request: Request, env: AppEnv, url: URL): Promise<Response> {
 	// /api/churches/<slug>/... is that church; a bare /api/... is the demo church.
@@ -176,7 +178,7 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 		}
 	}
 	if (path !== '/api/notes/upload') {
-		const rejected = tooLarge(request, path === '/api/church/content' ? MAX_IMPORT_BYTES : undefined);
+		const rejected = tooLarge(request, path === '/api/church/content' ? MAX_IMPORT_BYTES : path === '/api/builder/drafts/upload' ? MAX_BUILDER_UPLOAD_BYTES : undefined);
 		if (rejected) return rejected;
 	}
 

@@ -9,12 +9,29 @@ const KEY_STORAGE = 'pastor-notes-api-key';
 export const STAFF_SESSION_INVALID = 'staff_session_invalid';
 
 // The API key is typed in by the user and kept for this browser tab only. It is never built into the bundle.
-export const getApiKey = () => sessionStorage.getItem(KEY_STORAGE) ?? '';
-export const setApiKey = key => (key ? sessionStorage.setItem(KEY_STORAGE, key) : sessionStorage.removeItem(KEY_STORAGE));
+// A site preview never reads or changes the real site's key.
+export const getApiKey = () => (preview ? '' : sessionStorage.getItem(KEY_STORAGE) ?? '');
+export const setApiKey = key => {
+  if (preview) return;
+  key ? sessionStorage.setItem(KEY_STORAGE, key) : sessionStorage.removeItem(KEY_STORAGE);
+};
 
 // The church every api() call is for. App sets it from church.js.
 let church = DEMO_CHURCH;
 export const setApiChurch = slug => { church = slug; };
+
+let preview;
+export const startApiPreview = snapshot => { preview = structuredClone(snapshot); };
+export const stopApiPreview = () => { preview = null; };
+const PREVIEW_ERROR = 'This is a preview. Create your church to use this.';
+
+function previewResponse(path, options) {
+  if ((options.method || 'GET').toUpperCase() !== 'GET') throw new Error(PREVIEW_ERROR);
+  const key = path.split('?')[0].slice(1);
+  if (['info', 'church', 'ministries', 'events'].includes(key)) return structuredClone(preview[key]);
+  if (['connections', 'requests', 'regions', 'news', 'notes', 'blog', 'blog/categories'].includes(key)) return [];
+  throw new Error(PREVIEW_ERROR);
+}
 
 // /api/churches/<slug>/... is that church. The bare /api/... is the demo church, which every
 // API version understands, so the demo church keeps working against an older deploy.
@@ -23,6 +40,7 @@ export const apiUrl = (path, slug = church) => API_BASE + (slug === DEMO_CHURCH 
 let capabilities;
 // Whether the church API serves more than the demo church yet (it is deployed separately from the site).
 export function churchCapabilities() {
+  if (preview) return Promise.resolve({ churches: true });
   // A failed check means "unavailable", not "demo church only": don't remember it, so the next call asks again.
   capabilities ||= fetch(API_BASE + '/api/health')
     .then(r => { if (!r.ok) throw new Error('health ' + r.status); return r.json(); })
@@ -45,6 +63,7 @@ export function whenCapabilitiesKnown(check, onKnown) {
 
 /** Headers for a church API call: the Sermon Notes key and, once the API supports it, the staff session. */
 export async function apiHeaders(slug = church, extra = {}) {
+  if (preview) throw new Error(PREVIEW_ERROR);
   const headers = { ...extra };
   if (getApiKey()) headers['X-API-Key'] = getApiKey();
   // An older API does not allow this header cross-origin, so only send it once the API knows churches.
@@ -53,6 +72,7 @@ export async function apiHeaders(slug = church, extra = {}) {
 }
 
 export async function api(path, options = {}) {
+  if (preview) return previewResponse(path, options);
   const slug = church;
   const capabilities = slug === DEMO_CHURCH ? null : await churchCapabilities();
   if (capabilities && !capabilities.churches) {
@@ -83,6 +103,7 @@ export async function api(path, options = {}) {
 }
 
 export async function gapi(path, options = {}) {
+  if (preview) throw new Error(PREVIEW_ERROR);
   const res = await fetch(GIVING_API + path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {

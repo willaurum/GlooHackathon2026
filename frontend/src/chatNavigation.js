@@ -7,7 +7,7 @@ const pages = {
   'saved-connections': ['Saved', 'serve/saved'],
   calendar: ['Calendar', 'calendar'],
   give: ['Give', 'give'],
-  'prayer-map': ['Prayer map', 'prayer/map'],
+  'prayer-map': ['Prayer map', 'prayer'],
 };
 // Sections within a page (backend chat.SITE_SECTIONS): [label, element id to scroll to].
 const sections = {

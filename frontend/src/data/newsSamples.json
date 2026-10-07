@@ -1,0 +1,90 @@
+[
+  {
+    "date": "2026-10-05",
+    "category": "Church life",
+    "title": "Parking lot B is closed this Sunday",
+    "content": "Lot B is being resurfaced on October 11. Please use Lot A or the overflow lot on Maple Street; greeters will be out to help.",
+    "link_url": "guests/plan",
+    "link_label": "See the parking map"
+  },
+  {
+    "date": "2026-10-04",
+    "category": "Church life",
+    "title": "Read the Gospel of Mark with us this fall",
+    "content": "Our fall reading plan takes the whole church through Mark, one chapter a day, alongside the sermon series. Follow along in the Bible App.",
+    "link_url": "https://www.bible.com/",
+    "link_label": "Open the Bible App"
+  },
+  {
+    "date": "2026-10-03",
+    "category": "Worship",
+    "title": "Choir rehearsal moves to Thursdays",
+    "content": "Starting this week, choir rehearses Thursdays at 7:00pm in the music room instead of Wednesdays.",
+    "link_url": "",
+    "link_label": ""
+  },
+  {
+    "date": "2026-10-02",
+    "kind": "article",
+    "author": "Pastor Marcus Vance",
+    "categories": ["Missions", "Outreach"],
+    "title": "Why we go: the heart behind our mission trips",
+    "content": "Every year someone asks why a church our size still sends teams across the world when there is so much need across the street. It is a fair question, and the honest answer is that we do not see it as a choice between the two.\n\nThe same Jesus who fed the crowd on the hillside also sent his friends out to the ends of the earth. When a team from Grace Community spends ten days building a classroom or running a medical clinic, they come home changed. They notice the neighbor who is struggling. They sign up for Serve Day. They give more freely and pray more specifically.\n\nWe also go because we are invited. Every trip we send is in partnership with a local church that asked for help, and our teams work under their leadership. We are not there to fix anyone; we are there to stand alongside brothers and sisters who know their community far better than we ever will.\n\nThis year we are sending three teams: a construction team to Guatemala in February, a medical team to Kenya in June, and a youth team to the Dominican Republic in July. Applications are open now, and every team has spots for people who have never been on a trip before. If you cannot go, you can still send: every gift to the missions fund goes straight to travel costs and our partner churches.",
+    "bullet_summary": [
+      "Local service and global missions are not competing priorities; both flow from the same calling.",
+      "Every trip partners with a local church that invited us, and our teams serve under their leadership.",
+      "Three teams go out this year (Guatemala, Kenya and the Dominican Republic), with room for first-timers.",
+      "Those who cannot go can support the trips through the missions fund."
+    ],
+    "link_url": "give/trips",
+    "link_label": "See this year's mission trips"
+  },
+  {
+    "date": "2026-10-01",
+    "category": "Serve",
+    "title": "Serve Day is October 17",
+    "content": "Teams head out to local schools, the food pantry and elderly neighbors for the morning. All ages are welcome; meet in the main parking lot at 8:30am.",
+    "link_url": "serve",
+    "link_label": "See where help is needed"
+  },
+  {
+    "date": "2026-09-28",
+    "category": "Families",
+    "title": "Fall family picnic after church, October 25",
+    "content": "Food trucks, games and a bounce house on the church lawn after the 11:00am service. It is a great first event if you are new.",
+    "link_url": "calendar",
+    "link_label": "View the calendar"
+  },
+  {
+    "date": "2026-09-22",
+    "category": "Serve",
+    "title": "Welcome team training on October 11",
+    "content": "A 45-minute training for new greeters and guest services volunteers, right after the 11:00am service in the lobby.",
+    "link_url": "guests/welcome",
+    "link_label": "Meet the welcome team"
+  },
+  {
+    "date": "2026-09-15",
+    "category": "Worship",
+    "title": "Worship night returns November 6",
+    "content": "An evening of music and prayer led by the worship collective in the main auditorium. Bring a friend.",
+    "link_url": "calendar",
+    "link_label": "View the calendar"
+  },
+  {
+    "date": "2026-09-08",
+    "category": "Church life",
+    "title": "Discover Grace: your first step toward membership",
+    "content": "Offered the first Sunday of each month after the 11:00am service. Lunch and childcare are provided.",
+    "link_url": "about/connect",
+    "link_label": "Connect with us"
+  },
+  {
+    "date": "2026-08-30",
+    "category": "Families",
+    "title": "Kids ministry is looking for more helpers",
+    "content": "Sunday mornings run best with a full team. Training is provided and a background check is required.",
+    "link_url": "serve/find",
+    "link_label": "Find a place to serve"
+  }
+]

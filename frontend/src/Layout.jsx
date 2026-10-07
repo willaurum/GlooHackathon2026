@@ -13,18 +13,18 @@ export const SECTIONS = [
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book', tab: true },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips']] },
-  { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass', children: [['prayer/map', 'Prayer map']] },
-  { route: 'about', label: 'About', icon: 'info', children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect'], ['about/blog', 'Blog']] },
+  { route: 'prayer', label: 'Prayer map', short: 'Prayer', icon: 'compass' },
+  { route: 'about', label: 'About', icon: 'info', children: [['about', 'Our story'], ['about/beliefs', 'Beliefs'], ['about/news', 'News'], ['about/directory', 'Directory'], ['about/connect', 'Connect']] },
   { route: 'staff', label: 'Church staff', icon: 'lock', staffOnly: true },
 ];
 // The sections this visitor can see: staff-only ones are hidden until staff sign in.
 export const visibleSections = staff => SECTIONS.filter(s => staff || !s.staffOnly);
 const childrenFor = (s, demo) => (s.children || []).filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r));
 
-// The About pages other than the blog hold Grace Community's own text, so only the demo church
-// shows them. Other churches see the blog until they have About content of their own.
-export const ABOUT_DEMO_ONLY = new Set(['about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect']);
-export const ABOUT_TABS = [['about', 'Our story', 'info'], ['about/beliefs', 'Beliefs', 'book'], ['about/news', 'News', 'news'], ['about/directory', 'Directory', 'phone'], ['about/connect', 'Connect', 'mail'], ['about/blog', 'Blog', 'document']];
+// The About pages other than News hold Grace Community's own text, so only the demo church
+// shows them. Other churches see their own News until they have About content of their own.
+export const ABOUT_DEMO_ONLY = new Set(['about', 'about/beliefs', 'about/directory', 'about/connect']);
+export const ABOUT_TABS = [['about', 'Our story', 'info'], ['about/beliefs', 'Beliefs', 'book'], ['about/news', 'News', 'news'], ['about/directory', 'Directory', 'phone'], ['about/connect', 'Connect', 'mail']];
 export const aboutTabsFor = demo => ABOUT_TABS.filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r));
 
 const sectionOf = route => route.split('/')[0];
@@ -38,6 +38,10 @@ function identity(staff) {
 export function Avatar() {
   const user = identity(useChurch().staff);
   return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
+}
+
+export function Brand() {
+  return <a className="tekton-brand" href="/#/new"><Icon name="sparkle" size={26} />Tekton</a>;
 }
 
 export function Sidebar({ route, go, savedCount }) {
