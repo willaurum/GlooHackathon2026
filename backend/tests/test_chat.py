@@ -254,6 +254,13 @@ class ChatTests(unittest.TestCase):
     def test_prompt_asks_for_the_concrete_facts(self):
         self.assertIn("list each service's day and time", chat.SYSTEM_PROMPT)
 
+    def test_confirmed_details_win_over_old_page_text(self):
+        # Cedar Hollow's old welcome says worship is at 9:00; the church confirmed 10:00.
+        self.assertIn('get_church_info is right', chat.SYSTEM_PROMPT)
+        pages = next(t for t in chat.TOOLS if t['function']['name'] == 'list_pages')['function']['description']
+        self.assertIn('out of date', pages)
+        self.assertIn('get_church_info', chat.PAGES_NOTE)
+
     @patch.dict('os.environ', {'AI_PROVIDER': 'gloo', 'OPENAI_API_KEY': 'unused-key'}, clear=True)
     def test_status_and_reply_agree_when_only_unused_provider_has_key(self):
         self.assertFalse(chat.status()['configured'])
