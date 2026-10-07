@@ -730,7 +730,10 @@ def questions(fields, claims, sources):
                                for c in info['candidates']],
             })
         elif info['status'] == 'missing':
-            out.append({'field': field, 'kind': 'missing', 'prompt': f'We could not find the {label.lower()}. What is it?', 'candidates': []})
+            # A blank draft read nothing, so it asks plainly instead of reporting a miss.
+            what = f'What are your {label.lower()}?' if field == 'services' else f'What is your {label.lower()}?'
+            out.append({'field': field, 'kind': 'missing', 'candidates': [],
+                        'prompt': what if not sources else f'We could not find your {label.lower()}. {what}'})
     return out
 
 
