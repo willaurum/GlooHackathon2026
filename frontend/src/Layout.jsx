@@ -45,7 +45,6 @@ export function Sidebar({ route, go, savedCount }) {
   const user = identity(staff);
   return <aside className="sidebar">
     <ChurchName />
-    <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>
     <nav aria-label="Main">
       {visibleSections(staff).map(s => <div key={s.route}>
         <button className={'nav-item' + (sectionOf(route) === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined} onClick={() => go(s.route)}>
@@ -65,13 +64,19 @@ export function Sidebar({ route, go, savedCount }) {
   </aside>;
 }
 
-export function TopBar({ go, onAsk }) {
+export function TopBar({ onAsk }) {
   return <header className="topbar">
     <ChurchName compact />
-    <button className="first-visit" onClick={() => go('guests/plan')}>First time here?</button>
     <button className="icon-btn" aria-label="Ask Tekton" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />
   </header>;
+}
+
+// Floating bubble in the bottom-left corner, across from Ask Tekton. Hidden on the Guests pages,
+// where a first-time visitor already is.
+export function FirstVisit({ route, go }) {
+  if (sectionOf(route) === 'guests') return null;
+  return <button className="first-visit" onClick={() => go('guests/plan')}><Icon name="pin" size={18} />First time here?</button>;
 }
 
 // Desktop-only strip in the top-right corner; phones get the avatar in the TopBar instead.

@@ -577,8 +577,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
     background: rgb(255 255 255 / .92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--line);
   }
-  /* Narrow phones: drop the first-visit button (Guests is in the tab bar) so the church name fits. */
-  @media (max-width: 430px) { .topbar .first-visit { display: none; } }
   .tabbar {
     /* One column per button, however many there are, so a tab never wraps
        into a cut-off second row when SECTIONS grows. */
@@ -817,9 +815,17 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 }
 
 /* --- First-time guest visit pages --- */
-.first-visit{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:40px;margin:-6px 0 14px;border:1px solid var(--green-200);border-radius:var(--r);background:var(--green-50);color:var(--green-800);font-size:14px;font-weight:600}
-.first-visit:hover{background:var(--green-100)}
-.topbar .first-visit{width:auto;min-height:32px;margin:0;padding:0 12px;font-size:12px;white-space:nowrap}
+/* Floating "First time here?" bubble, bottom-left across from Ask Tekton. */
+.first-visit { position: fixed; left: 24px; bottom: 24px; z-index: 40; display: inline-flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 22px; border-radius: 999px; background: var(--info); color: #fff; font-size: 15px; font-weight: 600; box-shadow: 0 20px 50px rgb(49 84 163 / .28); animation: pop .2s ease; }
+.first-visit:hover { background: #284589; }
+.first-visit:active { transform: translateY(1px); }
+.first-visit:focus-visible { outline: 3px solid #c3d0ef; outline-offset: 2px; }
+/* With the sidebar showing, sit beside it instead of over it. */
+@media (min-width: 861px) { .first-visit { left: calc(var(--sidebar) + 24px); } }
+/* Phones: float just above the tab bar, smaller, and under the Menu sheet when it opens. */
+@media (max-width: 860px) {
+  .first-visit { left: 12px; bottom: calc(var(--tabbar) + var(--safe-bottom) + 12px); z-index: 27; min-height: 44px; padding: 0 16px; font-size: 14px; }
+}
 .visit-page,.welcome-team{display:flex;flex-direction:column;gap:18px}
 .visit-section{padding:24px 26px}
 .visit-section h2{margin-top:6px}
