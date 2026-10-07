@@ -237,7 +237,7 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
   const [city, setCity] = useState(addressCity(session?.fields.address?.value));
   const [ownerName, setOwnerName] = useState(''), [ownerEmail, setOwnerEmail] = useState('');
   const [password, setPassword] = useState(''), [confirm, setConfirm] = useState(''), [error, setError] = useState('');
-  const [registrationClosed, setRegistrationClosed] = useState(false), [inviteCode, setInviteCode] = useState('');
+  const [registrationClosed, setRegistrationClosed] = useState(false);
   async function submit(e) {
     e.preventDefault();
     if (disabled) return;
@@ -256,7 +256,6 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
       } else setBusy('create');
       const result = await createFromDraft(draftId, {
         name: name.trim(), city: city.trim(), ownerName: ownerName.trim(), ownerEmail: ownerEmail.trim(), password,
-        inviteCode: inviteCode.trim(),
       }, created, target => { onCreated(target); setPassword(''); setConfirm(''); });
       onSuccess(result.church);
     } catch (err) {
@@ -278,8 +277,6 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
       <label className="field">Your email<input required type="email" maxLength={200} autoComplete="email" value={ownerEmail} disabled={disabled} onChange={e => setOwnerEmail(e.target.value)} /></label>
       <label className="field">Password (10+ characters)<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={password} disabled={disabled} onChange={e => setPassword(e.target.value)} /></label>
       <label className="field">Confirm password<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={confirm} disabled={disabled} onChange={e => setConfirm(e.target.value)} /></label>
-      <label className="field">Invite code<input required maxLength={200} autoComplete="off" spellCheck={false} value={inviteCode} disabled={disabled} aria-describedby="builder-invite-note" onChange={e => setInviteCode(e.target.value)} /></label>
-      <p className="form-note" id="builder-invite-note">New churches need an invite code from the Tekton team while Tekton is in preview. You can preview your site without one.</p>
     </>}
     {error && <div className="banner error" role="alert">{error}</div>}
     <div className="builder-actions">

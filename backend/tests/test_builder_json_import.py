@@ -136,9 +136,8 @@ class JsonImportTests(ChurchTestCase):
         node = shutil.which('node')
         if not node or not (ROOT / 'api-giving' / 'node_modules').is_dir():
             self.skipTest('Integration requires Node 24 and api-giving dependencies')
-        invite = secrets.token_urlsafe(24)
         process = subprocess.Popen([node, 'test/local-worker.mjs'], cwd=ROOT / 'api-giving',
-                                   env={**os.environ, 'TEKTON_INVITE_CODES': invite, 'LOCAL_TEST_PORT': '0'}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                   env={**os.environ, 'LOCAL_TEST_PORT': '0'}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.addCleanup(process.stdout.close)
         self.addCleanup(lambda: process.wait(timeout=5))
         self.addCleanup(process.terminate)
@@ -152,8 +151,7 @@ class JsonImportTests(ChurchTestCase):
         origin = 'http://127.0.0.1:' + line.rsplit(' ', 1)[1]
         account = {'name': 'Meadow Lantern Chapel', 'city': 'Meadowville (fictional)', 'ownerName': 'Alex Example',
                    'ownerEmail': 'alex@lantern.example', 'password': secrets.token_urlsafe(24)}
-        self.assertEqual(httpx.post(origin + '/api/churches', json=account).status_code, 403)
-        response = httpx.post(origin + '/api/churches', json={**account, 'inviteCode': invite})
+        response = httpx.post(origin + '/api/churches', json=account)
         self.assertEqual(response.status_code, 201, 'Local church creation failed')
         church = response.json()
         self.assertTrue(church['token'])

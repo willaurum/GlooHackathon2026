@@ -35,8 +35,6 @@ type Secrets = {
   BASE_DOMAIN?: string;
   // Optional: turns on GET /api/platform/churches for the platform team (Authorization: Bearer <key>).
   PLATFORM_ADMIN_KEY?: string;
-  // Optional: comma-separated invite codes. With one, Tekton (#/new) can create a church; public signup stays off.
-  TEKTON_INVITE_CODES?: string;
 };
 type GivingEnv = Env & Secrets & { GIVING_REGISTRY: DurableObjectNamespace<GivingRegistry> };
 
@@ -1697,31 +1695,15 @@ function forward(env: GivingEnv, request: Request, doName: string, slug: string,
   return env.GIVING.getByName(doName).fetch(req);
 }
 
-// Creating a church from Tekton (#/new) needs an invite code from TEKTON_INVITE_CODES. Without that secret, or
-// without a right code, nothing is created: public church registration stays off. Wrong codes are limited per IP
-// like the platform key, and new churches per IP and per hour by the registry.
-const REGISTRATION_CLOSED = 'Public church registration is not available on this site.';
-
+// Creating a church from Tekton (#/new): anyone can, with no invite code. New churches are limited per IP and per
+// hour by the registry (reserve), and every church starts with its own Owner account.
 async function createChurch(request: Request, env: GivingEnv): Promise<Response> {
-  const codes = String(env.TEKTON_INVITE_CODES || '').split(',').map((c) => c.trim()).filter((c) => c.length >= 8);
-  if (!codes.length) return json({ error: REGISTRATION_CLOSED }, 403);
   let body: any;
   try { body = await readJson(request); } catch (err) {
     return err instanceof BadRequest ? json({ error: err.message }, err.status) : json({ error: 'Body must be valid JSON.' }, 400);
   }
-  const code = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : '';
-  if (!code) return json({ error: 'Enter your invite code to create a church.', inviteRequired: true }, 403);
   const registry = env.GIVING_REGISTRY.getByName('registry');
   const ip = request.headers.get('cf-connecting-ip') || 'anon';
-  if (await registry.platformLocked('invite:' + ip)) return json({ error: 'Too many wrong codes. Wait a minute and try again.' }, 429);
-  // Every code is compared, by digest, so neither which code matched nor its length leaks via timing.
-  const digest = await sha256(code.slice(0, 200));
-  let ok = false;
-  for (const c of codes) ok = ctEqual(digest, await sha256(c)) || ok;
-  if (!ok) {
-    await registry.platformFailed('invite:' + ip);
-    return json({ error: 'That invite code is not right.', inviteRequired: true }, 403);
-  }
   const name = String(body.name || '').trim(), city = String(body.city || '').trim();
   const password = String(body.password || ''), ownerName = String(body.ownerName || '').trim();
   const ownerEmail = String(body.ownerEmail || '').trim().toLowerCase();
