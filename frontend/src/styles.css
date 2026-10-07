@@ -1009,6 +1009,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .spot-icon.point{border-radius:50%;background:var(--spot)}
 .spot.active .spot-icon{background:var(--spot);box-shadow:0 0 0 3px color-mix(in srgb,var(--spot) 30%,transparent)}
 .church-map{height:380px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
+.visit-location{display:grid;gap:18px}
+.visit-location.has-parking{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}
+.visit-location .church-map{margin-top:16px}
+@media(max-width:850px){.visit-location.has-parking{grid-template-columns:1fr}}
 .map-links{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
 .map-address{font-size:11px;margin-top:10px;color:var(--faint)}
 .visit-form{display:flex;flex-direction:column}
@@ -1330,6 +1334,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .tekton-edit.compact input { padding: 6px 10px; font-size: 13px; }
 .tekton-edit.compact button { padding: 6px 12px; font-size: 13px; }
 .tekton-edit.compact .tekton-edit-result { font-size: 12px; }
+.tekton-agent .tekton-agent-question { color: var(--green-700); font-weight: 600; }
 .site-preview-banner { flex-wrap: wrap; }
 .site-preview-banner > button { flex: none; padding: 6px 12px; font-size: 13px; }
 

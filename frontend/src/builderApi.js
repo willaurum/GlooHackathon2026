@@ -42,6 +42,11 @@ export const calendarApi = (draftId, calendarId, action) => draftApi('/' + encod
 export const removedApi = (draftId, removedId) => draftApi('/' + encodeURIComponent(draftId) + '/removed/'
   + encodeURIComponent(removedId) + '/add', { method: 'POST' });
 
+/** A change asked while looking at the preview: { draft, reply, changes, refused, asking }. */
+export const customizeApi = (draftId, request, viewing = '') => draftApi('/' + encodeURIComponent(draftId) + '/customize', { method: 'POST', body: JSON.stringify({ request, viewing }) });
+
+export const undoCustomizeApi = draftId => draftApi('/' + encodeURIComponent(draftId) + '/customize/undo', { method: 'POST' });
+
 /** The pastor confirms (or takes back) the statement of faith Tekton kept word for word. */
 export const beliefsApi = (draftId, confirmed) => draftApi('/' + encodeURIComponent(draftId) + '/beliefs', { method: 'POST', body: JSON.stringify({ confirmed }) });
 

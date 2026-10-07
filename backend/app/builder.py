@@ -50,8 +50,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import (builder_agents, builder_calendar, builder_crawl, builder_json, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
-               church_content, db)
+from . import (builder_agents, builder_calendar, builder_crawl, builder_customize, builder_edit, builder_json,
+               builder_run, builder_site, builder_structured, builder_theme, chat, church_content, db)
 from .builder_edit import clean_layout, default_layout
 from .builder_export import files as content_files, load as load_content_files, sources as content_sources, calendars as content_calendars
 
@@ -2857,8 +2857,11 @@ def _save_json(data):
 
 def _draft_content(draft, allow_unanswered=False):
     if draft.get('import_kind') == 'json':
-        return draft['json_content']
-    return build_content(_with_pages(draft), allow_unanswered=allow_unanswered)
+        content = draft['json_content']
+    else:
+        content = build_content(_with_pages(draft), allow_unanswered=allow_unanswered)
+    # Changes asked in the preview (builder_customize) sit on top of what was imported or loaded.
+    return builder_customize.apply(content, draft.get('custom'))
 
 
 def _editable(draft):
@@ -3032,13 +3035,105 @@ def site(draft_id: str):
                    {'provenance': provenance(draft)} if draft.get('import_kind') != 'json' else {})}
 
 
+draft_chat_limiter = ImportLimiter()
+
+
+customize_limiter = ImportLimiter()
+
+
+class CustomizeBody(BaseModel):
+    request: str = Field(min_length=3, max_length=300)
+    viewing: str = Field(default='', max_length=80)
+
+
+@router.post('/api/builder/drafts/{draft_id}/customize')
+def customize(draft_id: str, body: CustomizeBody, request: Request):
+    """A change asked in plain words while looking at the preview ("Make the main color navy"), made as checked
+    operations on the draft's content (builder_customize)."""
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        if len(draft.get('custom') or []) >= builder_customize.MAX_CUSTOM:
+            raise HTTPException(status_code=429, detail='This draft has had many changes. Create your church to keep editing.')
+        content = _draft_content(draft, allow_unanswered=True)
+        history = list(draft.get('custom_log') or [])
+    ops, reply, method, asking = builder_customize.rule_ops(body.request, body.viewing), '', 'rules', False
+    if ops is None:
+        complete = _completer(None, _now() + 25)
+        if (not complete or not _ai_available()) and builder_customize.VAGUE_COLOR_RE.fullmatch(body.request.strip()):
+            return {'draft': _public(draft), 'reply': builder_customize.VAGUE_COLOR_REPLY, 'changes': [], 'refused': [],
+                    'asking': True, 'method': 'rules'}
+        if not complete or not _ai_available():
+            raise HTTPException(status_code=400, detail='Tekton did not understand that. Try “Make the main color navy”, '
+                                                        '“Put service times above ministries” or “Hide the map”.')
+        ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+        try:
+            with customize_limiter.importing(ip):
+                ops, reply, asking = builder_customize.ai_ops(content, body.request, history, body.viewing, complete)
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception('builder: customize AI call failed')
+            raise HTTPException(status_code=502, detail='Tekton is unavailable right now. Please try again in a moment.')
+        method = 'ai'
+    stored, changes, refused = [], [], []
+    for op in ops:
+        try:
+            op, content = builder_customize.check(content, op)
+        except builder_customize.Refused as why:
+            refused.append(str(why))
+            continue
+        stored.append(op)
+        changes.append(builder_customize.describe(op))
+    if not stored and not asking:
+        raise HTTPException(status_code=400, detail=refused[0] if refused else (reply or 'Tekton could not match that to your site.'))
+    with _draft_lock:
+        draft = _ready(_load(draft_id))
+        draft['custom'] = [*(draft.get('custom') or []), *stored]
+        draft.setdefault('custom_steps', []).append(len(stored))
+        reply = reply or ('. '.join(changes) + '.')
+        draft['custom_log'] = [*(draft.get('custom_log') or []), {'request': body.request, 'reply': reply}][-10:]
+        return {'draft': _public(_save(draft)), 'reply': reply, 'changes': changes, 'refused': refused,
+                'asking': asking and not stored, 'method': method}
+
+
+@router.post('/api/builder/drafts/{draft_id}/customize/undo')
+def customize_undo(draft_id: str):
+    with _draft_lock:
+        draft = _ready(_load(draft_id))
+        steps = draft.get('custom_steps') or []
+        if not steps:
+            raise HTTPException(status_code=400, detail='There is nothing to undo.')
+        count = steps.pop()
+        draft['custom'] = (draft.get('custom') or [])[:len(draft.get('custom') or []) - count]
+        draft['custom_steps'] = steps
+        return {'draft': _public(_save(draft)), 'reply': 'Undid the last change.', 'changes': []}
+
+
+@router.post('/api/builder/drafts/{draft_id}/chat')
+def draft_chat(draft_id: str, body: chat.ChatRequest, request: Request):
+    messages = chat.recent_messages(body)
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        content = _draft_content(draft, allow_unanswered=True)
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with draft_chat_limiter.importing(ip):
+        try:
+            return chat.run(messages, body.session_id, source=chat.DraftContent(content))
+        except Exception:
+            log.exception('draft chat turn failed')
+            raise HTTPException(status_code=502, detail='The assistant is unavailable right now. Please try again in a moment.')
+
+
 def _file(draft_id, name):
     with _draft_lock:
         draft = _with_pages(_ready(_load(draft_id)))
+        # _draft_content keeps a JSON import's loaded content and applies the church's customizations.
+        content = _draft_content(draft, allow_unanswered=True)
         if draft.get('import_kind') == 'json':
-            document = builder_json.files(draft, content=draft['json_content'], sources=draft.get('json_sources') or {})[name]
+            draft = {**draft, 'site': {**(draft.get('site') or {}), 'calendars': draft.get('json_calendars') or []}}
+            document = builder_json.files(draft, content=content, sources=draft.get('json_sources') or {})[name]
         else:
-            document = builder_json.files(draft)[name]
+            document = builder_json.files(draft, content=content)[name]
     # Served as a download: the church (or the team) can keep the files Tekton wrote.
     return JSONResponse(document, headers={'Content-Disposition': f'attachment; filename="{name}.json"'})
 
