@@ -156,6 +156,7 @@ def initialize():
         try:
             _create_tables(seed=slug == DEMO_CHURCH)
             _ensure_embed_column()
+            _ensure_highlight_engine_column()
             if slug != DEMO_CHURCH:
                 start_church(name or slug, city)
             _ready.add(slug)
@@ -176,6 +177,24 @@ def _ensure_embed_column():
         return
     try:
         run((f"ALTER TABLE chunks ADD COLUMN embed_model TEXT NOT NULL DEFAULT '{LEGACY_EMBED_TAG}'", ()))
+    except Exception:
+        if not has_column():
+            raise
+
+
+def _ensure_highlight_engine_column():
+    """Add notes.highlight_engine (which model tagged the highlights) to a database made before it existed.
+    Notes processed before then keep '' (unknown)."""
+    def has_column():
+        try:
+            run(("SELECT highlight_engine FROM notes LIMIT 0", ()))
+            return True
+        except Exception:
+            return False
+    if has_column():
+        return
+    try:
+        run(("ALTER TABLE notes ADD COLUMN highlight_engine TEXT NOT NULL DEFAULT ''", ()))
     except Exception:
         if not has_column():
             raise
@@ -214,7 +233,8 @@ def _create_tables(seed=True):
             word_count INTEGER,
             transcript TEXT,
             started_at TEXT,
-            created_at TEXT NOT NULL DEFAULT {NOW}
+            created_at TEXT NOT NULL DEFAULT {NOW},
+            highlight_engine TEXT NOT NULL DEFAULT ''
         )""", ()),
         ("""CREATE TABLE IF NOT EXISTS segments (
             note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -624,7 +644,7 @@ def update_config(fields):
 
 # --- Pastor Notes ---
 
-NOTE_COLUMNS = "id, title, source_kind, source_url, status, error, duration, word_count, created_at"
+NOTE_COLUMNS = "id, title, source_kind, source_url, status, error, duration, word_count, created_at, highlight_engine"
 
 
 def create_note(note_id, title, source_kind, source_url=None, r2_key=None):
@@ -672,8 +692,9 @@ def fail_note(note_id, error):
     query("UPDATE notes SET status = 'failed', error = ? WHERE id = ?", (error[:300], note_id))
 
 
-def save_transcript(note_id, segments, chunks, duration, annotations=()):
-    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction."""
+def save_transcript(note_id, segments, chunks, duration, annotations=(), highlight_engine=''):
+    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction.
+    highlight_engine names the model(s) that tagged the annotations (for example gloo:gloo-qwen-3.7-flash)."""
     text = ' '.join(s['text'] for s in segments).strip()
     statements = [("DELETE FROM segments WHERE note_id = ?", (note_id,)),
                   ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
@@ -690,8 +711,8 @@ def save_transcript(note_id, segments, chunks, duration, annotations=()):
                     'VALUES (?, ?, ?, ?, ?, ?)',
                     (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
                    for a in annotations]
-    statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?
-        WHERE id = ?""", (text, duration, len(text.split()), note_id)))
+    statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?,
+        highlight_engine = ? WHERE id = ?""", (text, duration, len(text.split()), highlight_engine or '', note_id)))
     run(*statements)
 
 

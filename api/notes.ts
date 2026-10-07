@@ -3,8 +3,8 @@ import { EmbedError, backfillChurch, comparable, cosine, embedChunks, embedTag, 
 
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
 type Secrets = {
-	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
-	GLOO_API_KEY?: string; GLOO_MODEL?: string; GLOO_EMBED_MODEL?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
+	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; YTDLP_COOKIES?: string;
+	GLOO_API_KEY?: string; GLOO_MODEL?: string; GLOO_EMBED_MODEL?: string; GLOO_NOTES_MODEL?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
 	// Optional: the team AI bridge (scripts/team-ai-bridge), and which provider the chat tries first.
 	TEAM_AI_URL?: string; TEAM_AI_KEY?: string; TEAM_AI_MODEL?: string; AI_PROVIDER?: string;
 	YOUVERSION_APP_KEY?: string; YOUVERSION_BIBLE_ID?: string;
@@ -21,11 +21,13 @@ type Scored = Omit<Chunk, 'embedding' | 'embed_model'> & { score: number };
 type Citation = { chunk: number; start: number; end: number; timestamp: string; quote: string; url?: string };
 type Answer = { found: boolean; answer: string; citations: Citation[] };
 
-// Transcription is the one model hosted on Workers AI. Embeddings come from Gloo (embed.ts).
+// Transcription is the one model hosted on Workers AI: Gloo has no speech-to-text. Embeddings come from Gloo (embed.ts).
 export const ASR_MODEL = '@cf/openai/whisper-large-v3-turbo';
 // Sermon-note answers go to Gloo, like the chat. Keep in step with backend/app/chat.py.
-const GLOO_BASE_URL = 'https://platform.ai.gloo.com/ai/v2/guarded';
-const GLOO_DEFAULT_MODEL = 'gloo-qwen-3.7-flash';
+export const GLOO_CHAT_URL = 'https://platform.ai.gloo.com/ai/v2/guarded/chat/completions';
+export const GLOO_DEFAULT_MODEL = 'gloo-qwen-3.7-flash';
+// gloo-qwen-3.7-flash reasons before it answers and can take 30+ seconds; Cloudflare ends a proxied request at about 100.
+export const GLOO_TIMEOUT_MS = 60_000;
 const NOT_FOUND = 'Not found in this note.';
 const TOP_K = 5;
 const MAX_JSON_BYTES = 16 * 1024;
@@ -155,7 +157,8 @@ export async function aiBridge(request: Request, env: AppEnv): Promise<Response>
 			}
 		}
 		if (request.method === 'POST' && path === '/llm') {
-			// Transcript categorization: one window of numbered segments per call.
+			// Highlight fallback only: the container tags transcript windows with Gloo itself
+			// (backend/app/pastor_notes.py) and asks here for a window Gloo could not tag.
 			const { prompt } = await request.json<{ prompt: unknown }>();
 			if (typeof prompt !== 'string' || !prompt || prompt.length > MAX_LLM_PROMPT_CHARS)
 				return new Response(`prompt must be 1-${MAX_LLM_PROMPT_CHARS} characters`, { status: 400 });
@@ -164,7 +167,10 @@ export async function aiBridge(request: Request, env: AppEnv): Promise<Response>
 				temperature: 0,
 				max_tokens: 2048,
 			} as any);
-			return json({ text: typeof out.response === 'string' ? out.response : JSON.stringify(out.response ?? '') });
+			return json({
+				text: typeof out.response === 'string' ? out.response : JSON.stringify(out.response ?? ''),
+				model: `workers-ai:${env.NOTES_LLM_MODEL}`,
+			});
 		}
 	} catch (err) {
 		console.error('workers-ai bridge failed:', String(err));
@@ -383,7 +389,7 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string, s
 
 	let raw: unknown, label: string;
 	try {
-		[raw, label] = await askModel(env, engine, churchName, question, supported);
+		[raw, label] = await askModel(env, churchName, question, supported);
 	} catch (err) {
 		console.error('answer model failed:', String(err));
 		return reply(extractive(), 'extractive', { fallback_reason: 'model_error' });
@@ -401,13 +407,9 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string, s
 	return reply(checked, label);
 }
 
-function pickEngine(env: AppEnv, requested: unknown): 'extractive' | 'gloo' | 'gemini' | 'workers-ai' {
-	if (requested === 'extractive') return 'extractive';
-	// Gloo answers the questions; only transcription stays on Workers AI (whisper).
-	if (env.GLOO_API_KEY) return 'gloo';
-	if (env.GEMINI_API_KEY) return 'gemini';
-	if (env.NOTES_ANSWER_ENGINE === 'workers-ai') return 'workers-ai';
-	return 'extractive';
+function pickEngine(env: AppEnv, requested: unknown): 'extractive' | 'gloo' {
+	// Gloo answers the questions. Without a key (or when asked) the extractive answerer, which uses no model.
+	return requested !== 'extractive' && env.GLOO_API_KEY ? 'gloo' : 'extractive';
 }
 
 const SYSTEM_PROMPT = `You answer questions about one sermon or teaching from {church}, using ONLY the transcript passages provided.
@@ -420,57 +422,61 @@ Rules:
 
 Return JSON only: {"found": boolean, "answer": string, "citations": [{"id": "C1", "quote": "exact words from C1"}]}`;
 
-/** The first JSON object in a model reply (small models sometimes wrap it in prose or a code fence). */
-function parseModelJson(reply: unknown): unknown {
+/** The JSON object in a model reply. Reasoning models may put a <think> block, a code fence or prose (with
+ * braces of its own) around it, so reasoning is dropped and each balanced {...} is tried in turn. */
+export function parseModelJson(reply: unknown): unknown {
 	if (typeof reply !== 'string') return reply;
-	const start = reply.indexOf('{'), end = reply.lastIndexOf('}');
-	return start >= 0 && end > start ? JSON.parse(reply.slice(start, end + 1)) : null;
+	let text = reply.replace(/<think>[\s\S]*?<\/think>/gi, '');
+	const open = text.toLowerCase().indexOf('<think>');
+	if (open >= 0) text = text.slice(0, open); // thinking cut off before it closed
+	for (let start = text.indexOf('{'); start >= 0; start = text.indexOf('{', start + 1)) {
+		const end = balancedEnd(text, start);
+		if (end < 0) continue;
+		try {
+			const value = JSON.parse(text.slice(start, end + 1));
+			if (value && typeof value === 'object') return value;
+		} catch {
+			/* not JSON; try the next '{' */
+		}
+	}
+	return null;
 }
 
-async function askModel(env: AppEnv, engine: 'gloo' | 'gemini' | 'workers-ai', church: string, question: string, passages: Scored[]): Promise<[unknown, string]> {
+/** Index of the '}' that closes the '{' at `start` (braces inside JSON strings are ignored), or -1. */
+function balancedEnd(text: string, start: number): number {
+	let depth = 0, inString = false;
+	for (let i = start; i < text.length; i++) {
+		const ch = text[i];
+		if (inString) {
+			if (ch === '\\') i++;
+			else if (ch === '"') inString = false;
+		} else if (ch === '"') inString = true;
+		else if (ch === '{') depth++;
+		else if (ch === '}' && --depth === 0) return i;
+	}
+	return -1;
+}
+
+async function askModel(env: AppEnv, church: string, question: string, passages: Scored[]): Promise<[unknown, string]> {
 	const system = SYSTEM_PROMPT.replace('{church}', church);
 	const user = passages.map((c, i) => `[C${i + 1}] (${timestamp(c.start)}) ${c.text}`).join('\n\n') + `\n\nQuestion: ${question}`;
-	if (engine === 'gloo') {
-		// Same endpoint and model the chat uses (backend/app/chat.py), over OpenAI chat completions.
-		const model = env.GLOO_MODEL || GLOO_DEFAULT_MODEL;
-		const response = await fetch(`${GLOO_BASE_URL}/chat/completions`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GLOO_API_KEY}` },
-			body: JSON.stringify({
-				auto_routing: false,
-				model,
-				messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-				temperature: 0,
-				max_tokens: 600,
-			}),
-		});
-		if (!response.ok) throw new Error(`gloo ${response.status}: ${(await response.text()).slice(0, 300)}`);
-		const out = await response.json<any>();
-		return [parseModelJson(out.choices?.[0]?.message?.content ?? ''), `gloo:${model}`];
-	}
-	if (engine === 'gemini') {
-		const model = env.GEMINI_MODEL;
-		const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! },
-			body: JSON.stringify({
-				systemInstruction: { parts: [{ text: system }] },
-				contents: [{ role: 'user', parts: [{ text: user }] }],
-				generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-			}),
-		});
-		if (!response.ok) throw new Error(`gemini ${response.status}: ${(await response.text()).slice(0, 300)}`);
-		const out = await response.json<any>();
-		return [parseModelJson(out.candidates?.[0]?.content?.parts?.[0]?.text ?? ''), `gemini:${model}`];
-	}
-	const model = env.NOTES_LLM_MODEL;
-	const out: any = await env.AI.run(model as any, {
-		// No response_format: llama-3.1-8b-instruct-fp8 rejects JSON Schema mode (AiError 5025).
-		messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-		temperature: 0,
-		max_tokens: 600,
-	} as any);
-	return [parseModelJson(out.response), `workers-ai:${model}`];
+	// Same endpoint and model the chat uses (backend/app/chat.py), over OpenAI chat completions.
+	const model = (env.GLOO_MODEL ?? '').trim() || GLOO_DEFAULT_MODEL;
+	const response = await fetch(GLOO_CHAT_URL, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GLOO_API_KEY}` },
+		body: JSON.stringify({
+			auto_routing: false,
+			model,
+			messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+			temperature: 0,
+			max_tokens: 600,
+		}),
+		signal: AbortSignal.timeout(GLOO_TIMEOUT_MS),
+	});
+	if (!response.ok) throw new Error(`gloo ${response.status}: ${(await response.text()).slice(0, 300)}`);
+	const out = await response.json<any>();
+	return [parseModelJson(out.choices?.[0]?.message?.content ?? ''), `gloo:${model}`];
 }
 
 /** Accept the model's answer only if every quote is really in its passage and the answer's

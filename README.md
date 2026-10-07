@@ -263,6 +263,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
 | `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. `GLOO_API_KEY` also turns on sermon-note embeddings. |
 | `GLOO_EMBED_MODEL` | `api/` | Optional, not secret. The Gloo embedding model for sermon-note search (default `gloo-baai-bge-base-en-v1.5`). Set it as a GitHub Actions **variable**, next to `GLOO_MODEL`; Deploy backend copies both to the Worker. |
+| `GLOO_NOTES_MODEL` | `api/` | Optional, not secret. The Gloo model that tags sermon highlights (default: `GLOO_MODEL`, then `gloo-qwen-3.7-flash`). Also a GitHub Actions **variable**; Deploy backend copies it to the Worker, which passes it to the container. |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
 | `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
@@ -323,20 +324,29 @@ The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) ta
 
 #### Which AI does what
 
-On Cloudflare, Gloo does the language work, embeddings included. The transcriber is the model we host on Workers AI:
+On Cloudflare, Gloo does all the language work, embeddings included. The one exception is transcription: Whisper stays on Workers AI because Gloo has no speech-to-text model (its [model catalog](https://platform.ai.gloo.com/platform/v2/models) lists none).
 
-| Job | Model |
-| --- | --- |
-| Website chat, Find a place | Gloo (`GLOO_MODEL`) |
-| Calendar summaries, blog categories and summaries | Gloo (`GLOO_MODEL`) |
-| Sermon-note questions | Gloo (`GLOO_MODEL`) |
-| Passage and question embeddings for sermon-note search | Gloo, `gloo-baai-bge-base-en-v1.5` (`GLOO_EMBED_MODEL`) |
-| Transcribing sermon audio | Workers AI, `@cf/openai/whisper-large-v3-turbo` |
-| Highlighting transcript passages by category | Workers AI, `NOTES_LLM_MODEL` (not moved yet) |
+| Job | Model | When the model is unavailable |
+| --- | --- | --- |
+| Website chat, Find a place | Gloo (`GLOO_MODEL`, default `gloo-qwen-3.7-flash`) | Chat: `AI_FALLBACK` if set, else a "not configured" or office-contact reply. Find a place: the teams that fit the visitor's answers (deterministic filter). |
+| Calendar summaries, blog summaries | Gloo (`GLOO_MODEL`) | The request reports an AI error; nothing is saved. |
+| Blog categories | Gloo (`GLOO_MODEL`) | Keyword rules (`NLP_KEYWORD_RULES` in `backend/app/blog_ai.py`), so a post always gets categories. |
+| Sermon-note questions | Gloo (`GLOO_MODEL`) | The extractive answerer: verbatim transcript quotes with timestamps, no model. |
+| Sermon highlights (Bible quotes, personal stories, ...) | Gloo (`GLOO_NOTES_MODEL`, else `GLOO_MODEL`) | Per window: Workers AI `NOTES_LLM_MODEL` (llama-3.1-8b) through the Worker's `/llm` bridge, else that window is skipped. Highlights never fail a note. |
+| Passage and question embeddings for sermon-note search | Gloo, `gloo-baai-bge-base-en-v1.5` (`GLOO_EMBED_MODEL`) | Keyword search over the same passages. |
+| Transcribing sermon audio | Workers AI, `@cf/openai/whisper-large-v3-turbo` | The note fails with `transcription_failed` and can be retried. |
 
-Sermon notes pick their engine in `pickEngine` (`api/notes.ts`): Gloo when `GLOO_API_KEY` is set, then Gemini if `GEMINI_API_KEY` is set, then Workers AI when `NOTES_ANSWER_ENGINE=workers-ai`, and otherwise the extractive answerer, which uses no model at all. Asking for `extractive` explicitly always wins, and any model answer that fails the citation check falls back to it.
+Every Gloo call uses `https://platform.ai.gloo.com/ai/v2/guarded/chat/completions` (embeddings: `/ai/v2/direct/embeddings`) with a Bearer key and `auto_routing: false`, and waits up to 60 seconds: `gloo-qwen-3.7-flash` reasons before it answers, and Cloudflare ends a proxied request after about 100. Replies are parsed leniently (a `<think>` block, a code fence or a sentence around the JSON is fine).
 
-Whisper stays on Workers AI because Gloo has no speech-to-text model. Gloo does serve embeddings (`POST https://platform.ai.gloo.com/ai/v2/direct/embeddings`, OpenAI-shaped; see [Gloo's guide](https://docs.gloo.com/api-guides/embeddings)), and `api/embed.ts` is the one place that calls it, for ingest (the container's `/embed` bridge) and for questions.
+**Sermon highlights.** The container splits the transcript into windows of about 1,500 words, tags up to 3 windows at a time with Gloo, and stores which model did it on the note: `GET /api/notes/<id>` returns `highlight_engine`, for example `gloo:gloo-qwen-3.7-flash`. A note where some windows fell back says so (`gloo:...+workers-ai:@cf/meta/llama-3.1-8b-instruct-fp8`), `none` means no window could be tagged, and notes processed before this field existed show `""`.
+
+**Sermon-note answers** come from Gloo when `GLOO_API_KEY` is set, and from the extractive answerer otherwise. Asking for `extractive` explicitly always wins, and any model answer that fails the citation check falls back to it.
+
+**Deliberate non-model rules.** These stay deterministic because they are fast, free and do their job: the chat's prompt-override filter (`OVERRIDE_PATTERNS` in `chat.py`, in front of Gloo's guarded endpoint), Find a place's eligibility filter (availability and requirements), and the Prayer Map news filter in `newsdata.py` (drops ads, stock tickers and non-English items, and keeps headlines that name the country).
+
+On the laptop build (`jaron-frontend`, `AI_PROVIDER=ollama`) the chat, Find a place, summaries and blog categories use the local Ollama through the same provider settings; sermon highlights use Gloo when `GLOO_API_KEY` is set there too.
+
+Gloo serves embeddings (`POST https://platform.ai.gloo.com/ai/v2/direct/embeddings`, OpenAI-shaped; see [Gloo's guide](https://docs.gloo.com/api-guides/embeddings)), and `api/embed.ts` is the one place that calls it, for ingest (the container's `/embed` bridge) and for questions.
 
 **Embeddings are tagged with their model.** Every chunk stores `embed_model` (for example `gloo:gloo-baai-bge-base-en-v1.5`), and a question is only compared with chunks that carry the current tag. Chunks stored before the switch were made by Workers AI (`@cf/baai/bge-base-en-v1.5`, cls pooling); they are tagged `workers-ai:@cf/baai/bge-base-en-v1.5:cls` and are never compared with Gloo vectors. Changing `GLOO_EMBED_MODEL` works the same way: old chunks simply stop matching the tag.
 
@@ -456,7 +466,7 @@ Run the Python tests from the repo root with the backend requirements installed.
 
 ## Sermon Notes
 
-Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded with Gloo (`gloo-baai-bge-base-en-v1.5`) and stored, and questions are answered only from what the transcript supports. The sermon list and an open sermon have their own routes (`#/notes`, `#/notes/<id>`); on phones an open sermon takes over the page, with a back button.
+Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded with Gloo (`gloo-baai-bge-base-en-v1.5`), highlighted by Gloo and stored, and questions are answered only from what the transcript supports. The sermon list and an open sermon have their own routes (`#/notes`, `#/notes/<id>`); on phones an open sermon takes over the page, with a back button.
 
 ### How it works
 
@@ -470,7 +480,8 @@ Container (ffmpeg + yt-dlp) ----> R2 (raw media)
    transcript + timestamped segments
         |
         v  Gloo: gloo-baai-bge-base-en-v1.5 (embeddings, tagged with the model)
-   chunks in the SQLite Durable Object
+        v  Gloo: GLOO_NOTES_MODEL (highlights by category)
+   chunks + highlights in the SQLite Durable Object
         |
         v  ask a question
    ranked chunks -> grounded answer with citations
@@ -483,12 +494,10 @@ independent modes:
   transcript passages, each with a timestamp citation. A passage must pass
   a similarity floor **and** a keyword-overlap ground check to be returned;
   otherwise the answer is "Not found in this note."
-- **`workers-ai` LLM engine (optional):** set `NOTES_ANSWER_ENGINE=workers-ai`
-  in `api/wrangler.jsonc` and redeploy. A Llama-3.1-8B (Workers AI) then
-  writes prose answers, but every passage it cites is string-verified
-  against the actual transcript, and any quote that fails falls back to the
-  verbatim answer. The LLM can only make answers *prettier*, never less
-  grounded.
+- **Gloo answers (when `GLOO_API_KEY` is set):** Gloo (`GLOO_MODEL`) writes
+  prose answers, but every passage it cites is string-verified against the
+  actual transcript, and any quote that fails falls back to the verbatim
+  answer. The model can only make answers *prettier*, never less grounded.
 
 ### Highlights and Bible passages
 
