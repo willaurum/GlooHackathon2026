@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { createBlank, createFromDraft, createFromFiles, draftApi } from './builderApi.js';
-import { BUILDER_LABELS, builderEvidence, builderPage, builderValue, canReviewBuilder } from './builder.js';
+import { createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder } from './builder.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
 import { PageHeader } from './Layout.jsx';
@@ -55,6 +55,25 @@ export default function Builder() {
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; controller.abort(); };
   }, [sessionId, retry]);
+
+  // A website import runs in the background; follow it until it is ready (also after a reload).
+  const importing = session?.status === 'importing';
+  useEffect(() => {
+    if (!importing) return;
+    const controller = new AbortController();
+    pollDraft(session.id, setSession, { signal: controller.signal })
+      .catch(err => { if (err.name !== 'AbortError') setError(err.status === 404 ? 'This import expired. Please start again.' : err.message); });
+    return () => controller.abort();
+  }, [session?.id, importing]);
+
+  async function updateItem(body) {
+    if (busy || loading) return false;
+    setBusy('item'); setError('');
+    try {
+      setSession(await itemApi(session.id, body)); setPreview(null);
+      return true;
+    } finally { setBusy(''); }
+  }
 
   async function importDraft(e) {
     e.preventDefault();
@@ -113,15 +132,26 @@ export default function Builder() {
   const review = canReviewBuilder(session);
   const locked = !!busy || loading;
   const step = creating ? 3 : questions.length ? 1 : review ? 2 : 0;
+  const failed = session?.status === 'failed';
   return <>
     <PageHeader eyebrow="Tekton" title="Create your church site"
       text="Start with your website, church materials, or answers to a few questions. Confirm the details, then create a new site for your church."
       action={(session || sessionId) && !created && <button type="button" className="secondary" disabled={locked} onClick={startOver}>Start over</button>} />
     <div className="builder">
       <ol className="builder-steps" aria-label="Create your site steps">{['Import', 'Clarify', 'Review', 'Create your church'].map((label, i) => <li key={label} aria-current={step === i ? 'step' : undefined}><span aria-hidden="true">{i + 1}</span>{label}</li>)}</ol>
-      <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your draft…' : busy === 'reading' ? (importMode === 'files' ? 'Reading your church materials…' : 'Reading your website…') + ' This can take up to a minute.' : busy === 'blank' ? 'Preparing your questions…' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Choose how to start your draft.'}</p>
+      <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your draft…' : importing ? builderImportProgress(session) + ' This can take up to 3 minutes; keep this tab open.' : failed ? 'The import did not finish.' : busy === 'item' ? 'Saving…' : busy === 'reading' ? (importMode === 'files' ? 'Reading your church materials… This can take up to a minute.' : 'Starting to read your website…') : busy === 'blank' ? 'Preparing your questions…' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Choose how to start your draft.'}</p>
       {session?.notes?.length > 0 && <ul className="builder-notes">{session.notes.map((note, i) => <li key={i}>{note}</li>)}</ul>}
       {error && <div className="banner error" role="alert"><p>{error}</p></div>}
+      {!loading && importing && <section className="card give-pad builder-importing" aria-live="polite">
+        <h2>Reading {session.url}</h2>
+        <p>We read the most useful pages first: visit, staff, events, ministries, groups, sermons and locations. Every detail we find keeps a quote from the page it came from.</p>
+        <div className="give-progress" aria-hidden="true"><span style={{ width: Math.min(95, session.progress?.stage === 'extracting' ? 80 : 10 + 60 * ((session.progress?.pages_read || 0) / Math.max(1, session.progress?.pages_found || 1))) + '%' }} /></div>
+      </section>}
+      {!loading && failed && <section className="card give-pad" role="alert">
+        <h2>We could not finish reading your website</h2>
+        <p>{session.error || 'Please try again.'}</p>
+        <button type="button" className="primary" onClick={startOver}>Start again</button>
+      </section>}
       {!loading && !session && sessionId && !created && <div className="card give-pad"><p>Your saved import could not be loaded.</p><button type="button" className="secondary" onClick={() => setRetry(v => v + 1)}>Try again</button></div>}
       {!loading && !session && !sessionId && <form className="card give-pad" onSubmit={importDraft}>
         <div className="builder-actions" role="group" aria-label="How to start your draft">{[
@@ -150,10 +180,11 @@ export default function Builder() {
           <p>Check the details below. You can edit anything before creating your church.</p>
           {Object.entries(BUILDER_LABELS).map(([field, label]) => <ReviewField key={session.id + ':' + field} field={field} label={label} session={session} editing={editing === field} onEdit={() => { setEditing(field); setPreview(null); }} onCancel={() => setEditing('')} answer={answer} disabled={locked} />)}
         </section>
+        {BUILDER_LISTS.filter(list => session.collections?.[list.key]?.length).map(list => <ImportedList key={session.id + ':' + list.key} list={list} entries={session.collections[list.key]} update={updateItem} disabled={locked} />)}
         {preview && <section className="card give-pad builder-preview" aria-label="Content preview">
           <div className="eyebrow">Content preview</div><h2>{preview.info?.name || 'Your church'}</h2>
           <dl className="builder-summary">{Object.entries(preview.info || {}).filter(([field, value]) => field !== 'map_query' && value != null && value !== '' && (!Array.isArray(value) || value.length)).map(([field, value]) => <div key={field}><dt>{BUILDER_LABELS[field] || field.replaceAll('_', ' ')}</dt><dd>{builderValue(field, value)}</dd></div>)}</dl>
-          <p>{preview.faqs?.length || 0} FAQs</p>
+          <p>{preview.faqs?.length || 0} FAQs{builderListCounts(session).map(list => `, ${list.included} of ${list.total} ${list.label.toLowerCase()}`).join('')}</p>
         </section>}
         <section className="card give-pad builder-build">
           <p>Ready? Create your church and a staff account to manage its new site.</p>
@@ -283,4 +314,50 @@ function ReviewField({ field, label, session, editing, onEdit, onCancel, answer,
       <div className="builder-actions"><button className="primary" disabled={disabled || !value.trim()}>Save</button><button type="button" className="secondary" disabled={disabled} onClick={onCancel}>Cancel</button></div>
     </form>}
   </div>;
+}
+
+function ImportedList({ list, entries, update, disabled }) {
+  const included = entries.filter(entry => entry.include).length;
+  const [error, setError] = useState('');
+  async function run(body) {
+    setError('');
+    try { return await update({ collection: list.key, ...body }); } catch (err) { setError(err.message); return false; }
+  }
+  return <section className="card give-pad builder-list" aria-label={list.label}>
+    <div className="builder-field-heading"><h2>{list.label}</h2><span className="badge">{included} of {entries.length} included</span></div>
+    {list.note && <p className="form-note">{list.note}</p>}
+    <div className="builder-actions">
+      <button type="button" className="link" disabled={disabled || included === entries.length} onClick={() => run({ include: true })}>Include all</button>
+      <button type="button" className="link" disabled={disabled || !included} onClick={() => run({ include: false })}>Leave all out</button>
+    </div>
+    {error && <div className="banner error" role="alert">{error}</div>}
+    <ul className="builder-items">{entries.map(entry => <ImportedItem key={entry.id} list={list} entry={entry} run={run} disabled={disabled} />)}</ul>
+  </section>;
+}
+
+function ImportedItem({ list, entry, run, disabled }) {
+  const { title, detail } = builderItem(list.key, entry.value);
+  const [editing, setEditing] = useState(false), [showSource, setShowSource] = useState(false), [form, setForm] = useState({});
+  async function save(e) {
+    e.preventDefault();
+    if (await run({ id: entry.id, value: form })) setEditing(false);
+  }
+  return <li className={'builder-item' + (entry.include ? '' : ' excluded')}>
+    <label className="builder-item-check">
+      <input type="checkbox" checked={!!entry.include} disabled={disabled} onChange={e => run({ id: entry.id, include: e.target.checked })} />
+      <span><strong>{title}</strong>{detail && <small>{detail}</small>}</span>
+    </label>
+    <div className="builder-actions">
+      <button type="button" className="link" disabled={disabled} aria-expanded={editing} onClick={() => { setForm(Object.fromEntries(list.fields.map(([key]) => [key, entry.value[key] || '']))); setEditing(v => !v); }}>Edit<span className="builder-sr-only"> {title}</span></button>
+      <button type="button" className="link" aria-expanded={showSource} onClick={() => setShowSource(v => !v)}>{showSource ? 'Hide source' : 'Show source'}<span className="builder-sr-only"> for {title}</span></button>
+    </div>
+    {showSource && <Evidence items={entry.evidence || []} />}
+    {editing && <form onSubmit={save}>
+      {list.fields.map(([key, label, long]) => <label key={key} className="field">{label}
+        {long ? <textarea rows={2} value={form[key] || ''} disabled={disabled} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+          : <input value={form[key] || ''} disabled={disabled} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />}
+      </label>)}
+      <div className="builder-actions"><button className="primary" disabled={disabled}>Save</button><button type="button" className="secondary" disabled={disabled} onClick={() => setEditing(false)}>Cancel</button></div>
+    </form>}
+  </li>;
 }

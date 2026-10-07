@@ -41,8 +41,8 @@ function KeyForm({ onChange }) {
   </form>;
 }
 
-function NewNote({ onCreated }) {
-  const [mode, setMode] = useState('youtube'), [title, setTitle] = useState(''), [url, setUrl] = useState(''),
+function NewNote({ onCreated, initial = {} }) {
+  const [mode, setMode] = useState('youtube'), [title, setTitle] = useState(initial.title || ''), [url, setUrl] = useState(initial.url || ''),
     [file, setFile] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function submit(e) {
     e.preventDefault(); setBusy(true); setError('');
@@ -383,7 +383,8 @@ export default function PastorNotes({ route, go }) {
   // The Sermon Notes key, or a signed-in staff session for this church, opens the notes.
   const [hasKey, setHasKey] = useState(Boolean(getApiKey() || church.staff)),
     [notes, setNotes] = useState([]), [loaded, setLoaded] = useState(false), [error, setError] = useState(''),
-    [adding, setAdding] = useState(false), [prefs, setPrefs] = useState(() => readPrefs(globalThis.localStorage));
+    [adding, setAdding] = useState(false), [prefs, setPrefs] = useState(() => readPrefs(globalThis.localStorage)),
+    [published, setPublished] = useState([]);
   const selected = route.startsWith('notes/') ? route.slice('notes/'.length) : null;
   async function load() {
     try {
@@ -392,6 +393,8 @@ export default function PastorNotes({ route, go }) {
     finally { setLoaded(true); }
   }
   useEffect(() => { if (hasKey) load(); }, [hasKey]);
+  // Sermons listed on the church's website (imported by the site builder or added in Church setup).
+  useEffect(() => { api('/church').then(c => setPublished(c.sermons || [])).catch(() => {}); }, []);
   useEffect(() => { writePrefs(globalThis.localStorage, prefs); }, [prefs]);
   // Poll while anything is still being transcribed.
   useEffect(() => {
@@ -413,7 +416,7 @@ export default function PastorNotes({ route, go }) {
       </div>
       <div className="pn-head-main">
         <SermonPicker notes={shown} current={current} onPick={id => { if (id !== current?.id) go('notes/' + id); }} />
-        {canAdd && <button type="button" className="primary pn-add" aria-label="Add sermon" aria-haspopup="dialog" aria-expanded={adding} onClick={() => setAdding(true)}>
+        {canAdd && <button type="button" className="primary pn-add" aria-label="Add sermon" aria-haspopup="dialog" aria-expanded={!!adding} onClick={() => setAdding(true)}>
           <Icon name="plus" size={18} /><span>Add sermon</span>
         </button>}
       </div>
@@ -424,8 +427,24 @@ export default function PastorNotes({ route, go }) {
           <h2>{!loaded ? 'Loading sermons…' : selected ? 'Sermon not found' : 'No sermons yet'}</h2>
           {loaded && <p>{selected ? 'It may have been removed. Pick another from the list above.' : 'Add a YouTube link or upload a file. Once it is transcribed you can read it here and ask questions.'}</p>}
         </section>}
+    {published.length > 0 && <PublishedSermons sermons={published} notes={notes} onTranscribe={canAdd ? s => setAdding(s) : null} />}
     {adding && <Sheet title="Add a sermon" onClose={() => setAdding(false)}>
-      <NewNote onCreated={() => { setAdding(false); load(); }} />
+      <NewNote initial={typeof adding === 'object' ? { title: adding.title, url: adding.url } : {}} onCreated={() => { setAdding(false); load(); }} />
     </Sheet>}
   </div>;
+}
+
+const YOUTUBE = /^https:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)/;
+
+// Sermons the church lists on its website. A YouTube sermon that is not a note yet can be transcribed in one step.
+function PublishedSermons({ sermons, notes, onTranscribe }) {
+  const transcribed = new Set(notes.map(n => n.source_url).filter(Boolean));
+  return <section className="card give-pad pn-published">
+    <h2>Sermons on your website</h2>
+    <ul>{sermons.slice(0, 12).map(s => <li key={s.id}>
+      {s.url ? <a href={s.url} target="_blank" rel="noreferrer">{s.title}</a> : <strong>{s.title}</strong>}
+      <small>{[s.date && formatNoteDate(s.date), s.speaker, s.scripture].filter(Boolean).join(' · ')}</small>
+      {onTranscribe && YOUTUBE.test(s.url || '') && !transcribed.has(s.url) && <button type="button" className="link" onClick={() => onTranscribe(s)}>Transcribe<span className="builder-sr-only"> {s.title}</span></button>}
+    </li>)}</ul>
+  </section>;
 }

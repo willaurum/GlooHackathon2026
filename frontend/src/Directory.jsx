@@ -16,14 +16,17 @@ function Person({ name, role, email, note }) {
 
 export default function Directory() {
   const [info, setInfo] = useState(null), [ministries, setMinistries] = useState([]), [error, setError] = useState(''), [q, setQ] = useState('');
+  // A church's own staff list (from Church setup or the site builder); the demo church shows the sample list.
+  const [people, setPeople] = useState(null);
   useEffect(() => {
     api('/info').then(setInfo).catch(() => {});
+    api('/church').then(church => setPeople(church.staff?.length ? church.staff.map(p => ({ ...p, note: p.bio })) : STAFF)).catch(() => setPeople(STAFF));
     api('/ministries').then(setMinistries).catch(() => setError('Could not load ministry leaders. Refresh to try again.'));
   }, []);
 
   const needle = q.trim().toLowerCase();
   const match = (...parts) => !needle || parts.some(p => (p || '').toLowerCase().includes(needle));
-  const staff = useMemo(() => STAFF.filter(s => match(s.name, s.role, s.note)), [needle]);
+  const staff = useMemo(() => (people || []).filter(s => match(s.name, s.role, s.note)), [people, needle]);
   const leads = useMemo(() => ministries.filter(m => match(m.name, m.head, m.category, m.description)), [ministries, needle]);
 
   return <div className="directory">
@@ -54,6 +57,6 @@ export default function Directory() {
     </section>}
 
     {staff.length === 0 && leads.length === 0 && !error && <div className="card empty"><p>No one matches “{q}”. Try a ministry name or a first name.</p></div>}
-    <small>Demo directory. All names and addresses are fictional.</small>
+    {people === STAFF && <small>Demo directory. All names and addresses are fictional.</small>}
   </div>;
 }

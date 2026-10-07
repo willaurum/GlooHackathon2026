@@ -1209,6 +1209,18 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .builder-evidence blockquote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--green-200); color: var(--text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .builder-review-field { padding: 18px 0; border-bottom: 1px solid var(--line); }
 .builder-review-field:last-child { border-bottom: 0; padding-bottom: 0; }
+.builder-importing .give-progress { margin-top: 4px; }
+.builder-list .builder-actions { margin: 4px 0 8px; }
+.builder-items { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.builder-item { padding: 12px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.builder-item:last-child { border-bottom: 0; }
+.builder-item.excluded strong { color: var(--muted); text-decoration: line-through; }
+.builder-item-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.builder-item-check input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+.builder-item-check span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.builder-item-check small { color: var(--muted); font-size: 13px; }
+.builder-item .builder-actions { margin: 4px 0 0 28px; }
+.builder-item form { margin: 8px 0 0 28px; }
 .builder-field-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .builder-value { color: var(--text); white-space: pre-wrap; margin: 8px 0; }
 .builder-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -1226,3 +1238,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .builder .primary, .builder .secondary { max-width: 100%; white-space: normal; padding-top: 10px; padding-bottom: 10px; }
   .builder-build .builder-actions > button, .builder-create .builder-actions > button { width: 100%; }
 }
+
+/* Sermon Notes: sermons listed on the church's website */
+.pn-published { margin-top: 16px; }
+.pn-published ul { display: grid; gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
+.pn-published li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; overflow-wrap: anywhere; }
+.pn-published small { color: var(--muted); }
