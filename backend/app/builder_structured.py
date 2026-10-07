@@ -325,7 +325,21 @@ WRAPPED_ROLE = re.compile(r'(?:\b(?:of|and|for|the|to)|[&,/–-])$', re.I)
 NOT_NAME_RE = re.compile(r'\b(church|chapel|parish|fellowship|campus|times?|services?|ministr(y|ies)|team|welcome|about|'
                          r'contact|events?|sermons?|groups?|our|the|of|and|for|worship|staff|elders|deacons|kids|youth|'
                          r'students?|visit|give|giving|road|street|avenue|sundays?|mondays?|tuesdays?|wednesdays?|'
-                         r'thursdays?|fridays?|saturdays?)\b', re.I)
+                         r'thursdays?|fridays?|saturdays?|what|we|us|believe|beliefs|home|bulletin|news|calendar|'
+                         r'announcements?|prayer|history|story|mission|vision|faith|hymns?|prelude|postlude|benediction|'
+                         r'doxology|offertory|scripture|reading|message|blessings)\b', re.I)
+# Lines of an order of worship ("Call to Worship", "Hymn of Response") sit next to the names that lead them; they are
+# not those people's roles. A bare section word ("Ministries") is a menu or heading, not a role either.
+LITURGY_RE = re.compile(r'\b(call to worship|prelude|postlude|hymns?|benediction|doxology|offertory|offering|scripture|'
+                        r'reading|message|sermon|invocation|response|announcements|welcome|communion|anthem|choir|'
+                        r'responsive|confession|assurance|creed|lord\W?s prayer|passing of the peace)\b', re.I)
+BARE_ROLE_RE = re.compile(r'(ministry|ministries|worship|youth|children|music|staff|students?|leaders?|leadership)', re.I)
+# A letter's sign-off ("Blessings,", "In Christ,") followed by a titled name: the person who wrote it, in that role.
+SIGN_OFF_RE = re.compile(r'^(blessings|in christ|in him|sincerely|grace and peace|grace & peace|peace|love|with love|'
+                         r'yours in christ|your pastor|warmly|in his service|serving together)\W*$', re.I)
+TITLED_RE = re.compile(r'^(rev\.?|reverend|pastor|dr\.?|father|fr\.?|elder|deacon|bishop)\s+(.+)$', re.I)
+TITLE_ROLES = {'rev': 'Pastor', 'rev.': 'Pastor', 'reverend': 'Pastor', 'pastor': 'Pastor', 'father': 'Priest',
+               'fr': 'Priest', 'fr.': 'Priest', 'elder': 'Elder', 'deacon': 'Deacon', 'bishop': 'Bishop'}
 
 
 def _person(line):
@@ -346,7 +360,8 @@ def staff_cards(source):
         if i >= len(lines):
             return '', 0
         role = lines[i]
-        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role) or re.search(r'\d|[.!?]$', role):
+        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role) or re.search(r'\d|[.!?]$', role) \
+                or LITURGY_RE.search(role) or BARE_ROLE_RE.fullmatch(role.strip(' :')):
             return '', 0
         if WRAPPED_ROLE.search(role) and i + 1 < len(lines) and len(role) + len(lines[i + 1]) <= 90 \
                 and not EMAIL_RE.search(lines[i + 1]) and not _person(lines[i + 1]):
@@ -372,6 +387,13 @@ def staff_cards(source):
                 i = j
                 continue
         role, used = role_at(i + 1) if _person(line) else ('', 0)
+        titled = TITLED_RE.match(line) if not role and i and SIGN_OFF_RE.match(lines[i - 1]) and _person(line) else None
+        if titled and TITLE_ROLES.get(titled.group(1).lower()):
+            # "Blessings, / Pastor Dan Whitfield" signs a letter: Dan Whitfield, Pastor.
+            items.append(_item('staff', {'name': titled.group(2).strip(), 'role': TITLE_ROLES[titled.group(1).lower()]},
+                               f'{lines[i - 1]} {line}', source, method='pattern'))
+            i += 1
+            continue
         if not role:
             i += 1
             continue
