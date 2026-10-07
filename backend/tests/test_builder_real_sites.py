@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from backend.app import builder, builder_agents, builder_run, builder_score
+from backend.app import builder, builder_agents, builder_run, builder_score, builder_structured
 
 REAL = Path(__file__).resolve().parent / 'fixtures' / 'builder' / 'real'
 FBC = REAL / 'forest-baptist'
@@ -141,6 +141,45 @@ class OfficeHoursTests(unittest.TestCase):
         for quote in ('Office hours: Monday - Thursday, 9:00 AM - 4:00 PM', 'Church Office Office hours: Monday - Thursday, 9:00 AM - 4:00 PM'):
             answer = {'facts': [{'field': 'office_hours', 'value': 'Monday - Thursday, 9:00 AM - 4:00 PM', 'quote': quote}]}
             self.assertEqual([c['value'] for c in builder.ai_claims(page, lambda m, t: answer)], ['Monday - Thursday, 9:00 AM - 4:00 PM'])
+
+
+class StaffTests(unittest.TestCase):
+    """Forest Baptist: "Deacon of" lost the second line of its role ("New Member Assimilation", which looks like a
+    name), and the Missions page's "World Changers" / "Student Missions" was listed as a person."""
+
+    def staff(self, path):
+        return {i['value']['name']: i['value'].get('role') for i in builder_structured.staff_cards(source('forest-baptist', path))}
+
+    def test_wrapped_deacon_roles_are_whole(self):
+        deacons = self.staff('about/deacons')
+        self.assertEqual(deacons['Mark Eckels'], 'Deacon of New Member Assimilation')
+        self.assertEqual(deacons['Bruno Andrade'], 'Deacon of Member Care')
+        self.assertEqual(deacons['Owen Fahy'], 'Deacon of Music & AV')
+        self.assertEqual(deacons['Craig Asprey'], 'Deacon of Building & Grounds')
+        self.assertFalse(any(role.endswith(' of') for role in deacons.values()), deacons)
+
+    def test_a_ministry_is_not_a_person(self):
+        missions = self.staff('ministries/missions')
+        self.assertNotIn('World Changers', missions)
+        self.assertEqual(missions.get('Tyler Scarlett'), 'Pastor-Teacher')
+        run, token = builder_run.start()
+        try:
+            found = builder_agents.check('staff', {'items': [
+                {'name': 'World Changers', 'role': 'Student Missions', 'quote': 'World Changers Student Missions'},
+                {'name': 'Tyler Scarlett', 'role': 'Pastor-Teacher', 'quote': 'Tyler Scarlett Pastor-Teacher'}]},
+                source('forest-baptist', 'ministries/missions'))
+        finally:
+            builder_run.finish(token)
+        self.assertEqual([i['value']['name'] for i in found], ['Tyler Scarlett'])
+        self.assertEqual(run.dropped, {'not a person': 1})
+
+    def test_the_longer_role_wins_when_readers_disagree(self):
+        page = source('forest-baptist', 'about/deacons')
+        items = [{'collection': 'staff', 'value': {'name': 'Mark Eckels', 'role': 'Deacon of'}, 'quote': 'Mark Eckels Deacon of',
+                  'source_id': 's1', 'method': 'pattern'},
+                 {'collection': 'staff', 'value': {'name': 'Mark Eckels', 'role': 'Deacon of New Member Assimilation'},
+                  'quote': 'Mark Eckels Deacon of New Member Assimilation', 'source_id': 's1', 'method': 'ai'}]
+        self.assertEqual(builder.collect(items, [page])['staff'][0]['value']['role'], 'Deacon of New Member Assimilation')
 
 
 if __name__ == '__main__':

@@ -1639,6 +1639,9 @@ def collect(items, sources):
             for item in found:
                 for field, v in item['value'].items():
                     value.setdefault(field, v)
+                    if field == 'role' and isinstance(v, str) and len(v) > len(value[field]) \
+                            and v.lower().startswith(value[field].lower()):
+                        value[field] = v  # "Deacon of" from one reader, "Deacon of New Member Assimilation" from another
                 if (item['source_id'], item['quote']) not in seen:
                     seen.add((item['source_id'], item['quote']))
                     source = by_id.get(item['source_id'], {})

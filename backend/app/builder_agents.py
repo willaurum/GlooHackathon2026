@@ -255,6 +255,9 @@ def check(name, raw, source, today=None):
         if not grounded(item.quote, text) or _norm(label) not in _norm(text):
             dropped += 1
             continue
+        if name == 'staff' and value.get('role') and not builder_structured.ROLE_NOUN_RE.search(value['role']):
+            builder_run.drop('not a person')  # "World Changers" / "Student Missions" is a ministry
+            continue
         if value.get('email') and value['email'].lower() not in text.lower():
             value['email'] = ''
         if value.get('email') and not EMAIL_RE.fullmatch(value['email']):
