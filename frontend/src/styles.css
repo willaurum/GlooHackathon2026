@@ -281,7 +281,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .empty p { margin: 10px auto 22px; max-width: 360px; }
 .team-detail { position: relative; padding: 28px; margin-top: 20px; }
 .team-detail p { font-size: 15px; margin-top: 10px; }
-.team-detail .contact { margin: 18px 0; }
+.team-contact { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 14px 20px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.team-contact-label { margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .matching { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 24px; align-items: start; }
 .matching > * { min-width: 0; }
 .match-form { padding: 24px; }

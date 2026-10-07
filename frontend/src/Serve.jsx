@@ -140,8 +140,14 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
         <p><b>{detail.total - detail.filled} openings · {detail.day}</b></p>
         <Shifts ministry={detail} />
         <p>{detail.note}</p>
-        <Contact m={detail} />
-        <button className="primary" onClick={exploreMatch}>Explore a match<Icon name="arrow" size={18} /></button>
+        {/* The contact, with Explore a match beside it on the right (below it on phones). */}
+        <div className="team-contact">
+          <div>
+            <div className="team-contact-label">Contact us here:</div>
+            <Contact m={detail} />
+          </div>
+          <button className="secondary" onClick={exploreMatch}>Explore a match<Icon name="arrow" size={18} /></button>
+        </div>
       </section>}</div>
     </>}
 
