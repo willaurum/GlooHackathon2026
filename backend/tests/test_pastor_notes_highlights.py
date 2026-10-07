@@ -199,5 +199,91 @@ class NoteTests(ChurchTestCase):
         self.assertEqual(db.get_note(NOTE)['highlight_engine'], '')
 
 
+# A real sermon opening the model tagged "Bible quotes: Genesis 1". It only points to the passage.
+GENESIS_INVITATION = [
+    {'start': 5.0, 'end': 10.0, 'text': 'Well, if you have a Bible, and I hope you or somebody around you does, that you can look on with,'},
+    {'start': 10.0, 'end': 15.0, 'text': 'let me invite you to open to the very first chapter, Genesis chapter 1.'},
+]
+GENESIS_READING = [
+    {'start': 15.0, 'end': 20.0, 'text': 'In the beginning God created the heavens and the earth.'},
+    {'start': 20.0, 'end': 25.0, 'text': 'Now the earth was formless and empty, darkness was over the surface of the deep.'},
+]
+
+
+def quote(seg_from, seg_to, label='Genesis 1'):
+    return {'seg_from': seg_from, 'seg_to': seg_to, 'category': 'bible_quote', 'label': label, 'confidence': 0.9}
+
+
+class QuoteOrReferenceTests(unittest.TestCase):
+    def test_the_prompt_defines_quotes_and_references_with_examples(self):
+        prompt = pastor_notes.CATEGORIZE_PROMPT
+        self.assertIn('actually reads or recites the words of a verse', prompt)
+        self.assertIn('In the beginning God created the heavens and the earth', prompt)
+        self.assertIn('Turn with me to Genesis 1', prompt)
+        self.assertIn('Announcing a passage is always a reference', prompt)
+
+    def test_inviting_people_to_open_a_passage_is_a_reference(self):
+        checked = pastor_notes._reference_not_quote(quote(0, 1), GENESIS_INVITATION)
+        self.assertEqual(checked['category'], 'bible_paraphrase')
+        self.assertEqual(checked['label'], 'Genesis 1')
+
+    def test_a_recited_verse_stays_a_quote(self):
+        for seg_from, seg_to in ((0, 0), (0, 1)):
+            with self.subTest(segments=(seg_from, seg_to)):
+                self.assertEqual(pastor_notes._reference_not_quote(quote(seg_from, seg_to), GENESIS_READING)['category'], 'bible_quote')
+
+    def test_an_announcement_followed_by_the_reading_stays_a_quote(self):
+        segments = GENESIS_INVITATION + GENESIS_READING
+        self.assertEqual(pastor_notes._reference_not_quote(quote(1, 2), segments)['category'], 'bible_quote')
+        self.assertEqual(pastor_notes._reference_not_quote(
+            quote(0, 0), [{'start': 0, 'end': 5, 'text': 'Turn with me to John 3:16. For God so loved the world.'}])['category'], 'bible_quote')
+
+    def test_other_categories_are_left_alone(self):
+        tag = {**quote(0, 1), 'category': 'personal_story'}
+        self.assertEqual(pastor_notes._reference_not_quote(tag, GENESIS_INVITATION), tag)
+
+    def test_categorize_downgrades_the_model_s_quote_and_keeps_the_real_one(self):
+        segments = GENESIS_INVITATION + GENESIS_READING
+        reply = json.dumps({'annotations': [quote(0, 1, 'Genesis 1'), quote(2, 2, 'Genesis 1:1')]})
+        with env(GLOO_API_KEY='k'), mock.patch.object(pastor_notes.httpx, 'post', return_value=gloo_reply(reply)):
+            annotations, _ = pastor_notes.categorize(segments)
+        self.assertEqual([(a['seg_from'], a['category']) for a in annotations],
+                         [(0, 'bible_paraphrase'), (2, 'bible_quote')])
+
+
+class RecategorizeTests(ChurchTestCase):
+    def setUp(self):
+        super().setUp()
+        from fastapi.testclient import TestClient
+        from backend.app import main
+        self.client = TestClient(main.app)
+        db.create_note(NOTE, 'Sunday', 'upload', r2_key=f'notes/{NOTE}/source')
+
+    def test_a_ready_note_is_re_tagged_from_its_stored_transcript(self):
+        segments = GENESIS_INVITATION + GENESIS_READING
+        db.save_transcript(NOTE, segments, pastor_notes.make_chunks(segments), 25.0, [quote(0, 1)], 'workers-ai:old')
+        reply = json.dumps({'annotations': [quote(0, 1), quote(2, 2, 'Genesis 1:1')]})
+        jobs = []
+        with env(GLOO_API_KEY='k'), mock.patch.object(pastor_notes.httpx, 'post', return_value=gloo_reply(reply)), \
+                mock.patch.object(pastor_notes, 'transcribe') as transcribe, \
+                mock.patch.object(pastor_notes, '_in_background', side_effect=lambda fn, *args: jobs.append((fn, args))):
+            response = self.client.post(f'/api/notes/{NOTE}/recategorize')
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(db.get_note(NOTE)['highlight_engine'], 'recategorizing')
+            self.assertEqual(self.client.post(f'/api/notes/{NOTE}/recategorize').status_code, 409)  # one at a time
+            fn, args = jobs[0]
+            fn(*args)  # run the background job here
+        transcribe.assert_not_called()
+        self.assertEqual(db.get_note(NOTE)['highlight_engine'], 'gloo:gloo-qwen-3.7-flash')
+        self.assertEqual([(a['seg_from'], a['category']) for a in db.list_annotations(NOTE)],
+                         [(0, 'bible_paraphrase'), (2, 'bible_quote')])
+        self.assertEqual(len(db.list_segments(NOTE)), 4)  # the transcript is untouched
+        self.assertEqual(self.client.post(f'/api/notes/{NOTE}/recategorize').status_code, 202)  # free again
+
+    def test_only_ready_notes(self):
+        self.assertEqual(self.client.post(f'/api/notes/{NOTE}/recategorize').status_code, 409)
+        self.assertEqual(self.client.post('/api/notes/99999999-2222-3333-4444-555555555555/recategorize').status_code, 404)
+
+
 if __name__ == '__main__':
     unittest.main()

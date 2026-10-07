@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { DEFAULT_EMBED_MODEL, GLOO_EMBED_URL } from '../embed.ts';
+import { access } from '../churches.ts';
 import { GLOO_CHAT_URL, GLOO_TIMEOUT_MS, aiBridge, handleNotes, parseModelJson } from '../notes.ts';
 
 const KEY = { GLOO_API_KEY: 'test-key' };
@@ -139,4 +140,8 @@ test('the /llm highlight fallback runs NOTES_LLM_MODEL on Workers AI and names i
   assert.deepEqual(await response.json(), { text: '{"annotations": []}', model: 'workers-ai:@cf/meta/llama-3.1-8b-instruct-fp8' });
   assert.equal(runs[0].model, '@cf/meta/llama-3.1-8b-instruct-fp8');
   assert.equal((await llm('')).status, 400);
+});
+
+test('re-categorizing a note takes the API key or a staff session, on every church', () => {
+  for (const demo of [true, false]) assert.equal(access('POST', `/api/notes/${NOTE}/recategorize`, demo), 'key-or-staff');
 });

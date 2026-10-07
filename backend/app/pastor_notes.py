@@ -16,6 +16,7 @@ One background worker runs one job at a time. Jobs are claimed atomically in the
 database, so a note is never processed twice at once.
 """
 
+import contextvars
 import json
 import logging
 import os
@@ -286,12 +287,20 @@ def embed_chunks(chunks):
 CATEGORIZE_PROMPT = """You tag passages in a sermon transcript. Each line is one segment: [index] text.
 
 Categories:
-- bible_quote: the speaker reads or quotes Bible text directly
-- bible_paraphrase: retells or refers to a Bible story, character or teaching without quoting it
+- bible_quote: the speaker actually reads or recites the words of a verse.
+  Example: "In the beginning God created the heavens and the earth."
+- bible_paraphrase (shown as "Bible references"): the speaker names, points to or invites people to open a
+  passage, or retells a Bible story, character or teaching in their own words without reciting it.
+  Examples: "Turn with me to Genesis 1", "Let me invite you to open to the very first chapter, Genesis chapter 1",
+  "As Paul says in Romans 8", "Jesus told a story about a man who was robbed on the road to Jericho".
 - recent_event: mentions a recent or current news event
 - political_event: mentions politics, elections, government or politicians
 - personal_story: the speaker tells a personal anecdote or story from their own life
 - inerrancy_claim: claims the Bible is accurate, without error, or divinely authored
+
+Announcing a passage is always a reference (bible_paraphrase), never a quote, even when the reading follows.
+If the speaker announces a passage and then reads it, tag the announcement as bible_paraphrase and the
+words of the verse as bible_quote.
 
 Tag only passages that clearly fit. A passage is a run of consecutive segments (seg_from to seg_to, inclusive).
 label is a short description, with the verse reference when there is one (e.g. "Luke 10:25-37, the Good Samaritan").
@@ -417,6 +426,30 @@ def _categorize_window(first, window):
     return [], None
 
 
+# Navigation language: pointing people to a passage rather than reading it.
+NAVIGATION = re.compile(
+    r"\b(turn(ing)?\s+(with\s+me\s+)?(back\s+)?to|open(ing)?\s+(up\s+)?(your\s+bibles?\s+)?(to|with)|"
+    r"(let\s+me\s+)?invite\s+you|if\s+you\s+have\s+(a|your)\s+bibles?|have\s+a\s+bible|look\s+on\s+with|"
+    r"find\s+your\s+place|follow\s+along|chapters?|verses?\s+\d+|page\s+\d+|"
+    r"we('re|\s+are)\s+(going\s+to\s+be\s+)?(in|reading|looking\s+at))\b", re.I)
+# Words and marks that suggest the words of a verse are being recited.
+VERSE_TEXT = re.compile(
+    r"[\"\u201c\u201d]|\b(god|lord|jesus|christ|spirit|shall|unto|thee|thou|thy|thine|hath|saith|behold|ye|verily|"
+    r"blessed|heavens?|righteous(ness)?|created|truly)\b", re.I)
+
+
+def _reference_not_quote(annotation, segments):
+    """A bible_quote whose segments only point to a passage ("open to Genesis chapter 1") is a reference.
+    It is downgraded when some clause is navigation language and no other clause reads like verse text."""
+    if annotation['category'] != 'bible_quote':
+        return annotation
+    text = ' '.join(s['text'] for s in segments[annotation['seg_from']:annotation['seg_to'] + 1])
+    clauses = [c for c in re.split(r'[.,;:!?]+', text) if c.strip()]
+    navigates = any(NAVIGATION.search(c) for c in clauses)
+    recites = any(VERSE_TEXT.search(c) for c in clauses if not NAVIGATION.search(c))
+    return {**annotation, 'category': 'bible_paraphrase'} if navigates and not recites else annotation
+
+
 def categorize(segments):
     """(annotations, engine) for a transcript. engine names the model(s) that tagged it, for example
     "gloo:gloo-qwen-3.7-flash", or "none" when no window could be tagged. Best effort: never raises."""
@@ -430,7 +463,27 @@ def categorize(segments):
     engine = '+'.join(tags) or 'none'
     if skipped and tags:
         engine += f' ({skipped} of {len(windows)} windows skipped)'
-    return merge_annotations([a for found, _ in results for a in found]), engine
+    annotations = [_reference_not_quote(a, segments) for found, _ in results for a in found]
+    return merge_annotations(annotations), engine
+
+
+_recategorizing = set()
+_recategorizing_lock = threading.Lock()
+
+
+def recategorize(note_id):
+    """Re-tag a ready note's highlights from its stored segments (no download, no Whisper). Best effort."""
+    try:
+        segments = db.list_segments(note_id)
+        annotations, engine = categorize(segments)
+        db.replace_annotations(note_id, annotations, engine)
+        log.info('note %s re-categorized: %d annotations (highlights: %s)', note_id, len(annotations), engine)
+    except Exception:
+        log.exception('note %s: re-categorizing failed', note_id)
+        db.set_highlight_engine(note_id, 'none')
+    finally:
+        with _recategorizing_lock:
+            _recategorizing.discard((db.current_church(), note_id))
 
 
 def merge_annotations(annotations):
@@ -616,6 +669,28 @@ def retry(note_id: str):
         raise HTTPException(status_code=409, detail=f"Note is {note['status']}; only failed notes can be retried")
     kick()
     return {'id': note_id, 'status': 'queued'}
+
+
+@router.post('/api/notes/{note_id}/recategorize', status_code=202)
+def start_recategorize(note_id: str):
+    """Staff or API key (the Worker's default for notes routes): re-run highlights on a ready note from its
+    stored transcript, in the background. GET /api/notes/<id> shows highlight_engine 'recategorizing'
+    until it is done, then the model that tagged it."""
+    _ready_note(note_id)
+    key = (db.current_church(), note_id)
+    with _recategorizing_lock:
+        if key in _recategorizing:
+            raise HTTPException(status_code=409, detail='This note is already being re-categorized')
+        _recategorizing.add(key)
+    db.set_highlight_engine(note_id, 'recategorizing')
+    _in_background(recategorize, note_id)
+    return {'id': note_id, 'highlight_engine': 'recategorizing'}
+
+
+def _in_background(fn, *args):
+    """Run fn(*args) on its own thread, for the church this request is for."""
+    context = contextvars.copy_context()
+    threading.Thread(target=context.run, args=(fn, *args), name='notes-recategorize', daemon=True).start()
 
 
 # Internal routes: the Worker blocks /api/internal/* from outside and calls these itself.

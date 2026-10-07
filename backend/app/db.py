@@ -716,6 +716,21 @@ def save_transcript(note_id, segments, chunks, duration, annotations=(), highlig
     run(*statements)
 
 
+def replace_annotations(note_id, annotations, highlight_engine):
+    """Replace a note's annotations and record which model tagged them, in one transaction."""
+    statements = [("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
+    statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
+                   for a in annotations]
+    statements.append(("UPDATE notes SET highlight_engine = ? WHERE id = ?", (highlight_engine or '', note_id)))
+    run(*statements)
+
+
+def set_highlight_engine(note_id, highlight_engine):
+    query("UPDATE notes SET highlight_engine = ? WHERE id = ?", (highlight_engine, note_id))
+
+
 def delete_note(note_id):
     """Delete a note unless a job is running on it. Returns (deleted_row_or_None, busy)."""
     row = get_note(note_id)

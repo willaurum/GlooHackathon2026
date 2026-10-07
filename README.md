@@ -340,6 +340,14 @@ Every Gloo call uses `https://platform.ai.gloo.com/ai/v2/guarded/chat/completion
 
 **Sermon highlights.** The container splits the transcript into windows of about 1,500 words, tags up to 3 windows at a time with Gloo, and stores which model did it on the note: `GET /api/notes/<id>` returns `highlight_engine`, for example `gloo:gloo-qwen-3.7-flash`. A note where some windows fell back says so (`gloo:...+workers-ai:@cf/meta/llama-3.1-8b-instruct-fp8`), `none` means no window could be tagged, and notes processed before this field existed show `""`.
 
+- **Quotes versus references:** `bible_quote` means the speaker actually reads or recites a verse ("In the beginning God created the heavens and the earth"). Naming a passage, inviting people to open it ("let me invite you to open to Genesis chapter 1") or retelling it is `bible_paraphrase`, shown as "Bible references". The prompt defines both with examples, and a cheap check after the model (`_reference_not_quote` in `pastor_notes.py`) turns a "quote" into a reference when its words are navigation language ("turn to", "open to", "chapter", "let me invite you") with no clause that reads like verse text.
+- **Re-categorize a note:** `POST /api/notes/<id>/recategorize` (or `/api/churches/<slug>/notes/<id>/recategorize`), with the `X-API-Key` or a staff session, re-runs highlights from the stored transcript. Nothing is downloaded or transcribed again. It answers 202 at once; `GET /api/notes/<id>` shows `highlight_engine: "recategorizing"` until it is done (a minute or two), then the model that tagged it. Notes processed before a prompt change keep their old labels until they are re-categorized:
+
+  ```bash
+  curl -fsS -X POST -H "X-API-Key: $NOTES_API_KEY" \
+      https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev/api/churches/grace-community/notes/<id>/recategorize
+  ```
+
 **Sermon-note answers** come from Gloo when `GLOO_API_KEY` is set, and from the extractive answerer otherwise. Asking for `extractive` explicitly always wins, and any model answer that fails the citation check falls back to it.
 
 **Deliberate non-model rules.** These stay deterministic because they are fast, free and do their job: the chat's prompt-override filter (`OVERRIDE_PATTERNS` in `chat.py`, in front of Gloo's guarded endpoint), Find a place's eligibility filter (availability and requirements), and the Prayer Map news filter in `newsdata.py` (drops ads, stock tickers and non-English items, and keeps headlines that name the country).
