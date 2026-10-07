@@ -320,6 +320,19 @@ def _http_fetch_bytes(url):
         return content_type, response.content
 
 
+GLOO_BUILDER_DEFAULT = 'gloo-anthropic-claude-haiku-4.5'
+
+
+def builder_model(provider, model):
+    """The builder's model. On Gloo the chat's default (gloo-qwen-3.7-flash) reasons for 30+ seconds per call, which
+    would spend the whole import budget on a page or two, so the builder uses a fast model that also reads images:
+    GLOO_BUILDER_MODEL, then GLOO_MATCH_MODEL (Find a place's fast model), then Claude Haiku 4.5 on Gloo.
+    Every other provider (Ollama on the laptop) keeps its configured model."""
+    if provider != 'gloo':
+        return model
+    return os.environ.get('GLOO_BUILDER_MODEL') or os.environ.get('GLOO_MATCH_MODEL') or GLOO_BUILDER_DEFAULT
+
+
 def _ai_describe_impl(data, content_type):
     """Transcribe an image's words with the first configured model that accepts images."""
     import base64
@@ -328,6 +341,7 @@ def _ai_describe_impl(data, content_type):
     if not clients:
         return ''
     name, model, extra_body, client = clients[0]
+    model = builder_model(name, model)
     url = f'data:{content_type};base64,' + base64.b64encode(data).decode()
     attachment = ({'type': 'file', 'file': {'filename': 'material.pdf', 'file_data': url}}
                   if content_type == 'application/pdf' else {'type': 'image_url', 'image_url': {'url': url}})
@@ -716,6 +730,7 @@ def _ai_complete_impl(messages, tools, timeout=None):
     if not clients:
         return None
     name, model, extra_body, client = clients[0]
+    model = builder_model(name, model)
     if timeout is not None:  # never outlive the import that asked
         client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
     forced = {'type': 'function', 'function': {'name': 'record_church_facts'}}

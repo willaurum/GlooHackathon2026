@@ -951,6 +951,16 @@ class AiOfflineTests(BuilderTestCase):
         self.assertEqual(calls, [{'type': 'function', 'function': {'name': 'record_church_facts'}}, 'auto'])
         self.assertEqual(options, [{'timeout': 12.0, 'max_retries': 0}])
 
+    def test_gloo_uses_a_fast_model_and_other_providers_keep_theirs(self):
+        with mock.patch.dict(os.environ, {'GLOO_BUILDER_MODEL': '', 'GLOO_MATCH_MODEL': ''}):
+            self.assertEqual(builder.builder_model('gloo', 'gloo-qwen-3.7-flash'), 'gloo-anthropic-claude-haiku-4.5')
+            self.assertEqual(builder.builder_model('ollama', 'qwen3.8:27b'), 'qwen3.8:27b')
+        with mock.patch.dict(os.environ, {'GLOO_BUILDER_MODEL': '', 'GLOO_MATCH_MODEL': 'gloo-match'}):
+            self.assertEqual(builder.builder_model('gloo', 'gloo-qwen-3.7-flash'), 'gloo-match')
+        with mock.patch.dict(os.environ, {'GLOO_BUILDER_MODEL': 'gloo-builder', 'GLOO_MATCH_MODEL': 'gloo-match'}):
+            self.assertEqual(builder.builder_model('gloo', 'gloo-qwen-3.7-flash'), 'gloo-builder')
+            self.assertEqual(builder.builder_model('openai', 'gpt-5-mini'), 'gpt-5-mini')
+
 
 class FetchBridgeTests(unittest.TestCase):
     """On Cloudflare the container fetches through the Worker (BUILDER_FETCH_URL=http://builder-fetch)."""
