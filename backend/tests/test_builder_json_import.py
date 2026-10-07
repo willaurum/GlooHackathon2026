@@ -70,7 +70,8 @@ class JsonImportTests(ChurchTestCase):
                     'quote': 'Meadow Lantern Chapel', 'prefix': '', 'suffix': ''}]}, 'items': {}}
         files = {'church.json': {**header, 'kind': 'church', 'sources': evidence,
                  **{key: value for key, value in content.items() if key in builder_export.CHURCH_FIELDS}},
-                 'site.json': {**header, 'kind': 'site', 'site': content['site'], 'pages': content['pages']}}
+                 'site.json': {**header, 'kind': 'site', 'site': content['site'], 'pages': content['pages'],
+                 'calendars': [{'id': 'c1', 'provider': 'ical', 'feed_url': 'https://lantern.example/events.ics', 'status': 'found'}]}}
         response = self.client.post('/api/builder/drafts/json', json=files)
         self.assertEqual(response.status_code, 201, response.text)
         path = '/api/builder/drafts/' + response.json()['id']
@@ -78,11 +79,14 @@ class JsonImportTests(ChurchTestCase):
         self.assertEqual(self.client.get(path + '/site').json()['provenance'], evidence)
         exported = self.client.get(path + '/files').json()['files']
         self.assertEqual(exported['church.json']['sources'], evidence)
+        self.assertEqual(exported['site.json']['calendars'][0]['feed_url'], 'https://lantern.example/events.ics')
+        self.assertEqual(exported['site.json']['calendars'][0]['status'], 'found')
         self.assertEqual(builder_export.load(exported), {k: v for k, v in content.items() if k != 'regions'})
         updated = self.client.post(path + '/answers', json={'field': 'name', 'value': 'New Lantern Chapel'})
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertEqual(self.client.get(path + '/site').json()['provenance']['info']['name'][0]['title'], 'You confirmed this')
         for bad in ({**files, 'site.json': {**files['site.json'], 'schema_version': '2.0'}},
+                    {**files, 'site.json': {**files['site.json'], 'calendars': [{'id': 'c1', 'provider': 'ical', 'count': -1}]}},
                     {**files, 'church.json': {**files['church.json'], 'kind': 'site'}},
                     {**files, 'church.json': {**files['church.json'], 'sources': {'info': {'name': 1}}}},
                     {**files, 'ministries.json': {'ministries': []}}):

@@ -3,7 +3,9 @@ import argparse
 import json
 from pathlib import Path
 
-from pydantic import ValidationError
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .church_content import ChurchContent, ContentError, normalize
 
@@ -16,7 +18,7 @@ SECTIONS = {
 }
 
 
-def files(content, *, versioned=False, sources=None) -> dict[str, dict]:
+def files(content, *, versioned=False, sources=None, calendars=None) -> dict[str, dict]:
     if isinstance(content, ChurchContent):
         content = normalize(content)
     unknown = content.keys() - {key for keys in SECTIONS.values() for key in keys}
@@ -27,13 +29,39 @@ def files(content, *, versioned=False, sources=None) -> dict[str, dict]:
         out = {'church.json': {**header, 'kind': 'church',
                **{key: content[key] for key in CHURCH_FIELDS if key in content},
                'sources': sources or {'info': {}, 'items': {}}},
-               'site.json': {**header, 'kind': 'site', 'site': content.get('site', {}), 'pages': content.get('pages', [])}}
+               'site.json': {**header, 'kind': 'site', 'site': content.get('site', {}), 'pages': content.get('pages', []), 'calendars': calendars or []}}
         if 'regions' in content:
             out['regions.json'] = {'regions': content['regions']}
         return out
     return {name: {key: content[key] for key in keys if key in content}
             for name, keys in SECTIONS.items() if name != 'regions.json' or 'regions' in content}
 
+
+
+class _CalendarFile(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: str = Field(max_length=10)
+    provider: str = Field(max_length=60)
+    name: str = Field(default='', max_length=120)
+    feed_url: str = Field(default='', max_length=500)
+    page_url: str = Field(default='', max_length=500)
+    page_title: str = Field(default='', max_length=300)
+    embed_url: str = Field(default='', max_length=2000)
+    robots_allowed: bool | None = None
+    status: Literal['found', 'link', 'imported', 'declined', 'failed'] = 'found'
+    count: int = Field(default=0, ge=0, le=10000)
+
+
+def calendars(files):
+    """Discovery metadata from site.json; importing JSON never fetches its feeds."""
+    site = files.get('site.json') or {}
+    data = site.get('calendars', []) if isinstance(site, dict) else []
+    if not isinstance(data, list) or len(data) > 10:
+        raise ContentError('Invalid calendars in site.json')
+    try:
+        return [_CalendarFile.model_validate(item).model_dump() for item in data]
+    except ValidationError as error:
+        raise ContentError(str(error)) from error
 
 
 HEADERS = ('schema_version', 'generated_by', 'generated_at', 'source_url', 'kind')
@@ -88,6 +116,9 @@ def load(files) -> dict:
             if name == 'church.json':
                 sources(files)
                 data.pop('sources', None)
+            else:
+                calendars(files)
+                data.pop('calendars', None)
         keys = CHURCH_FIELDS if versioned and name == 'church.json' else ('site', 'pages') if name == 'site.json' else SECTIONS[name]
         # The demo's older single-section seed files are bare arrays.
         if isinstance(data, list) and len(keys) == 1:

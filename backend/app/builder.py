@@ -52,7 +52,7 @@ from starlette.formparsers import MultiPartException
 from . import (builder_agents, builder_crawl, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
                church_content, db)
 from .builder_edit import clean_layout, default_layout
-from .builder_export import files as content_files, load as load_content_files, sources as content_sources
+from .builder_export import files as content_files, load as load_content_files, sources as content_sources, calendars as content_calendars
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -2158,6 +2158,7 @@ def _public(session):
     out.pop('undo', None)
     out.pop('json_content', None)
     out.pop('json_sources', None)
+    out.pop('json_calendars', None)
     if session.get('site'):
         out['site'] = _without_sections(session['site'])
     return out
@@ -2332,7 +2333,7 @@ def _save_json(data):
         raise ValueError('church.json must include church info.')
     draft = _importing_draft(None)
     draft.update(status='review', import_kind='json', json_content=content, json_sources=content_sources(files),
-                 json_versioned='schema_version' in files['church.json'],
+                 json_versioned='schema_version' in files['church.json'], json_calendars=content_calendars(files),
                  fields={key: {'value': value, 'status': 'confirmed', 'evidence': []}
                          for key, value in content['info'].items()})
     with _draft_lock:
@@ -2558,7 +2559,8 @@ def draft_files(draft_id: str):
     with _draft_lock:
         draft = _ready(_load(draft_id))
         return {'files': content_files(_draft_content(draft, allow_unanswered=True),
-                                       versioned=draft.get('json_versioned', False), sources=draft.get('json_sources'))}
+                                       versioned=draft.get('json_versioned', False), sources=draft.get('json_sources'),
+                                       calendars=draft.get('json_calendars'))}
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')
