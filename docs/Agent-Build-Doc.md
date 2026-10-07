@@ -15,7 +15,7 @@
     * Actual cost data for build
     * Models used and why, framework or SDK, orchestration and memory, retrieval and data layer, hosting, cost per run at realistic volume.
 *	Tools and permissions. 
-    * JSON stuff? If we are giving tool calls only to change it then do that
+    * Only works in JSON "short list of allowed changes, like reordering sections, including or leaving out an item, or changing a field's value"
     * The tool, API, or data source the agent can reach, what it is allowed to do with each, and what it is explicitly blocked from doing.
 *	Evaluation. 
     * Created synthetic test websites, looked at output. Include build story
@@ -23,6 +23,7 @@
     * Include a session log that can be audited, to demonstrate that it behaved the way you expected it to.  What the frick are they talking about
 *	Guardrails and human handoff. 
     * Gloo Model Guardrails + hardcoded manual ones?
+    * "Code checks those before applying them, with an undo. It never writes free-form HTML or page text."
     * What the agent will not do, how it detects those situations, and where control returns to a person.
 *	Reproduction. 
     * README, open source everything (especially build doc, give bonus pts)
