@@ -117,6 +117,17 @@ export function siteMenuLines(navigation) {
 }
 
 /** "$0.03", "under $0.01", "no AI cost", or '' when the cost is unknown. */
+/** How the review lists a calendar Tekton found: its title, where it was, and what can be done with it. */
+export function calendarLine(entry = {}) {
+  const provider = entry.provider || 'Calendar';
+  const title = entry.name && entry.name !== provider ? `${entry.name} (${provider})` : provider;
+  const where = entry.page_title || entry.page_url || '';
+  const status = { imported: entry.count ? `Imported ${entry.count} upcoming ${entry.count === 1 ? 'event' : 'events'}` : 'Imported',
+    declined: 'Left out', failed: 'Could not be read; check that the calendar is public, then try again',
+    link: 'No public feed: your new site can link to it' }[entry.status] || '';
+  return { title, where, status, canImport: !!entry.feed_url && ['found', 'failed', 'declined'].includes(entry.status) };
+}
+
 export function costText(usd) {
   if (usd == null) return '';
   if (usd === 0) return 'no AI cost';
@@ -139,6 +150,21 @@ export function factCheck(run) {
     total,
     line: total ? `${total} unsupported ${total === 1 ? 'claim' : 'claims'} removed` : 'Every fact matched a quote on its page',
     reasons: Object.entries(run.dropped || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${count} because ${reason}`),
+  };
+}
+
+/** The file check in words: church.json and site.json against their schemas, and facts traced to their pages. */
+export function fileCheck(check) {
+  if (!check) return null;
+  const problems = [];
+  if (!check.valid) problems.push(`${check.errors.length} schema ${check.errors.length === 1 ? 'problem' : 'problems'}`);
+  const n = check.unsupported_count || 0;
+  if (n) problems.push(`${n} ${n === 1 ? 'fact does not trace to its page' : 'facts do not trace to their pages'}`);
+  const traced = check.facts_checked ? `; all ${check.facts_checked} imported facts trace to their pages` : '';
+  return {
+    ok: !problems.length,
+    line: problems.length ? problems.join(', ') : 'valid' + traced,
+    details: [...(check.errors || []), ...(check.unsupported || []).map(fact => `Not on its page: ${fact}`)],
   };
 }
 

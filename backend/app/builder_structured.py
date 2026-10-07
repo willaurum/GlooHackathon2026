@@ -47,6 +47,11 @@ TIME_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\b', re.I)
 ROLE_RE = re.compile(r'\b(pastor|minister|director|coordinator|elder|deacon|administrator|manager|assistant|leader|'
                      r'secretary|bishop|priest|rector|vicar|chaplain|staff|ministry|ministries|worship|youth|children|'
                      r'student|operations|executive|treasurer|accountant|receptionist|custodian|facilities|music)\b', re.I)
+# A person's role names what they do. "Student Missions" under "World Changers" is a ministry, not a person in a role.
+# Singular, like ROLE_RE: "Deacons" on its own line is a heading over a list of names, not someone's role.
+ROLE_NOUN_RE = re.compile(r'\b(pastor|minister|director|coordinator|elder|deacon|deaconess|administrator|manager|assistant|'
+                          r'leader|secretary|bishop|priest|rector|vicar|chaplain|treasurer|accountant|receptionist|'
+                          r'custodian|chair|chairman|chairwoman|chairperson|president|trustee|intern|teacher|staff)\b', re.I)
 NAME_RE = re.compile(r"^(?:(?i:rev|reverend|pastor|dr|mr|mrs|ms|fr|father|elder|deacon|bishop)\.?\s+)?"
                      r"[A-Z][a-zA-Z'’-]+(?:\s+[A-Z]\.)?(?:\s+[A-Z][a-zA-Z'’.-]+){1,3}$")
 EMAIL_RE = re.compile(r'\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b')
@@ -178,61 +183,11 @@ def jsonld(source, scripts, today=None):
 
 # ---------------------------------------------------------------- iCal
 
-def _unescape(value):
-    return value.replace('\\n', ' ').replace('\\N', ' ').replace('\\,', ',').replace('\\;', ';').replace('\\\\', '\\')
-
-
-DAY_CODES = {'SU': 'Sunday', 'MO': 'Monday', 'TU': 'Tuesday', 'WE': 'Wednesday', 'TH': 'Thursday', 'FR': 'Friday', 'SA': 'Saturday'}
-
-
 def ics_events(source, text, today=None):
-    """Upcoming events (within EVENT_HORIZON_DAYS) and recurring ones from an iCal feed."""
-    today = today or _today()
-    lines = []
-    for line in text.replace('\r\n', '\n').split('\n'):
-        if line[:1] in (' ', '\t') and lines:
-            lines[-1] += line[1:]
-        else:
-            lines.append(line)
-    items, event = [], None
-    for line in lines:
-        if line == 'BEGIN:VEVENT':
-            event = {}
-        elif line == 'END:VEVENT' and event is not None:
-            item = _ics_item(source, event, today)
-            if item:
-                items.append(item)
-            event = None
-        elif event is not None and ':' in line:
-            key, value = line.split(':', 1)
-            event[key.split(';', 1)[0].upper()] = _unescape(value.strip())
-    items.sort(key=lambda i: i['value'].get('date') or '9999')
-    return items[:MAX_FEED_ITEMS]
-
-
-def _ics_item(source, event, today):
-    name = event.get('SUMMARY', '').strip()
-    start = event.get('DTSTART', '')
-    if not name or not re.match(r'\d{8}', start):
-        return None
-    iso = f'{start[:4]}-{start[4:6]}-{start[6:8]}'
-    try:
-        date.fromisoformat(iso)
-    except ValueError:
-        return None
-    clock = _twelve(int(start[9:11]), int(start[11:13])) if re.match(r'\d{8}T\d{4}', start) else ''
-    value = {'name': name, 'location': event.get('LOCATION', ''), 'description': event.get('DESCRIPTION', '')[:2000]}
-    rule = event.get('RRULE', '')
-    if rule:
-        freq = re.search(r'FREQ=(\w+)', rule)
-        days = [DAY_CODES[d[-2:]] for d in re.findall(r'[+-]?\d*(SU|MO|TU|WE|TH|FR|SA)', re.search(r'BYDAY=([\w,+-]+)', rule).group(1))] \
-            if 'BYDAY=' in rule else [date.fromisoformat(iso).strftime('%A')]
-        value['when'] = f"{(freq.group(1).capitalize() if freq else 'Repeats')} on {', '.join(days)}" + (f' at {clock}' if clock else '')
-    elif _upcoming(iso, today):
-        value.update(date=iso, time=clock)
-    else:
-        return None
-    return _item('events', value, f'{name} {start}', source)
+    """Upcoming events (within EVENT_HORIZON_DAYS) and recurring ones from an iCal feed, recurrences expanded
+    (builder_calendar.events)."""
+    from . import builder_calendar
+    return builder_calendar.events(source, text, today or _today(), EVENT_HORIZON_DAYS, MAX_FEED_ITEMS)
 
 
 # ---------------------------------------------------------------- RSS, Atom and podcasts
@@ -360,12 +315,18 @@ def staff_cards(source):
         if i >= len(lines):
             return '', 0
         role = lines[i]
-        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role) or re.search(r'\d|[.!?]$', role) \
+        if len(role) > 60 or not ROLE_NOUN_RE.search(role) or EMAIL_RE.search(role) or re.search(r'\d|[.!?]$', role) \
                 or LITURGY_RE.search(role) or BARE_ROLE_RE.fullmatch(role.strip(' :')):
             return '', 0
-        if WRAPPED_ROLE.search(role) and i + 1 < len(lines) and len(role) + len(lines[i + 1]) <= 90 \
-                and not EMAIL_RE.search(lines[i + 1]) and not _person(lines[i + 1]):
-            return f'{role} {lines[i + 1]}', 2
+        if WRAPPED_ROLE.search(role) and i + 1 < len(lines) and len(role) + len(lines[i + 1]) <= 90:
+            # "Deacon of" / "New Member Assimilation": the next line finishes the role unless it is an email, a role
+            # of its own, or the name on the next card (a name followed by its role).
+            rest = lines[i + 1]
+            next_card = _person(rest) and i + 2 < len(lines) and ROLE_NOUN_RE.search(lines[i + 2]) \
+                and not EMAIL_RE.search(lines[i + 2])
+            if not EMAIL_RE.search(rest) and not ROLE_NOUN_RE.search(rest) and not next_card \
+                    and not re.search(r'[.!?]$', rest):
+                return f'{role} {rest}', 2
         return role, 1
 
     items, i = [], 0

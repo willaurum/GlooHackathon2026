@@ -109,6 +109,9 @@ export class ChurchAPI extends Container<AppEnv> {
 			// Optional. Builder import limits per rolling hour; the backend's defaults apply when empty.
 			BUILDER_IMPORTS_PER_ADDRESS: env.BUILDER_IMPORTS_PER_ADDRESS ?? '',
 			BUILDER_IMPORTS_PER_HOUR: env.BUILDER_IMPORTS_PER_HOUR ?? '',
+			// Optional. How Tekton's readers ask for JSON (auto, json_schema or tools) and where json_schema calls go.
+			BUILDER_STRUCTURED_OUTPUT: env.BUILDER_STRUCTURED_OUTPUT ?? '',
+			BUILDER_STRUCTURED_ENDPOINT: env.BUILDER_STRUCTURED_ENDPOINT ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.

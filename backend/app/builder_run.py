@@ -17,6 +17,7 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 120
+MAX_LOG = 80
 _current = contextvars.ContextVar('tekton_run', default=None)
 
 # USD per million tokens (input, output), from https://platform.ai.gloo.com/platform/v2/models on 2026-10-07.
@@ -66,6 +67,8 @@ class Run:
         self.dropped = {}
         self.calls, self.failed = 0, 0
         self.tokens = {}  # model -> [input, output]
+        self.modes = {}  # how answers came back: 'json_schema', 'tools', 'json_schema_fallback' -> calls
+        self.log = []  # one entry per AI call: mode, endpoint, model, seconds, tokens (the newest MAX_LOG)
         self.version = 0  # bumped on every change, so a saver knows when to write
 
     def _changed(self):
@@ -85,10 +88,17 @@ class Run:
             self.dropped[reason] = self.dropped.get(reason, 0) + count
             self._changed()
 
-    def ai(self, model, usage=None, failed=False):
+    def ai(self, model, usage=None, failed=False, mode=None, endpoint='', seconds=None):
         with self.lock:
             self.calls += 1
             self.failed += bool(failed)
+            if mode:
+                self.modes[mode] = self.modes.get(mode, 0) + 1
+                self.log.append({'mode': mode, 'endpoint': endpoint, 'model': model or '', 'failed': bool(failed),
+                                 'seconds': round(seconds, 2) if seconds is not None else None,
+                                 'tokens_in': int(getattr(usage, 'prompt_tokens', 0) or 0),
+                                 'tokens_out': int(getattr(usage, 'completion_tokens', 0) or 0)})
+                del self.log[:-MAX_LOG]
             if usage is not None:
                 counts = self.tokens.setdefault(model or '', [0, 0])
                 counts[0] += int(getattr(usage, 'prompt_tokens', 0) or 0)
@@ -120,10 +130,11 @@ class Run:
             tokens_in = sum(t[0] for t in self.tokens.values())
             tokens_out = sum(t[1] for t in self.tokens.values())
             models = sorted(m for m in self.tokens if m)
-            calls, failed = self.calls, self.failed
+            calls, failed, modes, log_ = self.calls, self.failed, dict(self.modes), list(self.log)
         return {'steps': steps, 'seconds': self.seconds(), 'pages': pages, 'sources': sources,
                 'dropped': dropped, 'dropped_total': sum(dropped.values()), 'ai_calls': calls, 'ai_failed': failed,
-                'tokens_in': tokens_in, 'tokens_out': tokens_out, 'models': models, 'cost_usd': self.cost()}
+                'tokens_in': tokens_in, 'tokens_out': tokens_out, 'models': models, 'cost_usd': self.cost(),
+                'output_modes': modes, 'ai_log': log_}
 
 
 def start():
@@ -152,10 +163,10 @@ def drop(reason, count=1):
         run.drop(reason, count)
 
 
-def ai(model, usage=None, failed=False):
+def ai(model, usage=None, failed=False, mode=None, endpoint='', seconds=None):
     run = _current.get()
     if run is not None:
-        run.ai(model, usage, failed)
+        run.ai(model, usage, failed, mode, endpoint, seconds)
 
 
 def money(usd):

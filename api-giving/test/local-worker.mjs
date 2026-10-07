@@ -12,6 +12,7 @@ env.STRIPE_KEY_ENCRYPTION_KEY = Buffer.from(crypto.getRandomValues(new Uint8Arra
 env.STRIPE_API_BASE = 'http://127.0.0.1:12111';
 env.ALLOWED_ORIGIN = 'http://localhost:5199';
 env.PUBLIC_ORIGIN = 'http://127.0.0.1:8803';
+if (process.env.TEKTON_INVITE_CODES) env.TEKTON_INVITE_CODES = process.env.TEKTON_INVITE_CODES;
 if (process.env.PLATFORM_KEY) env.PLATFORM_ADMIN_KEY = process.env.PLATFORM_KEY;
 function namespace(Type) {
   const instances = new Map();
@@ -33,7 +34,7 @@ function namespace(Type) {
   } };
 }
 env.GIVING = namespace(GivingDO); env.GIVING_REGISTRY = namespace(GivingRegistry);
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   try {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks);
@@ -50,4 +51,5 @@ createServer(async (req, res) => {
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
   } catch (e) { res.writeHead(500); res.end('Local adapter error: ' + e.message); }
-}).listen(8803, '127.0.0.1', () => console.log('Direct SQLite adapter ready on 8803'));
+});
+server.listen(Number(process.env.LOCAL_TEST_PORT ?? 8803), '127.0.0.1', () => console.log('Direct SQLite adapter ready on ' + server.address().port));

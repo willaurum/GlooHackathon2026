@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { costText, factCheck, feedSteps, runSummary } from './builder.js';
+import { costText, factCheck, feedSteps, fileCheck, runSummary } from './builder.js';
 import { orderedSections } from './churchSite.js';
 
 test('run summary, cost and the fact check in words', () => {
@@ -31,4 +31,15 @@ test('sections follow the stored layout, then any it does not name, without hidd
   assert.deepEqual(orderedSections(layout, 'home', defaults), ['service_times', 'features', 'about', 'ministries', 'sermons']);
   assert.deepEqual(orderedSections({ home: ['sermons'] }, 'home', defaults), ['sermons', 'features', 'about', 'ministries', 'service_times', 'leaders']);
   assert.deepEqual(orderedSections(layout, 'visit', ['service_times', 'map']), ['service_times']);
+});
+
+test('the file check in words', () => {
+  assert.equal(fileCheck(null), null);
+  const ok = fileCheck({ valid: true, errors: [], unsupported: [], unsupported_count: 0, facts_checked: 4 });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.line, 'valid; all 4 imported facts trace to their pages');
+  const bad = fileCheck({ valid: false, errors: ['church.info.name: Field required'], unsupported: ['info.phone'], unsupported_count: 1, facts_checked: 4 });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.line, '1 schema problem, 1 fact does not trace to its page');
+  assert.deepEqual(bad.details, ['church.info.name: Field required', 'Not on its page: info.phone']);
 });

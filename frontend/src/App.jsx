@@ -360,7 +360,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
       {snapshot && <div className="site-preview-banner" ref={previewBanner}>
         <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
         {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
-        {draft && <TektonEdit draftId={draft.id} undoCount={draft.undo_count || 0} compact lastResult={lastEdit} onChanged={(_, done) => onEdited?.(done)} />}
+        {draft && draft.import_kind !== 'json' && <TektonEdit draftId={draft.id} undoCount={draft.undo_count || 0} compact lastResult={lastEdit} onChanged={(_, done) => onEdited?.(done)} />}
         <a href="#/new">Back to Tekton</a>
       </div>}
       <SiteNav route={route} go={go} savedCount={savedCount} />

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BUILDER_LISTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder } from './builder.js';
+import { BUILDER_LISTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder } from './builder.js';
 
 test('review requires resolved fields and no questions, even if the session says review', () => {
   const session = { status: 'review', questions: [], fields: { services: { status: 'conflict', value: [{ day: 'Sunday', time: '09:00' }] } } };
@@ -109,4 +109,15 @@ test('imported website parts read as one line each, and the menu as indented lin
   assert.deepEqual(siteMenuLines({ main: [{ label: 'About', url: '', page_id: '', children: [{ label: 'Team', url: 'https://c.test/team', page_id: 's2', children: [] }] },
     { label: 'Groups', url: 'https://x.churchcenter.com/groups', page_id: '', children: [] }] }),
   [{ label: 'About', depth: 0, external: false }, { label: 'Team', depth: 1, external: false }, { label: 'Groups', depth: 0, external: true }]);
+});
+
+test('a found calendar shows its provider, page and what the church can do with it', () => {
+  const found = calendarLine({ provider: 'Google Calendar', name: 'Forest Baptist', page_title: 'Calendar', page_url: 'https://fbc.test/calendar', feed_url: 'https://calendar.google.com/calendar/ical/x/public/basic.ics', status: 'found' });
+  assert.deepEqual(found, { title: 'Forest Baptist (Google Calendar)', where: 'Calendar', status: '', canImport: true });
+  assert.equal(calendarLine({ provider: 'Tockify', name: 'Tockify', feed_url: 'https://tockify.com/api/feeds/ics/grace', status: 'imported', count: 1 }).status, 'Imported 1 upcoming event');
+  assert.equal(calendarLine({ provider: 'Tockify', feed_url: 'x', status: 'imported', count: 0 }).canImport, false);
+  const link = calendarLine({ provider: 'Church Center', page_url: 'https://fbc.test/events', feed_url: '', status: 'link' });
+  assert.equal(link.canImport, false);
+  assert.match(link.status, /No public feed/);
+  assert.equal(calendarLine({ provider: 'Outlook', feed_url: 'x', status: 'failed' }).canImport, true);
 });

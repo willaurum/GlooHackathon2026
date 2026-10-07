@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setApiChurch } from './api.js';
-import { createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft } from './builderApi.js';
+import { calendarApi, createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft } from './builderApi.js';
 import { getVerifiedStaffToken } from './church.js';
 
 const storage = new Map();
@@ -150,5 +150,62 @@ test('list edits go to the public items route', async () => {
       return Response.json({ id: 'draft-id', collections: {} });
     };
     assert.equal((await itemApi('draft-id', { collection: 'staff', id: 'staff-1', include: true })).id, 'draft-id');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('calendar import and decline post to the draft calendar routes without an address', async () => {
+  const originalFetch = globalThis.fetch;
+  const seen = [];
+  try {
+    globalThis.fetch = async (url, options) => { seen.push([url, options.method, options.body]); return Response.json({ id: 'draft-id' }); };
+    await calendarApi('draft-id', 'cal1', 'import');
+    await calendarApi('draft-id', 'cal2', 'decline');
+    assert.deepEqual(seen, [['/api/builder/drafts/draft-id/calendars/cal1/import', 'POST', undefined],
+      ['/api/builder/drafts/draft-id/calendars/cal2/decline', 'POST', undefined]]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('site JSON uploads accept combined exports or separate seed files without extraction', async () => {
+  const { createFromJson } = await import('./builderApi.js');
+  const originalFetch = globalThis.fetch;
+  const files = { 'church.json': { info: { name: 'Meadow Chapel' } }, 'ministries.json': { ministries: [] } };
+  try {
+    let calls = 0;
+    globalThis.fetch = async (url, options) => {
+      calls++;
+      assert.equal(url, '/api/builder/drafts/json');
+      assert.equal(options.headers.Authorization, undefined);
+      assert.deepEqual(JSON.parse(options.body), files);
+      return Response.json({ id: 'json-draft', status: 'review' }, { status: 201 });
+    };
+    assert.equal((await createFromJson([new File([JSON.stringify(files)], 'meadow-site-files.json')])).id, 'json-draft');
+    await createFromJson(Object.entries(files).map(([name, data]) => new File([JSON.stringify(data)], name)));
+    await createFromJson([new File(['\n'.repeat(2 * 1024 * 1024) + JSON.stringify(files)], 'pretty-site.json')]);
+    for (const input of [[], [new File(['{broken'], 'church.json')],
+      [new File(['{}'], 'church.json'), new File(['{}'], 'church.json')],
+      [new File(['{}'], 'unknown.json'), new File(['{}'], 'church.json')],
+      [new File(['{"church.json":{"info":{"name":"Chapel","extra":1e400}}}'], 'overflow.json')],
+      [new File([JSON.stringify({'church.json': { info: { name: 'Chapel', extra: 'x'.repeat(2 * 1024 * 1024) } } })], 'large.json')]]) {
+      await assert.rejects(createFromJson(input));
+    }
+    assert.equal(calls, 3);
+    globalThis.fetch = async () => Response.json({ detail: 'Invalid sections in church.json' }, { status: 400 });
+    await assert.rejects(createFromJson([new File([JSON.stringify(files)], 'site.json')]), err => err.status === 400);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+
+test('the two versioned Tekton files use the JSON import route', async () => {
+  const { createFromJson } = await import('./builderApi.js');
+  const originalFetch = globalThis.fetch;
+  const church = { schema_version: '1.0', generated_by: 'tekton', kind: 'church', info: { name: 'Meadow Chapel' } };
+  const site = { schema_version: '1.0', generated_by: 'tekton', kind: 'site', site: {}, pages: [] };
+  try {
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, '/api/builder/drafts/json');
+      assert.deepEqual(JSON.parse(options.body), { 'church.json': church, 'site.json': site });
+      return Response.json({ id: 'versioned-draft' });
+    };
+    await createFromJson([new File([JSON.stringify(church)], 'church.json'), new File([JSON.stringify(site)], 'site.json')]);
   } finally { globalThis.fetch = originalFetch; }
 });

@@ -44,14 +44,16 @@ from urllib.parse import urljoin, urldefrag, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import (builder_agents, builder_crawl, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
+from . import (builder_agents, builder_calendar, builder_crawl, builder_json, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
                church_content, db)
 from .builder_edit import clean_layout, default_layout
+from .builder_export import files as content_files, load as load_content_files, sources as content_sources, calendars as content_calendars
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -158,7 +160,7 @@ class _PageText(HTMLParser):
         self.styles, self.icons, self.logos, self.css, self.hidden_links = [], [], [], [], []
         self._nav, self._anchor, self._script, self._hide, self._style = 0, None, None, None, None
         self._block, self._items, self._heading, self._form, self._label, self._labels = 0, [], None, None, None, {}
-        self.scripts = 0
+        self.scripts, self.calendar_hints = 0, []
 
     def _nav_start(self, tag, attrs):
         if tag in ('nav', 'header', 'footer') and not self._nav:
@@ -192,12 +194,14 @@ class _PageText(HTMLParser):
                 self._form['submit'] = attrs['value'][:60]
             if kind in self.FIELD_SKIP or len(self._form['fields']) >= self.MAX_FIELDS:
                 return
+            # A label with no `for` names the field it wraps, or else the next field ("<label>Email</label><input>").
+            own = self._form.pop('_next_label', '') if not self._label else ''
             self._form['fields'].append({
                 'name': (attrs.get('name') or '')[:80], 'type': kind, 'id': attrs.get('id') or '',
-                'label': (attrs.get('aria-label') or attrs.get('placeholder') or '')[:120],
+                'label': (attrs.get('aria-label') or own or attrs.get('placeholder') or '')[:120],
                 'required': 'required' in attrs or (attrs.get('aria-required') or '') == 'true'})
         elif tag == 'label':
-            self._label = [attrs.get('for') or '', []]
+            self._label = [attrs.get('for') or '', [], len(self._form['fields'])]
         elif tag == 'button' and (attrs.get('type') or 'submit').lower() == 'submit':
             self._form['_button'] = []
 
@@ -209,6 +213,8 @@ class _PageText(HTMLParser):
         elif tag not in VOID_TAGS and _hidden(attrs):
             self._hide = [tag, 1]
         self._nav_start(tag, attrs)
+        if attrs.get('data-tockify-calendar') and len(self.calendar_hints) < 5:
+            self.calendar_hints.append(attrs['data-tockify-calendar'].strip())  # a Tockify embed names its calendar here
         if not self._hide:
             self._form_start(tag, attrs)
             if tag in self.HEADINGS:
@@ -245,7 +251,7 @@ class _PageText(HTMLParser):
         elif tag == 'iframe' and attrs.get('src') and not self._hide:
             # A marker line, so builder_site can tell which section a player or form sits in.
             self.parts.append(f'\n[embed {len(self.embeds) + 1}]\n')
-            self.embeds.append((attrs['src'], attrs.get('title') or ''))
+            self.embeds.append((attrs['src'], attrs.get('title') or attrs.get('aria-label') or ''))
         elif tag == 'link' and attrs.get('href'):
             rel, kind = (attrs.get('rel') or '').lower(), (attrs.get('type') or '').lower()
             if rel == 'canonical':
@@ -275,7 +281,15 @@ class _PageText(HTMLParser):
             self._heading = None
         if self._form is not None:
             if tag == 'label' and self._label:
-                self._labels[self._label[0]] = ' '.join(''.join(self._label[1]).split())[:120]
+                target, words, first = self._label
+                text = ' '.join(''.join(words).split())[:120]
+                if target:
+                    self._labels[target] = text
+                elif len(self._form['fields']) > first:
+                    for field in self._form['fields'][first:]:
+                        field['label'] = field['label'] if field['id'] in self._labels else text
+                else:
+                    self._form['_next_label'] = text
                 self._label = None
             elif tag == 'button' and '_button' in self._form:
                 text = ' '.join(''.join(self._form.pop('_button')).split())
@@ -339,8 +353,16 @@ class _PageText(HTMLParser):
             if form.pop('password', False):
                 continue
             form.pop('_button', None)
+            form.pop('_next_label', None)
+            fields, seen = [], set()
             for field in form['fields']:
-                field['label'] = self._labels.get(field.pop('id'), '') or field['label'] or field['name']
+                field_id = field.pop('id')
+                field['label'] = (self._labels.get(field_id, '') if field_id else '') or field['label'] or field['name']
+                key = (field['label'].lower(), field['name'], field['type'])
+                if key not in seen:  # a checkbox group ("Volunteer in a Ministry" five times) is one field
+                    seen.add(key)
+                    fields.append(field)
+            form['fields'] = fields
             out.append(form)
         return out
 
@@ -359,7 +381,7 @@ def parse_html(html):
             'canonical': page.canonical, 'meta': page.meta, 'nav': page.menu(), 'headings': page.headings,
             'forms': page.form_list(), 'ctas': page.ctas, 'styles': page.styles, 'icons': page.icons,
             'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS], 'hidden_links': page.hidden_links,
-            'scripts': page.scripts}
+            'scripts': page.scripts, 'calendar_hints': page.calendar_hints}
 
 
 class FetchRefused(ValueError):
@@ -427,13 +449,31 @@ PAGE_KINDS = {'home': 'home page', 'news': 'announcements', 'connect': 'sign-ups
               'visit': 'plan a visit', 'about': 'about', 'contact': 'contact', 'give': 'giving'}
 
 
-def _page_name(source):
-    """A page as the progress feed shows it: its title without the site name, else its path."""
-    title = re.split(r'\s+[|\-–—·:]\s+', source.get('title') or '')[0].strip()
-    if title:
-        return title[:60]
-    path = urlparse(source.get('url') or '').path.strip('/')
-    return path[:60] or 'Home'
+STRONG_CHURCH_WORDS = re.compile(r'\b(church|chapel|parish|cathedral|tabernacle|abbey|basilica)\b', re.I)
+
+
+def _page_name(source, church=''):
+    """A page as Tekton names it: the part of its title that is not the church's name ("Crosspoint Church - Men's"
+    is "Men's"), else its first heading, else its address. A title that is a sentence is not a name."""
+    title = source.get('title') or ''
+    parts = [p.strip() for p in TITLE_SPLIT.split(title) if p.strip()]
+    if source.get('page_type') == 'home' or urlparse(source.get('url') or '').path.strip('/') in ('', 'home', 'index.html'):
+        if len(parts) <= 1 or all(CHURCH_WORDS.search(p) or ',' in p for p in parts):
+            return 'Home'
+    names = {' '.join(n.lower().split()) for n in (church, title_name(title)) if n}
+    own = [p for p in parts if ' '.join(p.lower().split()) not in names]
+    if len(parts) > 1 and len(own) == len(parts):
+        # "Crosspoint Church - Downtown Missional Community": the part that says church is the site's name.
+        strong = [p for p in own if not STRONG_CHURCH_WORDS.search(p)]
+        own = strong if len(strong) < len(own) else [p for p in own if not CHURCH_WORDS.search(p)]
+    names = own[:1] + [text for _, text in source.get('headings') or []][:2] \
+        + [s.get('heading') or '' for s in source.get('sections') or []][:2]
+    for name in names:
+        name = ' '.join(name.split())
+        if name and len(name.split()) <= 8 and not re.search(r'[.!?]$', name):
+            return name[:60]
+    path = urlparse(source.get('url') or '').path.strip('/').rsplit('/', 1)[-1]
+    return re.sub(r'[-_]+', ' ', re.sub(r'\.html?$', '', path)).strip().capitalize()[:60] or 'Home'
 
 
 ROBOTS_UNREACHABLE = ('This website\'s robots.txt could not be read right now, so it cannot be imported safely. '
@@ -529,7 +569,10 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
             if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] or canonical and s['url'] == canonical for s in sources):
                 continue
             images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
-            anchors = [(urldefrag(urljoin(final_url, href))[0], text, nav) for href, text, nav in page['anchors']
+
+            def address(href):
+                return builder_crawl.unwrap(urldefrag(urljoin(final_url, href))[0])  # Google Sites wraps outside links
+            anchors = [(address(href), text, nav) for href, text, nav in page['anchors']
                        if not href.lower().startswith(('mailto:', 'tel:', 'javascript:'))][:300]
             sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
                             'text': page['text'][:MAX_SOURCE_CHARS],
@@ -539,24 +582,27 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'anchors': anchors, 'jsonld': page['jsonld'],
                             'site_name': page['meta'].get('og:site_name') or page['meta'].get('application-name', ''),
                             'meta': page['meta'], 'headings': page['headings'],
-                            'nav': [(b, tag, depth, label, urldefrag(urljoin(final_url, href))[0] if href else '')
+                            'nav': [(b, tag, depth, label, address(href) if href else '')
                                     for b, tag, depth, label, href in page['nav']],
                             'forms': [{**f, 'action': urljoin(final_url, f['action']) if f['action'] else final_url}
                                       for f in page['forms']],
-                            'ctas': list(dict.fromkeys(urldefrag(urljoin(final_url, h))[0] for h in page['ctas']))[:30],
+                            'ctas': list(dict.fromkeys(address(h) for h in page['ctas']))[:30],
                             'styles': [urljoin(final_url, h) for h in page['styles']],
                             'icons': [(urljoin(final_url, h), rel, sizes) for h, rel, sizes in page['icons']],
                             'logos': [(urljoin(final_url, src), alt) for src, alt in page['logos']],
                             'css': page['css'],
-                            'hidden_links': list({urldefrag(urljoin(final_url, h))[0] for h in page['hidden_links']}),
+                            'hidden_links': list({address(h) for h in page['hidden_links']}),
                             'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']],
-                            'scripts': page['scripts']})
+                            'scripts': page['scripts'], 'calendar_hints': page.get('calendar_hints', [])})
             kind = PAGE_KINDS.get(sources[-1]['page_type'])
             builder_run.step(f'Read “{_page_name(sources[-1])}”' + (f' ({kind})' if kind else ''))
             for href in page['feeds']:
                 add_feed(urljoin(final_url, href))
             for link, text, nav in anchors:
-                if builder_crawl.is_feed(link):
+                podcast = builder_crawl.podcast_feed(link)
+                if podcast:
+                    add_feed(podcast)  # a sermon podcast's own feed (Spreaker, Anchor, Buzzsprout...), read like any feed
+                elif builder_crawl.is_feed(link):
                     add_feed(link)
                 elif builder_crawl.same_site(link, origin) and link not in seen and not builder_crawl.skippable(link):
                     seen.add(link)
@@ -951,7 +997,8 @@ STREET_RE = re.compile(r'\b\d{1,6}\s+(?:[A-Z][\w.\'-]*\s+){1,4}(?:Street|St|Aven
 TIME_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\b', re.I)
 BARE_TIMES_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+)\s*(\d{1,2})(?::(\d{2}))?\b')
 WORSHIP_WORDS = re.compile(r'\b(worship|service|services|gathering|mass|traditional|contemporary|join us)\b', re.I)
-NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry)\b', re.I)
+NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry|'
+                         r'class(?:es)?|students?)\b', re.I)
 # A calendar date ("Sunday, November 1, 2026") is a one-off event, not a weekly service time.
 # Ordinals and their typos ("October 15th", "Oct 25h"), numeric dates ("10/25") and ISO dates count too.
 DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th|h)?\b'
@@ -972,6 +1019,20 @@ STRICT_WORSHIP = re.compile(r'\b(worship|services?|mass)\b', re.I)
 # "9:00 & 11:00 am": the am/pm after the last time covers the times listed before it.
 SHARED_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+|,)\s*(?=(?:\d{1,2}(?::\d{2})?\s*(?:&|and|\+|,)\s*)*'
                        r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b)', re.I)
+
+
+# An address written in any case. Lower case is common in prose and headings ("join us at: 150 alum springs road"),
+# where words like "way" or "drive" also appear, so it must end in ", city, ST 12345" to count.
+ANY_CASE_STREET_RE = re.compile(r'\b\d{1,6}\s+(?:[a-z][\w.\'-]*\s+){1,4}(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|'
+                                r'boulevard|blvd|way|court|ct|place|pl|parkway|pkwy|highway|hwy|circle|terrace)\b\.?,?\s+'
+                                r'[a-z][a-z\s.\'-]{1,40},\s*[a-z]{2}\s+\d{5}(?:-\d{4})?\b', re.I)
+
+
+def _address_case(address):
+    """'150 Alum springs road, lynchburg, va 24502' as '150 Alum Springs Road, Lynchburg, VA 24502'."""
+    *street, last = [p.strip() for p in address.split(',')]
+    state = re.sub(r'^([a-z]{2})\b', lambda m: m.group(1).upper(), last, flags=re.I)
+    return ', '.join([' '.join(w[:1].upper() + w[1:] for w in p.split()) for p in street] + [state])
 
 
 def _digits(phone):
@@ -1011,16 +1072,27 @@ def _times(sentence):
 
 
 def _labeled(text):
-    """(sentence, label) pairs: each sentence with the line above it, which on a sidebar or card is its label
-    ("Youth Group" above "Sundays, 6:00 PM")."""
-    previous = ''
-    for line in text.split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-        for sentence in (s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip()):
-            yield sentence, previous
-            previous = sentence
+    """(sentence, label, following) triples: each sentence with the line above it, which on a sidebar or card is its
+    label ("Youth Group" above "Sundays, 6:00 PM"), and the sentence after it, which can explain it ("Sundays - 9:45am"
+    over "Grade-specific Sunday School classes are offered at 9:45")."""
+    sentences = [s.strip() for line in text.split('\n') if line.strip()
+                 for s in re.split(r'(?<=[.!?])\s+', line.strip()) if s.strip()]
+    for i, sentence in enumerate(sentences):
+        yield sentence, sentences[i - 1] if i else '', sentences[i + 1] if i + 1 < len(sentences) else ''
+
+
+def _clauses(sentence):
+    """(clause, day) for a sentence that lists several things: "Sunday Services at 8:30am & 11:00am; Sunday School at
+    9:45am; Wednesday Evening at 6:30pm". A clause with no day of its own keeps the one before it. A sentence that
+    is about one thing stays whole."""
+    if not NOT_WORSHIP.search(sentence) or not re.search(r'[;,]', sentence):
+        return [(sentence, None)]
+    out, day = [], None
+    for clause in (c.strip() for c in re.split(r'\s*[;,]\s*', sentence) if c.strip()):
+        own = next((d for d in DAYS if DAY_RE[d].search(clause)), None)
+        out.append((clause, None if own else day))
+        day = own or day
+    return out
 
 
 def service_times(text, strict=False):
@@ -1031,41 +1103,45 @@ def service_times(text, strict=False):
     found = {}
     worship = STRICT_WORSHIP if strict else WORSHIP_WORDS
     lines = text.split('\n')
-    for sentence, label in _labeled(text):
-        days = [d for d in DAYS if DAY_RE[d].search(sentence)]
-        if not days and label and DATED.search(label) and len(sentence) <= 40 and STRICT_WORSHIP.match(sentence) \
-                and not NOT_WORSHIP.search(sentence):
-            day = next((d for d in DAYS if DAY_RE[d].search(label)), None)
+    for whole, label, following in _labeled(text):
+        for sentence, carried in _clauses(whole):  # one clause of a list at a time
+            days = [d for d in DAYS if DAY_RE[d].search(sentence)] or ([carried] if carried else [])
+            if not days and label and DATED.search(label) and len(sentence) <= 40 and STRICT_WORSHIP.match(sentence) \
+                    and not NOT_WORSHIP.search(sentence):
+                day = next((d for d in DAYS if DAY_RE[d].search(label)), None)
+                times = _times(sentence)
+                if day and times:
+                    found.setdefault(day, [])
+                    found[day] += [(t, f'{label} {sentence}') for t in times if t not in [x for x, _ in found[day]]]
+                continue
+            if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
+                continue
+            if not worship.search(sentence) and label and (NOT_WORSHIP.search(label) or NOT_WEEKLY.search(label)):
+                continue
+            if not worship.search(sentence) and NOT_WORSHIP.search(following) and not worship.search(following):
+                continue  # "Sundays - 9:45am" explained by the next line: "Sunday School classes are offered at 9:45"
             times = _times(sentence)
-            if day and times:
+            if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
+                for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
+                    times += [_clock(h1, m1, None), _clock(h2, m2, None)]
+            if not times or not (worship.search(sentence) or not strict and len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
+                continue
+            for day in days[:1]:
                 found.setdefault(day, [])
-                found[day] += [(t, f'{label} {sentence}') for t in times if t not in [x for x, _ in found[day]]]
-            continue
-        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
-            continue
-        if not worship.search(sentence) and label and (NOT_WORSHIP.search(label) or NOT_WEEKLY.search(label)):
-            continue
-        times = _times(sentence)
-        if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
-            for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
-                times += [_clock(h1, m1, None), _clock(h2, m2, None)]
-        if not times or not (worship.search(sentence) or not strict and len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
-            continue
-        for day in days[:1]:
-            found.setdefault(day, [])
-            found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
+                found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
     # Tables and footers: a "Sunday" cell or heading followed by times on the next lines (not on announcement pages).
     for i, line in enumerate([] if strict else lines):
         day = next((d for d in DAYS if re.fullmatch(rf'{d}s?( services?| worship)?', line.strip(), re.I)), None)
         if not day:
             continue
-        for nxt in lines[i + 1:i + 4]:
+        for k, nxt in enumerate(lines[i + 1:i + 4], i + 1):
             if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or NOT_WEEKLY.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
                 break
             for clock in _times(nxt):
                 found.setdefault(day, [])
                 if clock not in [x for x, _ in found[day]]:
-                    found[day].append((clock, f'{line} {nxt}'.strip()))
+                    # The quote is the page's own words, from the heading down to this time.
+                    found[day].append((clock, ' '.join(l.strip() for l in lines[i:k + 1] if l.strip())))
     return found
 
 
@@ -1092,14 +1168,24 @@ def pattern_claims(source):
         claims.append({'field': 'email', 'value': match.lower(), 'quote': match, 'source_id': sid, 'method': 'pattern'})
     for match in sorted(set(PHONE_RE.findall(text))):
         claims.append({'field': 'phone', 'value': _digits(match), 'quote': match, 'source_id': sid, 'method': 'pattern'})
-    for match in sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(text.replace('\n', ', ')))):
+    flat = text.replace('\n', ', ')
+    found = sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(flat)))
+    for match in found:
         claims.append({'field': 'address', 'value': match, 'quote': match, 'source_id': sid, 'method': 'pattern'})
+    for match in sorted(set(m.group(0).strip(' ,.') for m in ANY_CASE_STREET_RE.finditer(flat))):
+        if not any(match.lower() in f.lower() or f.lower() in match.lower() for f in found):
+            # "150 Alum springs road, lynchburg, va 24502": shown as an address, quoted as the page wrote it.
+            claims.append({'field': 'address', 'value': _address_case(match), 'quote': match, 'source_id': sid,
+                           'method': 'pattern'})
     if source.get('kind', 'page') == 'page':
         name, quote = title_name(source.get('title', '')), source.get('title', '')
         if source.get('site_name') and CHURCH_WORDS.search(source['site_name']):
             name, quote = source['site_name'], source['site_name']
         if name:
-            claims.append({'field': 'name', 'value': name, 'quote': quote, 'source_id': sid, 'method': 'pattern'})
+            # Quote the name where the page shows it, so its source link lands on it; else the title it came from.
+            shown = re.search(re.escape(name).replace('\\ ', r'\s+'), text, re.I)
+            claims.append({'field': 'name', 'value': name, 'quote': shown.group(0) if shown else quote, 'source_id': sid,
+                           'method': 'pattern'})
     # Uploads and campus pages list several sets of times; each quote is its own set, so different campuses'
     # times become a question instead of being merged into one list.
     separate = source.get('url') is None or source.get('page_type') == 'locations'
@@ -1112,6 +1198,11 @@ def pattern_claims(source):
     return claims
 
 
+# Office hours must be quoted from words about the office being open ("Office hours", "Open Monday - Thursday"), with
+# a time in them; a service time or a phone number under "Church Office" is not office hours.
+OFFICE_WORDS = re.compile(r'\b(office|hours?|open|closed|weekdays?)\b|\b(?:mon|tue|wed|thu|fri)[a-z]*\.?\s*(?:-|–|—|through|'
+                          r'thru|to)\s*(?:mon|tue|wed|thu|fri|sat)', re.I)
+OFFICE_TIMES = re.compile(r'\b\d{1,2}(?::\d{2})?\s*(?:[ap]\.?\s*m\b|-|–|—|to\b)|\bnoon\b|\bby appointment\b', re.I)
 AI_FIELDS = {
     'name': 'The church\'s name as the site states it.',
     'about': 'A short description of the church (history, beliefs), copied from the page.',
@@ -1146,7 +1237,7 @@ def _normalize_space(s):
     return re.sub(r'\s+', ' ', s).strip().lower()
 
 
-BELIEFS_RE = re.compile(r'belie|doctrin|statement[-\s]of[-\s]faith|what[-\s]we[-\s]teach|our[-\s]faith|creed|confession', re.I)
+BELIEFS_RE = re.compile(r'belie(?:fs?|ve)\b|doctrin|statement[-\s]of[-\s]faith|what[-\s]we[-\s]teach|our[-\s]faith|creed|confession', re.I)
 BELIEFS_PLACEHOLDER_NOTE = ('Your website\'s beliefs section is only a placeholder, so it was not imported. Tekton does '
                             'not write theology; your pastor can add your statement of faith in Church setup.')
 
@@ -1211,16 +1302,28 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
         return []
     claims = []
     beliefs = is_beliefs(source)
-    for fact in args.get('facts', []) if isinstance(args, dict) else []:
+    facts = builder_agents.entries(args, 'facts')
+    if facts is None:
+        if args:
+            builder_run.drop('not in the expected shape')  # one answer that could not be read, counted once
+        facts = []
+    for fact in facts:
         if not isinstance(fact, dict):
             builder_run.drop('not in the expected shape')
             continue
+        fact = builder_agents.clean(fact)
         field, value, quote = fact.get('field'), str(fact.get('value', '')).strip(), str(fact.get('quote', '')).strip()
         if field not in AI_FIELDS and field != 'faq' or not value:
             builder_run.drop('not a detail Tekton asked for')
             continue
         if not grounded(quote, source['text']):
             builder_run.drop('its quote is not on the page')
+            continue
+        if field == 'name' and _key('name', value) not in re.sub(r'[^a-z0-9]', '', quote.lower()):
+            builder_run.drop('its quote does not name the church')
+            continue
+        if field == 'office_hours' and not (OFFICE_WORDS.search(quote) and OFFICE_TIMES.search(quote)):
+            builder_run.drop('not office hours')  # a service time, or "Church Office" over a phone number
             continue
         if beliefs and field == 'about':
             continue  # a statement of faith is kept word for word for the pastor, never summarized (is_beliefs)
@@ -1251,8 +1354,126 @@ def _tool_arguments(text):
         return json.loads(text[start:end + 1]) if 0 <= start < end else None
 
 
+# Structured output: Tekton's readers (READER_TOOLS) ask for JSON constrained to their tool's schema, the
+# OpenAI-compatible `response_format` json_schema that Gemini, OpenAI and Qwen models honor, instead of a forced tool
+# call. Gloo's guarded endpoint does not document response_format (it may drop it silently), so these calls go to its
+# direct chat completions endpoint (BUILDER_STRUCTURED_ENDPOINT), with the same key.
+# BUILDER_STRUCTURED_OUTPUT: auto (by model family, see output_mode), json_schema, or tools. Any refusal (400, 401,
+# 403, 404, 422), an answer that is not JSON, cut short or filtered, or one missing the schema's top-level fields
+# falls back to the forced tool call on the usual endpoint, and that model is not asked for json_schema again by
+# this process. Other AI calls (plain-word edits) keep their tool call.
+READER_TOOLS = {'record_church_facts', 'record_events', 'record_staff', 'record_ministries', 'record_sermons',
+                'record_locations'}
+DIRECT_ENDPOINT = 'https://platform.ai.gloo.com/ai/v2/direct'
+# Model families whose OpenAI-compatible answers follow a json_schema; Anthropic's compatibility layer ignores it.
+JSON_SCHEMA_MODELS = re.compile(r'^gloo-(openai-|google-gemini-|qwen-3\.[78]-(flash|plus|max))', re.I)
+# Keywords the portable subset leaves out (lengths and patterns stay enforced by Pydantic after parsing).
+UNPORTABLE = ('minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', 'exclusiveMinimum',
+              'exclusiveMaximum', 'maxItems', 'default', '$ref', '$defs', 'title')
+_no_json_schema = set()
+
+
+def output_mode(provider, model, tool_name=None):
+    """'json_schema' or 'tools' for one call."""
+    if tool_name is not None and tool_name not in READER_TOOLS:
+        return 'tools'
+    mode = (os.environ.get('BUILDER_STRUCTURED_OUTPUT') or 'auto').strip().lower()
+    if mode == 'tools' or model in _no_json_schema:
+        return 'tools'
+    if mode == 'json_schema':
+        return 'json_schema'
+    if provider == 'openai':
+        return 'json_schema'
+    return 'json_schema' if provider == 'gloo' and JSON_SCHEMA_MODELS.match(model or '') else 'tools'
+
+
+def strict_schema(schema):
+    """The tool's JSON Schema in the strict, portable subset structured output needs: every object lists all its
+    properties as required (an optional one may be null instead) and allows no others; string enums only; no
+    $ref, lengths or patterns."""
+    schema = {k: v for k, v in schema.items() if k not in UNPORTABLE}
+    if schema.get('type') == 'object':
+        required = set(schema.get('required', []))
+        props = {}
+        for key, value in schema.get('properties', {}).items():
+            value = strict_schema(value)
+            props[key] = value if key in required else _nullable(value)
+        schema.update(properties=props, required=list(props), additionalProperties=False)
+    elif schema.get('type') == 'array' and isinstance(schema.get('items'), dict):
+        schema['items'] = strict_schema(schema['items'])
+        if schema.get('minItems', 0) > 1:
+            schema['minItems'] = 1
+    return schema
+
+
+def _nullable(schema):
+    schema = dict(schema)
+    kind = schema.get('type')
+    if isinstance(kind, str) and kind != 'null':
+        schema['type'] = [kind, 'null']
+    if 'enum' in schema and None not in schema['enum']:
+        schema['enum'] = [*schema['enum'], None]
+    return schema
+
+
+def without_nulls(value):
+    """A structured answer in the shape a tool call gives: an optional field left null is simply absent."""
+    if isinstance(value, dict):
+        return {k: without_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [without_nulls(v) for v in value if v is not None]
+    return value
+
+
+def response_format(tool):
+    function = tool['function']
+    return {'type': 'json_schema', 'json_schema': {'name': function['name'], 'strict': True,
+                                                   'schema': strict_schema(function['parameters'])}}
+
+
+def _json_messages(messages):
+    """The same request, saying plainly that the answer is JSON (Qwen's JSON mode needs the word in the prompt)."""
+    if messages and messages[0].get('role') == 'system':
+        return [{**messages[0], 'content': messages[0]['content'] + ' Answer with JSON that matches the given schema.'},
+                *messages[1:]]
+    return [{'role': 'system', 'content': 'Answer with JSON that matches the given schema.'}, *messages]
+
+
+def _structured_client(provider, client):
+    if provider != 'gloo':
+        return client, ''
+    endpoint = (os.environ.get('BUILDER_STRUCTURED_ENDPOINT') or DIRECT_ENDPOINT).rstrip('/')
+    return client.with_options(base_url=endpoint), endpoint
+
+
+def _structured_answer(response, tool):
+    """The answer as a dict, or None when it is not usable JSON for this tool (so the tool call is asked instead)."""
+    choice = response.choices[0]
+    if getattr(choice, 'finish_reason', None) in ('length', 'content_filter'):
+        return None
+    content = choice.message.content
+    if not isinstance(content, str) or not content.strip():
+        return None
+    try:
+        answer = _tool_arguments(content.strip())
+    except ValueError:
+        return None
+    if not isinstance(answer, dict):
+        return None
+    required = tool['function']['parameters'].get('required', [])
+    for key in required:
+        # A list sent as a JSON string is read as the list; one that cannot be read asks the tool call instead.
+        if key in answer and not isinstance(answer[key], list) \
+                and tool['function']['parameters']['properties'].get(key, {}).get('type') == 'array':
+            answer[key] = builder_agents.entries(answer, key)
+            if answer[key] is None:
+                return None
+    return without_nulls(answer) if all(key in answer for key in required) else None
+
+
 def _ai_complete_impl(messages, tools, timeout=None):
-    """Force the first tool. If the first configured provider fails, the next one (AI_FALLBACK) gets one try."""
+    """Structured output when the model takes it (output_mode), else force the first tool. If the first configured
+    provider fails, the next one (AI_FALLBACK) gets one try."""
     import openai
     from . import chat
     clients = chat.make_clients()
@@ -1265,6 +1486,30 @@ def _ai_complete_impl(messages, tools, timeout=None):
         if timeout is not None:  # never outlive the import that asked
             client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
         extra = {'extra_body': extra_body} if extra_body else {}
+        if output_mode(name, model, tools[0]['function']['name']) == 'json_schema':
+            structured, endpoint = _structured_client(name, client)
+            started = _now()
+            try:
+                response = structured.chat.completions.create(model=model, messages=_json_messages(messages), temperature=0,
+                                                              response_format=response_format(tools[0]), **extra)
+                answer = _structured_answer(response, tools[0])
+            except (openai.BadRequestError, openai.AuthenticationError, openai.PermissionDeniedError,
+                    openai.NotFoundError, openai.UnprocessableEntityError) as refused:
+                log.info('builder: %s did not take response_format json_schema (%s); using a tool call', model, refused)
+                response, answer = None, None
+            except Exception as failure:
+                log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
+                builder_run.ai(model, failed=True, mode='json_schema', endpoint=endpoint, seconds=_now() - started)
+                error = failure
+                continue
+            if answer is not None:
+                builder_run.ai(model, getattr(response, 'usage', None), mode='json_schema', endpoint=endpoint,
+                               seconds=_now() - started)
+                return answer
+            _no_json_schema.add(model)
+            builder_run.ai(model, getattr(response, 'usage', None) if response is not None else None,
+                           mode='json_schema_fallback', endpoint=endpoint, seconds=_now() - started)
+        started = _now()
         try:
             try:
                 response = client.chat.completions.create(model=model, messages=messages, tools=tools,
@@ -1275,10 +1520,10 @@ def _ai_complete_impl(messages, tools, timeout=None):
                                                           tool_choice='auto', temperature=0, **extra)
         except Exception as failure:
             log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
-            builder_run.ai(model, failed=True)
+            builder_run.ai(model, failed=True, mode='tools', seconds=_now() - started)
             error = failure
             continue
-        builder_run.ai(model, getattr(response, 'usage', None))
+        builder_run.ai(model, getattr(response, 'usage', None), mode='tools', seconds=_now() - started)
         calls = response.choices[0].message.tool_calls or []
         return _tool_arguments(calls[0].function.arguments) if calls else None
     raise error
@@ -1311,7 +1556,7 @@ def extract(sources, complete=None, deadline=None, notes=None):
 def feed_items(source):
     try:
         if 'BEGIN:VCALENDAR' in source['feed'][:2000]:
-            return builder_structured.ics_events(source, source['feed'])
+            return builder_structured.ics_events(source, source['feed'])  # recurring events expanded (builder_calendar)
         return builder_structured.feed_sermons(source, source['feed'])
     except (ET.ParseError, ValueError) as error:
         log.info('builder: skipped feed %s (%s)', source.get('url'), error)
@@ -1405,9 +1650,9 @@ def extract_all(sources, complete=None, deadline=None, notes=None):
 def _specialist_drops(name, raw, kept):
     """How many items a specialist reader returned that builder_agents.check left out as unsupported (its quote,
     name or details were not on the page). Events that are already past are skipped, not counted."""
-    entries = raw.get('items') if isinstance(raw, dict) else None
-    if not isinstance(entries, list):
-        return 0
+    entries = builder_agents.entries(raw, 'items')
+    if entries is None:
+        return 0  # an answer that could not be read is counted once by builder_agents.check
     today = builder_structured._today()
     past = 0
     if name == 'events':
@@ -1458,6 +1703,9 @@ def collect(items, sources):
             for item in found:
                 for field, v in item['value'].items():
                     value.setdefault(field, v)
+                    if field == 'role' and isinstance(v, str) and len(v) > len(value[field]) \
+                            and v.lower().startswith(value[field].lower()):
+                        value[field] = v  # "Deacon of" from one reader, "Deacon of New Member Assimilation" from another
                 if (item['source_id'], item['quote']) not in seen:
                     seen.add((item['source_id'], item['quote']))
                     source = by_id.get(item['source_id'], {})
@@ -1482,14 +1730,36 @@ def collect(items, sources):
 
 # ---------------------------------------------------------------- 3. Clarify
 
+# "Forest Baptist Church (FBC)", "The Forest Baptist Church" and "Forest Baptist Church, Inc." are one name.
+NAME_EXTRAS = re.compile(r'^\s*the\s+|\s*\([A-Za-z.&\s]{1,12}\)\s*$|,?\s+(inc|incorporated|llc)\.?\s*$', re.I)
+
+
+def plain_name(value):
+    """A church name without a leading "The", trailing initials in parentheses or a corporate suffix."""
+    previous = None
+    while previous != value:
+        previous, value = value, NAME_EXTRAS.sub('', value).strip()
+    return value
+
+
 def _key(field, value):
     if field == 'name':
-        return re.sub(r'[^a-z0-9]', '', value.lower())
+        return re.sub(r'[^a-z0-9]', '', plain_name(value).lower())
     if field == 'address':
         return re.sub(r'[^a-z0-9]', '', value.lower())[:24]
     if isinstance(value, dict):
         return json.dumps(value, sort_keys=True)
     return _normalize_space(str(value))
+
+
+def _most_common(field, claims):
+    counts = {}
+    for claim in claims:
+        value = claim['value']
+        key = json.dumps(value, sort_keys=True) if isinstance(value, dict) else value
+        counts.setdefault(key, [0, value])[0] += 1
+    best = max(counts.values(), key=lambda pair: (pair[0], field == 'name' and pair[1] == plain_name(pair[1])))
+    return best[1]
 
 
 def _candidate(field, value, claims):
@@ -1517,9 +1787,10 @@ def reconcile(claims, source_count):
         groups = {}
         for claim in items:
             groups.setdefault(_key(field, claim['value']), []).append(claim)
-        candidates = [_candidate(field, g[0]['value'], g) for g in groups.values()]
+        # Each candidate shows its most common spelling (the plainest one on a tie).
+        candidates = [_candidate(field, _most_common(field, g), g) for g in groups.values()]
         candidates.sort(key=lambda c: -len(c['source_ids']))
-        if field in ('email', 'phone', 'address') and len(candidates) > 1:
+        if field in ('email', 'phone', 'address', 'name') and len(candidates) > 1:
             pages = len({c['source_id'] for c in items})
             if len(candidates[0]['source_ids']) * 2 > pages and len(candidates[0]['source_ids']) > len(candidates[1]['source_ids']):
                 candidates = candidates[:1]
@@ -1606,8 +1877,14 @@ def questions(fields, claims, sources):
         elif info['status'] == 'missing':
             # A blank draft read nothing, so it asks plainly instead of reporting a miss.
             what = f'What are your {label.lower()}?' if field == 'services' else f'What is your {label.lower()}?'
-            out.append({'field': field, 'kind': 'missing', 'candidates': [],
-                        'prompt': what if not sources else f'We could not find your {label.lower()}. {what}'})
+            if field in ('phone', 'email'):
+                what = f"What is your church's {label.lower()}?"
+            prompt = what if not sources else f'We could not find your {label.lower()}. {what}'
+            hints = info.get('hints') or []
+            if hints:
+                # Ministry contacts are shown as hints only: "The Men's page lists (607) 425-9569."
+                prompt += ' ' + ' '.join(f"The {h['page']} page lists {h['display']}." for h in hints[:3])
+            out.append({'field': field, 'kind': 'missing', 'candidates': [], 'prompt': prompt})
     return out
 
 
@@ -1873,10 +2150,119 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None,
     if progress:
         progress('extracting', len([s for s in sources if s.get('kind') == 'page']), len(sources))
     session = session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+    session['site']['calendars'] = found_calendars(sources, found_feeds, policy if fetch_feed is not None else None)
     look = look or builder_theme.read(sources[0])
     session['site'].update(theme=look[0], assets=look[1])
     builder_run.step('Read the colors, fonts and logo from your site')
     return finish_run(session, pages=len([s for s in sources if s.get('kind', 'page') == 'page']))
+
+
+def found_calendars(sources, feeds, policy=None):
+    """The calendars the pages embed or link (builder_calendar.detect), marked 'imported' when the crawl already read
+    their feed (its host allowed it). A feed robots.txt keeps the crawl away from waits for the church's say-so."""
+    calendars = builder_calendar.detect(sources)
+    read = {f.get('url') for f in feeds} | {f.get('requested_url') for f in feeds}
+    for entry in calendars:
+        if not entry['feed_url']:
+            builder_run.step(f'Found your calendar, {builder_calendar.label(entry)}; it has no public feed, so it stays a link')
+            continue
+        if policy is not None:
+            try:
+                entry['robots_allowed'] = bool(policy.allowed(entry['feed_url']))
+            except Exception:  # robots.txt could not be read: treat as not allowed, the church decides
+                entry['robots_allowed'] = False
+        if entry['feed_url'] in read:
+            entry['status'] = 'imported'
+            builder_run.step(f'Read the events from your calendar, {builder_calendar.label(entry)}')
+        else:
+            builder_run.step(f'Found your calendar, {builder_calendar.label(entry)}; Tekton will ask before importing its events')
+    return calendars
+
+
+def _http_calendar(url):
+    """(final_url, text) of one calendar feed the church asked to import. Only addresses Tekton derived
+    (builder_calendar.is_feed_url); robots.txt is not consulted for this one user-requested fetch; size is capped."""
+    if not builder_calendar.is_feed_url(url):
+        raise ValueError('That is not a calendar feed Tekton found.')
+    _check_public(url)
+    if _fetch_bridge():
+        final_url, content_type, data = _bridge_fetch(url, 'calendar')
+    else:
+        data, hops = b'', 0
+        with httpx.Client(timeout=FETCH_TIMEOUT * 2, follow_redirects=False, headers={'User-Agent': 'Tekton/0.1'}) as client:
+            while True:
+                with client.stream('GET', url) as response:
+                    if response.is_redirect and hops < 5:
+                        url, hops = urljoin(url, response.headers['location']), hops + 1
+                        if not builder_calendar.is_feed_url(url):
+                            raise ValueError('The calendar feed moved somewhere Tekton does not read.')
+                        _check_public(url)
+                        continue
+                    response.raise_for_status()
+                    for chunk in response.iter_bytes():
+                        data += chunk
+                        if len(data) > builder_calendar.MAX_FEED_BYTES:
+                            break  # a long calendar is cut, not refused: the upcoming events are usually near the end
+                    final_url = str(response.url)
+                    break
+    text = data[:builder_calendar.MAX_FEED_BYTES].decode('utf-8', errors='replace')
+    if 'BEGIN:VCALENDAR' not in text[:5000]:
+        raise ValueError('That calendar did not answer with a calendar feed.')
+    return final_url, text
+
+
+def import_calendar(session, calendar_id, fetch=None, today=None):
+    """Read one found calendar's feed (the church said yes) into the events list. Returns how many were added."""
+    entry = next((c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id), None)
+    if entry is None:
+        raise ValueError('Calendar not found')
+    if not entry.get('feed_url'):
+        raise ValueError('This calendar has no public feed to import.')
+    try:
+        final_url, text = (fetch or _http_calendar)(entry['feed_url'])
+    except Exception as error:
+        entry['status'] = 'failed'
+        raise ValueError('Tekton could not read that calendar. Check that it is public, then try again.') from error
+    source = {'id': 'calendar-' + calendar_id, 'kind': 'feed', 'url': entry.get('page_url') or final_url,
+              'title': builder_calendar.label(entry)}
+    items = builder_calendar.events(source, text, today or builder_structured._today(),
+                                    builder_structured.EVENT_HORIZON_DAYS, builder_calendar.MAX_IMPORTED,
+                                    quote_name=entry.get('name') or '')
+    added = add_items(session, items, [source])
+    entry.update(status='imported', count=added)
+    if not any(s.get('id') == source['id'] for s in session.get('sources', [])):
+        session.setdefault('sources', []).append(source)
+    note = f'Imported {added} upcoming ' + ('event' if added == 1 else 'events') + f' from {builder_calendar.label(entry)}.'
+    session.setdefault('notes', []).append(note)
+    return added
+
+
+def add_items(session, items, sources):
+    """Merge new list items into the draft's lists (collect's rules); an entry already there is not added twice."""
+    fresh = collect(items, sources)
+    collections = session.setdefault('collections', {})
+    added = 0
+    for name, entries in fresh.items():
+        current = collections.setdefault(name, [])
+        keys = {_item_key(name, e['value']) for e in current}
+        for entry in entries:
+            if _item_key(name, entry['value']) in keys or len(current) >= COLLECTION_LIMITS[name]:
+                continue
+            keys.add(_item_key(name, entry['value']))
+            used = {e['id'] for e in current}
+            n = len(current) + 1
+            while f'{name}-{n}' in used:
+                n += 1
+            current.append({**entry, 'id': f'{name}-{n}'})
+            added += 1
+    return added
+
+
+def decline_calendar(session, calendar_id):
+    entry = next((c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id), None)
+    if entry is None:
+        raise ValueError('Calendar not found')
+    entry['status'] = 'declined'
 
 
 JS_SITE_NOTE = ('This site builds itself in the browser, so Tekton could not read its text. '
@@ -1896,15 +2282,66 @@ def builds_in_browser(sources):
 
 
 def finish_run(session, pages=0):
-    """The run's last step and summary (time, fact check, cost), saved on the draft for the review screen."""
+    """The run's last steps and summary (the file check, time, fact check, cost), saved on the draft for the review
+    screen. The file check runs here, while the page texts are still at hand."""
+    session['file_check'] = builder_json.check(session)
+    builder_run.step(builder_json.summary(session['file_check']),
+                     'done' if session['file_check']['valid'] and not session['file_check']['unsupported_count'] else 'warn')
     run = builder_run.current()
     if run is None:
         return session
+    if run.modes:
+        names = {'json_schema': 'as schema-checked JSON', 'tools': 'as tool calls',
+                 'json_schema_fallback': 'asked again as tool calls'}
+        run.step('AI answers: ' + ', '.join(f'{n} {names.get(m, m)}' for m, n in sorted(run.modes.items())))
     cost = builder_run.money(run.cost())
     run.step(f'Done: read {pages} ' + ('page' if pages == 1 else 'pages') + f' in {run.seconds():g}s'
              + (f', about {cost}' if cost and cost != 'no AI cost' else ''), 'done')
     session['run'] = run.summary(pages=pages, sources=len(session.get('sources', [])))
     return session
+
+
+# Pages about one ministry, group, person or event: a phone or email found only there is that ministry's contact
+# ("please contact Pete at (607) 425-9569"), not the church's.
+LOCAL_CONTACT_PAGES = ('ministries', 'groups', 'staff', 'events', 'news', 'sermons')
+
+
+def local_contacts(claims, sources, items):
+    """(church-wide claims, {field: [hint]}). A phone or email is the church's when a home, contact, visit, about
+    or other general page gives it, when it is on at least half the pages read (a header or footer), or when the
+    site's structured data says so. One found only on ministry, group, staff, event, news or sermon pages is left
+    out of the church's candidates: it goes to that page's ministry or group when it has none, and the question
+    for the church's own number mentions it."""
+    by_id = {s['id']: s for s in sources}
+    pages = [s for s in sources if s.get('kind', 'page') == 'page' and s.get('url')]
+    kept, local = [], {}
+    for claim in claims:
+        source = by_id.get(claim['source_id'], {})
+        if claim['field'] in ('phone', 'email') and claim['method'] != 'structured' and source in pages \
+                and source.get('page_type') in LOCAL_CONTACT_PAGES:
+            local.setdefault((claim['field'], _key(claim['field'], claim['value'])), []).append(claim)
+        else:
+            kept.append(claim)
+    general = {(c['field'], _key(c['field'], c['value'])) for c in kept if c['field'] in ('phone', 'email')}
+    hints, left_out = {}, set()
+    for (field, key), found in local.items():
+        on = {c['source_id'] for c in found}
+        if (field, key) in general or len(on) * 2 >= len(pages):
+            continue  # also on a general page, or in the header or footer of most pages: the church's
+        left_out.update(id(c) for c in found)
+        value = found[0]['value']
+        for sid in on:
+            page = by_id[sid]
+            hints.setdefault(field, []).append({'value': value, 'display': _show(field, value), 'page': _page_name(page),
+                                                'url': page.get('url', '')})
+            group = next((i for i in items if i['source_id'] == sid and i['collection'] in ('ministries', 'groups')
+                          and not i['value'].get(field) and 'Contact:' not in i['value'].get('description', '')), None)
+            if group and field == 'email':
+                group['value']['email'] = value
+            elif group:  # ministries and groups have no phone field: it goes in their description
+                text = group['value'].get('description', '')
+                group['value']['description'] = f"{text} Contact: {_show(field, value)}".strip()[:1000]
+    return [c for c in claims if id(c) not in left_out], hints
 
 
 def session_from_sources(url, sources, complete=None, deadline=None, notes=None):
@@ -1913,7 +2350,11 @@ def session_from_sources(url, sources, complete=None, deadline=None, notes=None)
     by_id = {s['id']: s for s in sources}
     for claim in claims:  # while the page text is at hand: where on the page each quote sits, for source links
         claim.update(quote_context(by_id.get(claim['source_id'], {}).get('text', ''), claim['quote']))
+    claims, hints = local_contacts(claims, sources, items)
     fields = reconcile(claims, len(sources))
+    for field, found in hints.items():
+        if fields.get(field, {}).get('status') == 'missing':
+            fields[field]['hints'] = found[:5]
     qs = questions(fields, claims, sources)
     if sources:
         for q in qs:
@@ -2155,6 +2596,9 @@ def _public(session):
            # The copies kept for undo stay on the server; the page only needs to know there is something to undo.
            'undo_count': len(session.get('undo') or [])}
     out.pop('undo', None)
+    out.pop('json_content', None)
+    out.pop('json_sources', None)
+    out.pop('json_calendars', None)
     if session.get('site'):
         out['site'] = _without_sections(session['site'])
     return out
@@ -2296,6 +2740,58 @@ def import_blank(request: Request):
             return _public(_save(session_from_sources(None, [])))
 
 
+MAX_JSON_BYTES = 2 * 1024 * 1024
+
+
+@router.post('/api/builder/drafts/json', status_code=201)
+async def import_json(request: Request):
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with import_limiter.importing(ip):
+        if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'application/json':
+            raise HTTPException(status_code=400, detail='Upload site files as JSON.')
+        data = bytearray()
+        try:
+            async with asyncio.timeout(30):
+                async for chunk in request.stream():
+                    data.extend(chunk)
+                    if len(data) > MAX_JSON_BYTES:
+                        raise ValueError('Site files must be 2 MB or smaller in total.')
+            return await run_in_threadpool(_save_json, data)
+        except (ValueError, UnicodeError, RecursionError, TimeoutError) as error:
+            raise HTTPException(status_code=400, detail=str(error) or 'The JSON upload took too long.') from error
+
+
+def _json_constant(value):
+    raise ValueError('Site files cannot contain ' + value + '.')
+
+
+def _save_json(data):
+    files = json.loads(data, parse_constant=_json_constant)
+    content = load_content_files(files)
+    json.dumps(content, allow_nan=False)  # Also rejects numbers such as 1e400 that overflow to infinity.
+    if not content.get('info'):
+        raise ValueError('church.json must include church info.')
+    draft = _importing_draft(None)
+    draft.update(status='review', import_kind='json', json_content=content, json_sources=content_sources(files),
+                 json_versioned='schema_version' in files['church.json'], json_calendars=content_calendars(files),
+                 fields={key: {'value': value, 'status': 'confirmed', 'evidence': []}
+                         for key, value in content['info'].items()})
+    with _draft_lock:
+        return _public(_save(draft))
+
+
+def _draft_content(draft, allow_unanswered=False):
+    if draft.get('import_kind') == 'json':
+        return draft['json_content']
+    return build_content(_with_pages(draft), allow_unanswered=allow_unanswered)
+
+
+def _editable(draft):
+    if draft.get('import_kind') == 'json':
+        raise HTTPException(status_code=409, detail='Edit the JSON files and import them again, or edit in Church setup after creating your church.')
+    return draft
+
+
 async def _uploaded_files(request, deadline):
     if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'multipart/form-data':
         raise HTTPException(status_code=400, detail='Upload files using multipart/form-data with the field name files.')
@@ -2370,6 +2866,19 @@ def get_draft(draft_id: str):
 def answer(draft_id: str, body: AnswerBody):
     with _draft_lock:
         session = _ready(_load(draft_id))
+        if session.get('import_kind') == 'json':
+            if body.field != 'name':
+                _editable(session)
+            try:
+                content = session['json_content']
+                content = church_content.normalize(church_content.ChurchContent(**{**content, 'info': {**content['info'], 'name': body.value}}))
+            except (ValueError, church_content.ContentError) as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            session['json_content'] = content
+            session['fields']['name']['value'] = content['info']['name']
+            if session.get('json_sources'):
+                session['json_sources']['info']['name'] = [{'title': 'You confirmed this', 'quote': content['info']['name'], 'url': '', 'prefix': '', 'suffix': ''}]
+            return _public(_save(session))
         try:
             apply_answer(session, body.field, body.value)
         except ValueError as error:
@@ -2381,7 +2890,7 @@ def answer(draft_id: str, body: AnswerBody):
 def item(draft_id: str, body: ItemBody):
     """Include, leave out or edit an imported list entry (events, staff, ministries, groups, locations, sermons)."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             apply_item(session, body.collection, body.id, body.include, body.value)
         except ValueError as error:
@@ -2393,7 +2902,7 @@ def item(draft_id: str, body: ItemBody):
 def part(draft_id: str, body: PartBody):
     """Keep or leave out part of the imported site: a page, link, form, player, or (with permission) an image."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             apply_part(session, body.part, body.id, body.include, body.rights)
         except ValueError as error:
@@ -2414,7 +2923,7 @@ def draft_page(draft_id: str, page_id: str):
 
 def _content(draft_id):
     try:
-        return build_content(_with_pages(_ready(_load(draft_id))))
+        return _draft_content(_ready(_load(draft_id)))
     except (ValueError, church_content.ContentError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -2429,7 +2938,73 @@ def preview(draft_id: str):
 def site(draft_id: str):
     with _draft_lock:
         draft = _with_pages(_ready(_load(draft_id)))
-        return {**church_content.public_site(build_content(draft, allow_unanswered=True)), 'provenance': provenance(draft)}
+        return {**church_content.public_site(_draft_content(draft, allow_unanswered=True)),
+                **({'provenance': draft['json_sources']} if draft.get('json_sources') else
+                   {'provenance': provenance(draft)} if draft.get('import_kind') != 'json' else {})}
+
+
+def _file(draft_id, name):
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        if draft.get('import_kind') == 'json':
+            document = builder_json.files(draft, content=draft['json_content'], sources=draft.get('json_sources') or {})[name]
+        else:
+            document = builder_json.files(draft)[name]
+    # Served as a download: the church (or the team) can keep the files Tekton wrote.
+    return JSONResponse(document, headers={'Content-Disposition': f'attachment; filename="{name}.json"'})
+
+
+@router.get('/api/builder/drafts/{draft_id}/church.json')
+def church_file(draft_id: str):
+    return _file(draft_id, 'church')
+
+
+@router.get('/api/builder/drafts/{draft_id}/site.json')
+def site_file(draft_id: str):
+    return _file(draft_id, 'site')
+
+
+@router.post('/api/builder/drafts/{draft_id}/calendars/{calendar_id}/import')
+def calendar_import(draft_id: str, calendar_id: str):
+    """The church asked Tekton to import a calendar it found: read that one feed (an address Tekton derived, never
+    one sent by the page) into the events list."""
+    if not re.fullmatch(r'cal\d{1,2}', calendar_id):
+        raise HTTPException(status_code=404, detail='Calendar not found')
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+    try:
+        entry = next(c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id)
+    except StopIteration:
+        raise HTTPException(status_code=404, detail='Calendar not found') from None
+    try:
+        final_url, text = _http_calendar(entry.get('feed_url') or '')  # outside the lock: it can take a few seconds
+    except Exception as error:
+        log.info('builder: calendar %s failed (%s)', entry.get('feed_url'), error)
+        final_url, text = None, None
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            if text is None:
+                raise ValueError('Tekton could not read that calendar. Check that it is public, then try again.')
+            import_calendar(session, calendar_id, fetch=lambda url: (final_url, text))
+        except ValueError as error:
+            entry = next((c for c in session.get('site', {}).get('calendars', []) if c.get('id') == calendar_id), None)
+            if entry is not None:
+                entry['status'] = 'failed'
+                _save(session)
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+@router.post('/api/builder/drafts/{draft_id}/calendars/{calendar_id}/decline')
+def calendar_decline(draft_id: str, calendar_id: str):
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            decline_calendar(session, calendar_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return _public(_save(session))
 
 
 class BeliefsBody(BaseModel):
@@ -2440,7 +3015,7 @@ class BeliefsBody(BaseModel):
 def beliefs(draft_id: str, body: BeliefsBody):
     """The pastor confirms the imported statement of faith (it stays off the new site until then)."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             confirm_beliefs(session, body.confirmed)
         except ValueError as error:
@@ -2457,13 +3032,13 @@ class EditBody(BaseModel):
 def edit(draft_id: str, body: EditBody):
     """A change asked in plain words ("Put service times above ministries"), made as checked operations."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         if len(session.get('edit_log', [])) >= MAX_EDITS:
             raise HTTPException(status_code=429, detail='This draft has had many changes. Edit the details below instead.')
     # The AI call (if the rules do not understand the request) runs outside the lock; the draft is read again after.
     ops, reply, method = plan_edit(session, body.request)
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             changes = apply_edit(session, ops)
         except ValueError as error:
@@ -2475,12 +3050,21 @@ def edit(draft_id: str, body: EditBody):
 @router.post('/api/builder/drafts/{draft_id}/edits/undo')
 def undo(draft_id: str):
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             change = undo_edit(session)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {'draft': _public(_save(session)), 'reply': f'Undid: {change}'}
+
+
+@router.get('/api/builder/drafts/{draft_id}/files')
+def draft_files(draft_id: str):
+    with _draft_lock:
+        draft = _ready(_load(draft_id))
+        return {'files': content_files(_draft_content(draft, allow_unanswered=True),
+                                       versioned=draft.get('json_versioned', False), sources=draft.get('json_sources'),
+                                       calendars=draft.get('json_calendars'))}
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')

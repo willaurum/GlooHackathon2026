@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /lang/
+Disallow: /share/
+Disallow: /test/
+Disallow: /dev/
+Disallow: /page
+Disallow: /user/*/episodes/feed
+Disallow: /s/
+Disallow: /e/

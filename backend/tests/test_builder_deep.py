@@ -473,6 +473,37 @@ class ReadingFixesTests(unittest.TestCase):
                 claims = builder.pattern_claims({**page, 'page_type': kind, 'text': text})
                 self.assertEqual([c['value'] for c in claims if c['field'] == 'services'], expected)
 
+    def test_one_church_name_with_initials_or_on_most_pages(self):
+        """Forest Baptist (a real import): the name on 18 pages and "Forest Baptist Church (FBC)" on one were asked."""
+        for name in ('Forest Baptist Church (FBC)', 'The Forest Baptist Church', 'Forest Baptist Church, Inc.'):
+            self.assertEqual(builder.plain_name(name), 'Forest Baptist Church')
+        claims = [{'id': f'c{i}', 'field': 'name', 'value': 'Forest Baptist Church', 'source_id': f's{i}', 'quote': 'x'}
+                  for i in range(18)]
+        claims.append({'id': 'c99', 'field': 'name', 'value': 'Forest Baptist Church (FBC)', 'source_id': 's99', 'quote': 'x'})
+        name = builder.reconcile(claims, 19)['name']
+        self.assertEqual((name['status'], name['value']), ('prefilled', 'Forest Baptist Church'))
+        # A name most of the site uses wins over one page's other name; an even split is still asked.
+        claims = [{'id': f'c{i}', 'field': 'name', 'value': 'Grace Chapel', 'source_id': f's{i}', 'quote': 'x'} for i in range(3)]
+        claims.append({'id': 'c9', 'field': 'name', 'value': 'Riverside Fellowship', 'source_id': 's9', 'quote': 'x'})
+        self.assertEqual(builder.reconcile(claims, 4)['name']['value'], 'Grace Chapel')
+        split = [{'id': 'a', 'field': 'name', 'value': 'Grace Chapel', 'source_id': 's1', 'quote': 'x'},
+                 {'id': 'b', 'field': 'name', 'value': 'Hope Church', 'source_id': 's2', 'quote': 'x'}]
+        self.assertEqual(builder.reconcile(split, 2)['name']['status'], 'conflict')
+
+    def test_name_quotes_show_the_name(self):
+        source = {'id': 's1', 'url': 'https://church.test/music', 'title': 'Music | Forest Baptist Church', 'kind': 'page',
+                  'text': 'Music\nWorship at Forest  Baptist Church is led by our choir.'}
+        name = next(c for c in builder.pattern_claims(source) if c['field'] == 'name')
+        self.assertEqual((name['value'], name['quote']), ('Forest Baptist Church', 'Forest  Baptist Church'))
+        # The AI's name needs a quote that says it ("hub of FBC" does not name Forest Baptist Church).
+        page = {'id': 's2', 'url': 'https://church.test/', 'title': 'Home', 'kind': 'page',
+                'text': 'Sunday School serves as the primary discipleship hub of FBC. Welcome to Forest Baptist Church!'}
+        facts = {'facts': [{'field': 'name', 'value': 'Forest Baptist Church (FBC)',
+                            'quote': 'Sunday School serves as the primary discipleship hub of FBC.'},
+                           {'field': 'name', 'value': 'Forest Baptist Church', 'quote': 'Welcome to Forest Baptist Church!'}]}
+        claims = builder.ai_claims(page, lambda messages, tools: facts, builder._now() + 30)
+        self.assertEqual([c['quote'] for c in claims if c['field'] == 'name'], ['Welcome to Forest Baptist Church!'])
+
     def test_church_name_from_titles_and_site_name(self):
         for title, name in [('Plan a Visit | Cedar Hollow Church', 'Cedar Hollow Church'),
                             ('Harvest Point Church - Home', 'Harvest Point Church'),
