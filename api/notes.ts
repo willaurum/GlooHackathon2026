@@ -257,20 +257,37 @@ can could did do does doing down during each few for from further had has have h
 its just me more most my no nor not now of off on once only or other our out over own same she should so some such than that the their
 them then there these they this those through to too under until up very was we were what when where which while who whom why will with
 would you your yours many much tell said say says saying talk talked talks mention mentioned speak spoke pastor preacher speaker sermon
-message note notes video church thing things get got going go really like one`.split(/\s+/));
+message note notes video church thing things get got going go really like one isnt dont doesnt didnt arent cant wont its`.split(/\s+/));
+// Words an answer uses to report what was said ("the pastor explains that..."). They are not facts, so the
+// grounding check leaves them out of the answer's topic words.
+const REPORTING = new Set(`explain explains explained describe describes described encourage encourages encouraged teach teaches taught
+emphasize emphasizes emphasized remind reminds reminded suggest suggests suggested urge urges urged point points pointed share shares
+shared highlight highlights highlighted discuss discusses discussed according believer believers listener listeners people us also
+instead rather means mean meant`.split(/\s+/));
+
+// forgive, forgiving and forgiveness share a stem; so do choice and choices.
+const dropE = (word: string) => (word.length > 4 && word.endsWith('e') ? word.slice(0, -1) : word);
 
 function stem(word: string): string {
 	for (const suffix of ['ingly', 'edly', 'ness', 'ers', 'ing', 'ies', 'er', 'ed', 'es', 'ly', 's']) {
-		if (word.length - suffix.length >= 3 && word.endsWith(suffix)) return suffix === 'ies' ? word.slice(0, -3) + 'y' : word.slice(0, -suffix.length);
+		if (word.length - suffix.length >= 3 && word.endsWith(suffix)) return dropE(suffix === 'ies' ? word.slice(0, -3) + 'y' : word.slice(0, -suffix.length));
 	}
-	return word;
+	return dropE(word);
 }
 
 const normalize = (text: string) =>
 	text.toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-const contentStems = (text: string) =>
-	new Set(normalize(text).split(' ').map((w) => w.replace(/'/g, '')).filter((w) => w.length >= 3 && !STOPWORDS.has(w)).map(stem));
+const contentStems = (text: string, skip: Set<string> = STOPWORDS) =>
+	new Set(normalize(text).split(' ').map((w) => w.replace(/'/g, '')).filter((w) => w.length >= 3 && !STOPWORDS.has(w) && !skip.has(w)).map(stem));
+
+/** Share of an answer's topic words found in the retrieved passages (or in the question it restates). */
+export const GROUNDED_SHARE = 0.6;
+export function groundedShare(answer: string, passages: string[], question = ''): number {
+	const source = new Set([...passages, question].flatMap((t) => [...contentStems(t)]));
+	const words = [...contentStems(answer, REPORTING)];
+	return words.length ? words.filter((s) => source.has(s)).length / words.length : 1;
+}
 
 /** Without vectors: rank passages by how many of the question's topic words they contain. */
 function keywordRank(chunks: Chunk[], questionStems: Set<string>): Scored[] {
@@ -402,7 +419,7 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string, s
 		const seg = segments.slice(c.seg_from, c.seg_to + 1).find((s) => normalize(s.text).includes(needle) || needle.includes(normalize(s.text)));
 		return seg ? cite(seg, quote, c.idx) : cite(c, quote);
 	};
-	const checked = verify(raw, supported, citeQuote);
+	const checked = verify(raw, supported, citeQuote, question);
 	if (typeof checked === 'string') return reply(extractive(), 'extractive', { fallback_reason: checked });
 	// The gate found support; a model that finds nothing can't make the answer worse than verbatim.
 	if (!checked.found) return reply(extractive(), 'extractive', { fallback_reason: 'model_found_nothing' });
@@ -481,26 +498,22 @@ async function askModel(env: AppEnv, church: string, question: string, passages:
 	return [parseModelJson(out.choices?.[0]?.message?.content ?? ''), `gloo:${model}`];
 }
 
-/** Accept the model's answer only if every quote is really in its passage and the answer's
- * topic words come from the cited passages. Otherwise return the reason it was rejected. */
-function verify(raw: any, passages: Scored[], cite: (c: Scored, quote: string) => Citation): Answer | string {
+/** Accept the model's answer only if every quote is really, word for word, in its passage and most of the
+ * answer's topic words (GROUNDED_SHARE) come from the passages it was given, cited or not. A paraphrase
+ * passes; an answer that brings in facts from elsewhere does not. Otherwise return the reason it was rejected. */
+function verify(raw: any, passages: Scored[], cite: (c: Scored, quote: string) => Citation, question = ''): Answer | string {
 	if (!raw || typeof raw.found !== 'boolean') return 'bad_model_output';
 	if (!raw.found) return { found: false, answer: NOT_FOUND, citations: [] };
 	if (typeof raw.answer !== 'string' || !raw.answer.trim()) return 'bad_model_output';
 	if (!Array.isArray(raw.citations) || !raw.citations.length) return 'no_citations';
 	const citations: Citation[] = [];
-	const cited = new Set<Scored>();
 	for (const c of raw.citations) {
 		const passage = passages[Number(/^C(\d+)$/.exec(String(c?.id ?? ''))?.[1]) - 1];
 		if (!passage) return 'unknown_citation';
 		const quote = normalize(String(c.quote ?? ''));
 		if (quote.length < 8 || !normalize(passage.text).includes(quote)) return 'quote_not_in_transcript';
 		citations.push(cite(passage, String(c.quote).trim()));
-		cited.add(passage);
 	}
-	const sourceStems = new Set([...cited].flatMap((p) => [...contentStems(p.text)]));
-	const answerStems = [...contentStems(raw.answer)];
-	const grounded = answerStems.filter((s) => sourceStems.has(s)).length;
-	if (answerStems.length && grounded / answerStems.length < 0.8) return 'answer_not_grounded';
+	if (groundedShare(raw.answer, passages.map((p) => p.text), question) < GROUNDED_SHARE) return 'answer_not_grounded';
 	return { found: true, answer: raw.answer.trim(), citations };
 }

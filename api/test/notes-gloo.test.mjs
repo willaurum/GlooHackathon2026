@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { DEFAULT_EMBED_MODEL, GLOO_EMBED_URL } from '../embed.ts';
 import { access } from '../churches.ts';
-import { GLOO_CHAT_URL, GLOO_TIMEOUT_MS, aiBridge, handleNotes, parseModelJson } from '../notes.ts';
+import { GLOO_CHAT_URL, GLOO_TIMEOUT_MS, GROUNDED_SHARE, aiBridge, groundedShare, handleNotes, parseModelJson } from '../notes.ts';
 
 const KEY = { GLOO_API_KEY: 'test-key' };
 const NOTE = '11111111-2222-3333-4444-555555555555';
@@ -14,7 +14,7 @@ const SEGMENTS = ['Welcome everyone to the service this morning.', QUOTE + '.', 
 const ANSWER = { found: true, answer: 'Forgiveness is a choice you make every day.', citations: [{ id: 'C1', quote: QUOTE }] };
 
 /** A church database with one ready note, its chunks already on the current Gloo embedding model. */
-function church() {
+function church({ secondNear = false } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE config (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -27,7 +27,7 @@ function church() {
   SEGMENTS.forEach((text, i) => db.prepare('INSERT INTO segments VALUES (?, ?, ?, ?, ?)').run(NOTE, i, i * 10, i * 10 + 9, text));
   const chunk = db.prepare('INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   chunk.run(NOTE, 0, 0, 19, 0, 1, SEGMENTS[0] + ' ' + SEGMENTS[1], '[1,0]', 'gloo:' + DEFAULT_EMBED_MODEL);
-  chunk.run(NOTE, 1, 20, 29, 2, 2, SEGMENTS[2], '[0,1]', 'gloo:' + DEFAULT_EMBED_MODEL);
+  chunk.run(NOTE, 1, 20, 29, 2, 2, SEGMENTS[2], secondNear ? '[0.9,0.1]' : '[0,1]', 'gloo:' + DEFAULT_EMBED_MODEL);
   return db;
 }
 
@@ -144,4 +144,39 @@ test('the /llm highlight fallback runs NOTES_LLM_MODEL on Workers AI and names i
 
 test('re-categorizing a note takes the API key or a staff session, on every church', () => {
   for (const demo of [true, false]) assert.equal(access('POST', `/api/notes/${NOTE}/recategorize`, demo), 'key-or-staff');
+});
+
+// --- Grounding: paraphrase is fine, invented facts are not, and quotes stay verbatim ---
+
+const BOTH = 'What did he say about forgiveness and sharing meals?';
+const answerWith = (answer, quote = QUOTE) => JSON.stringify({ found: true, answer, citations: [{ id: 'C1', quote }] });
+
+test('a paraphrase that draws on a retrieved passage it did not cite is accepted', async () => {
+  const answer = "Forgiveness isn't a feeling; he describes it as a daily choice you make each morning, and the early believers shared meals and prayed together.";
+  const { body } = await ask(envFor(church({ secondNear: true }), KEY), fakeGloo({ content: answerWith(answer) }).fetcher, BOTH);
+  assert.equal(body.engine, 'gloo:gloo-qwen-3.7-flash');
+  assert.equal(body.fallback_reason, undefined);
+  assert.equal(body.answer, answer);
+});
+
+test('a hallucinated answer with a real quote is rejected as not grounded', async () => {
+  const answer = 'Forgiveness is a choice, and every member should tithe ten percent and fast during Lent.';
+  const { body } = await ask(envFor(church({ secondNear: true }), KEY), fakeGloo({ content: answerWith(answer) }).fetcher, BOTH);
+  assert.equal(body.engine, 'extractive');
+  assert.equal(body.fallback_reason, 'answer_not_grounded');
+});
+
+test('a cited quote must still appear word for word in the transcript', async () => {
+  const content = answerWith('Forgiveness is a choice you make every day.', 'Forgiveness is a feeling you choose every day');
+  const { body } = await ask(envFor(church(), KEY), fakeGloo({ content }).fetcher);
+  assert.equal(body.fallback_reason, 'quote_not_in_transcript');
+});
+
+test('groundedShare stems words, skips reporting words, and uses every passage', () => {
+  const passages = [SEGMENTS[0] + ' ' + SEGMENTS[1], SEGMENTS[2]];
+  assert.ok(groundedShare('He explains that forgiving is a choice we make.', passages) >= GROUNDED_SHARE);
+  assert.equal(groundedShare('The early church shared meals.', passages), 1);
+  assert.ok(groundedShare('The early church shared meals.', passages.slice(0, 1)) < GROUNDED_SHARE);
+  assert.ok(groundedShare('Tithe ten percent and fast during Lent.', passages) < GROUNDED_SHARE);
+  assert.ok(GROUNDED_SHARE >= 0.55 && GROUNDED_SHARE <= 0.65);
 });
