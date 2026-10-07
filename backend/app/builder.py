@@ -954,7 +954,8 @@ STREET_RE = re.compile(r'\b\d{1,6}\s+(?:[A-Z][\w.\'-]*\s+){1,4}(?:Street|St|Aven
 TIME_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\b', re.I)
 BARE_TIMES_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+)\s*(\d{1,2})(?::(\d{2}))?\b')
 WORSHIP_WORDS = re.compile(r'\b(worship|service|services|gathering|mass|traditional|contemporary|join us)\b', re.I)
-NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry)\b', re.I)
+NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry|'
+                         r'class(?:es)?|students?)\b', re.I)
 # A calendar date ("Sunday, November 1, 2026") is a one-off event, not a weekly service time.
 # Ordinals and their typos ("October 15th", "Oct 25h"), numeric dates ("10/25") and ISO dates count too.
 DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th|h)?\b'
@@ -1014,16 +1015,27 @@ def _times(sentence):
 
 
 def _labeled(text):
-    """(sentence, label) pairs: each sentence with the line above it, which on a sidebar or card is its label
-    ("Youth Group" above "Sundays, 6:00 PM")."""
-    previous = ''
-    for line in text.split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-        for sentence in (s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip()):
-            yield sentence, previous
-            previous = sentence
+    """(sentence, label, following) triples: each sentence with the line above it, which on a sidebar or card is its
+    label ("Youth Group" above "Sundays, 6:00 PM"), and the sentence after it, which can explain it ("Sundays - 9:45am"
+    over "Grade-specific Sunday School classes are offered at 9:45")."""
+    sentences = [s.strip() for line in text.split('\n') if line.strip()
+                 for s in re.split(r'(?<=[.!?])\s+', line.strip()) if s.strip()]
+    for i, sentence in enumerate(sentences):
+        yield sentence, sentences[i - 1] if i else '', sentences[i + 1] if i + 1 < len(sentences) else ''
+
+
+def _clauses(sentence):
+    """(clause, day) for a sentence that lists several things: "Sunday Services at 8:30am & 11:00am; Sunday School at
+    9:45am; Wednesday Evening at 6:30pm". A clause with no day of its own keeps the one before it. A sentence that
+    is about one thing stays whole."""
+    if not NOT_WORSHIP.search(sentence) or not re.search(r'[;,]', sentence):
+        return [(sentence, None)]
+    out, day = [], None
+    for clause in (c.strip() for c in re.split(r'\s*[;,]\s*', sentence) if c.strip()):
+        own = next((d for d in DAYS if DAY_RE[d].search(clause)), None)
+        out.append((clause, None if own else day))
+        day = own or day
+    return out
 
 
 def service_times(text, strict=False):
@@ -1034,29 +1046,32 @@ def service_times(text, strict=False):
     found = {}
     worship = STRICT_WORSHIP if strict else WORSHIP_WORDS
     lines = text.split('\n')
-    for sentence, label in _labeled(text):
-        days = [d for d in DAYS if DAY_RE[d].search(sentence)]
-        if not days and label and DATED.search(label) and len(sentence) <= 40 and STRICT_WORSHIP.match(sentence) \
-                and not NOT_WORSHIP.search(sentence):
-            day = next((d for d in DAYS if DAY_RE[d].search(label)), None)
+    for whole, label, following in _labeled(text):
+        for sentence, carried in _clauses(whole):  # one clause of a list at a time
+            days = [d for d in DAYS if DAY_RE[d].search(sentence)] or ([carried] if carried else [])
+            if not days and label and DATED.search(label) and len(sentence) <= 40 and STRICT_WORSHIP.match(sentence) \
+                    and not NOT_WORSHIP.search(sentence):
+                day = next((d for d in DAYS if DAY_RE[d].search(label)), None)
+                times = _times(sentence)
+                if day and times:
+                    found.setdefault(day, [])
+                    found[day] += [(t, f'{label} {sentence}') for t in times if t not in [x for x, _ in found[day]]]
+                continue
+            if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
+                continue
+            if not worship.search(sentence) and label and (NOT_WORSHIP.search(label) or NOT_WEEKLY.search(label)):
+                continue
+            if not worship.search(sentence) and NOT_WORSHIP.search(following) and not worship.search(following):
+                continue  # "Sundays - 9:45am" explained by the next line: "Sunday School classes are offered at 9:45"
             times = _times(sentence)
-            if day and times:
+            if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
+                for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
+                    times += [_clock(h1, m1, None), _clock(h2, m2, None)]
+            if not times or not (worship.search(sentence) or not strict and len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
+                continue
+            for day in days[:1]:
                 found.setdefault(day, [])
-                found[day] += [(t, f'{label} {sentence}') for t in times if t not in [x for x, _ in found[day]]]
-            continue
-        if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence) or NOT_WEEKLY.search(sentence):
-            continue
-        if not worship.search(sentence) and label and (NOT_WORSHIP.search(label) or NOT_WEEKLY.search(label)):
-            continue
-        times = _times(sentence)
-        if not times and worship.search(sentence) or not strict and re.search(r'\bsundays?\b\s+\d', sentence, re.I):
-            for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
-                times += [_clock(h1, m1, None), _clock(h2, m2, None)]
-        if not times or not (worship.search(sentence) or not strict and len(days) == 1 and re.search(r'\bsundays?\b', sentence, re.I)):
-            continue
-        for day in days[:1]:
-            found.setdefault(day, [])
-            found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
+                found[day] += [(t, sentence) for t in times if t not in [x for x, _ in found[day]]]
     # Tables and footers: a "Sunday" cell or heading followed by times on the next lines (not on announcement pages).
     for i, line in enumerate([] if strict else lines):
         day = next((d for d in DAYS if re.fullmatch(rf'{d}s?( services?| worship)?', line.strip(), re.I)), None)

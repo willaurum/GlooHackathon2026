@@ -91,5 +91,32 @@ class AnswerShapeTests(unittest.TestCase):
         self.assertIsNone(builder._structured_answer(Response, builder.AI_TOOL))
 
 
+class ServiceTimeTests(unittest.TestCase):
+    """Forest Baptist: Sunday School's 9:45 was offered as a third service time. It came from the Youth page's
+    "Sundays - 9:45am", which the next line explains is Sunday School."""
+
+    def services(self, *paths):
+        times = set()
+        for n, path in enumerate(paths, 1):
+            for claim in builder.pattern_claims(source('forest-baptist', path, f's{n}')):
+                if claim['field'] == 'services':
+                    times.add((claim['value']['day'], claim['value']['time']))
+        return times
+
+    def test_sunday_school_times_are_not_service_times(self):
+        self.assertEqual(self.services('home', 'ministries/youth', 'ministries/sunday-school', 'gatherings'),
+                         {('Sunday', '08:30'), ('Sunday', '11:00')})
+
+    def test_a_list_of_times_keeps_the_services_and_leaves_out_sunday_school(self):
+        found = builder.service_times('Sunday Services at 8:30am & 11:00am; Sunday School at 9:45am; Wednesday Evening at 6:30pm')
+        self.assertEqual({day: [t for t, _ in times] for day, times in found.items()}, {'Sunday': ['08:30', '11:00']})
+        self.assertEqual(found['Sunday'][0][1], 'Sunday Services at 8:30am & 11:00am')
+
+    def test_the_import_offers_two_sunday_services(self):
+        session = import_site('forest-baptist', 'home')
+        self.assertEqual(session['fields']['services']['value'], [{'day': 'Sunday', 'time': '08:30'}, {'day': 'Sunday', 'time': '11:00'}])
+        self.assertTrue(session['file_check']['valid'], session['file_check'])
+
+
 if __name__ == '__main__':
     unittest.main()
