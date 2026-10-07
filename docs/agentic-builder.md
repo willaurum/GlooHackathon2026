@@ -16,7 +16,7 @@ The team agreed on five steps:
 | **Confirm** | The person picks a candidate, types their own, or edits on the review screen | `apply_answer` |
 | **Build preview** | Confirmed values fill the existing church template | `build_content`, `#/new/preview` |
 
-The rule underneath: **the AI may suggest; only the person confirms.** A value the site disagrees with about is never quietly chosen.
+The rule underneath: **the AI may suggest; only the person confirms.** Real disagreements (below) are asked about, never quietly chosen, and everything is shown for review before anything is built.
 
 ## Rules and AI: who does what
 
@@ -36,8 +36,9 @@ Each AI suggestion must come with the **exact quote** from the page it read. `gr
 
 ### Reconciling
 
-- **Phone and email:** if every page agrees, the value is accepted. If they differ, the builder asks, showing each candidate with its page and quote.
+- **Phone and email:** a value on more than half of the pages that mention one is taken as the church's, so a staff member's email on one page doesn't trigger a question. Otherwise, different values are a conflict, and the builder asks, showing each candidate with its page and quote. The person can still change the value on the review screen.
 - **Service times:** compared day by day. "Sunday 9 & 11" on the home page and "Sunday 10:30" in a news post conflict. "Sunday 9 & 11" and "Sunday 9" do not; the second is a subset.
+- **Prose** (about, first visit, office hours): the most widely stated text is prefilled, not asked about. The person edits it on review.
 - **Missing required fields** (name, street address, phone, email, service times) become "We could not find…" questions. Optional fields are just left empty.
 
 ## Safety and limits

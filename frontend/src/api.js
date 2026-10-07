@@ -9,8 +9,12 @@ const KEY_STORAGE = 'pastor-notes-api-key';
 export const STAFF_SESSION_INVALID = 'staff_session_invalid';
 
 // The API key is typed in by the user and kept for this browser tab only. It is never built into the bundle.
-export const getApiKey = () => sessionStorage.getItem(KEY_STORAGE) ?? '';
-export const setApiKey = key => (key ? sessionStorage.setItem(KEY_STORAGE, key) : sessionStorage.removeItem(KEY_STORAGE));
+// A site preview never reads or changes the real site's key.
+export const getApiKey = () => (preview ? '' : sessionStorage.getItem(KEY_STORAGE) ?? '');
+export const setApiKey = key => {
+  if (preview) return;
+  key ? sessionStorage.setItem(KEY_STORAGE, key) : sessionStorage.removeItem(KEY_STORAGE);
+};
 
 // The church every api() call is for. App sets it from church.js.
 let church = DEMO_CHURCH;
