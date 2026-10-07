@@ -200,3 +200,14 @@ class RecommendationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         sent = json.loads(fake[3].chat.completions.create.call_args.kwargs['messages'][1]['content'])
         self.assertIn('Occasional Sundays', sent['description'])
+        self.assertEqual(sent['stated_availability'], 'Occasional Sundays, still figuring it out.')
+
+    def test_typed_availability_is_the_visitors_stated_availability(self):
+        description = 'Interests and experience: I love kids.\n\nGeneral availability: twice a month on Sunday mornings\n\nAnything else to share: none'
+        self.assertEqual(recommendations.stated_availability(description), 'twice a month on Sunday mornings')
+        self.assertEqual(recommendations.stated_availability('Interests and experience: music'), '')
+        prompt = recommendations.INSTRUCTIONS
+        self.assertIn("visitor's stated availability", prompt)
+        self.assertIn('Never say their availability is blank', prompt)
+        self.assertIn('confirm exact shifts with the team', prompt)
+        self.assertNotIn('Structured availability is authoritative', prompt)
