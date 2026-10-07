@@ -115,6 +115,7 @@ export async function gapi(path, options = {}) {
   if (!res.ok) {
     const error = new Error(body.error || `Request failed (${res.status}). Please try again.`);
     error.status = res.status;
+    error.body = body;
     throw error;
   }
   return body;

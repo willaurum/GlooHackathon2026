@@ -20,6 +20,7 @@ page polls GET until it is 'clarifying', 'review' or 'failed'. Public drafts liv
 'builder' as 'draft:<id>', expire after 24 hours, and can be applied once by staff into a new church.
 """
 import asyncio
+import contextvars
 import io
 import ipaddress
 import json
@@ -48,7 +49,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import builder_agents, builder_crawl, builder_site, builder_structured, builder_theme, church_content, db
+from . import (builder_agents, builder_crawl, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
+               church_content, db)
+from .builder_edit import clean_layout, default_layout
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -99,7 +102,8 @@ def _parallel(items, read, deadline, workers=4):
     try:
         while pending or pos < len(items):
             while pos < len(items) and len(pending) < min(workers, 4) and _now() < deadline:
-                pending[_WORKERS.submit(run, items[pos])] = pos
+                # Each worker gets this thread's context, so its steps and counts reach the run (builder_run).
+                pending[_WORKERS.submit(contextvars.copy_context().run, run, items[pos])] = pos
                 pos += 1
             if not pending:
                 break
@@ -154,6 +158,7 @@ class _PageText(HTMLParser):
         self.styles, self.icons, self.logos, self.css, self.hidden_links = [], [], [], [], []
         self._nav, self._anchor, self._script, self._hide, self._style = 0, None, None, None, None
         self._block, self._items, self._heading, self._form, self._label, self._labels = 0, [], None, None, None, {}
+        self.scripts = 0
 
     def _nav_start(self, tag, attrs):
         if tag in ('nav', 'header', 'footer') and not self._nav:
@@ -212,6 +217,7 @@ class _PageText(HTMLParser):
             self._style = []
         if tag in self.SKIP:
             self._skip += 1
+            self.scripts += tag == 'script'
             if tag == 'script' and (attrs.get('type') or '').lower() == 'application/ld+json' and len(self.jsonld) < self.MAX_JSONLD:
                 self._script = []
         elif tag == 'title':
@@ -352,7 +358,8 @@ def parse_html(html):
             'anchors': page.anchors, 'jsonld': page.jsonld, 'embeds': page.embeds, 'feeds': page.feeds,
             'canonical': page.canonical, 'meta': page.meta, 'nav': page.menu(), 'headings': page.headings,
             'forms': page.form_list(), 'ctas': page.ctas, 'styles': page.styles, 'icons': page.icons,
-            'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS], 'hidden_links': page.hidden_links}
+            'logos': page.logos[:3], 'css': ''.join(page.css)[:page.MAX_CSS], 'hidden_links': page.hidden_links,
+            'scripts': page.scripts}
 
 
 class FetchRefused(ValueError):
@@ -414,6 +421,21 @@ def polite(fetch, policy, deadline):
     return go
 
 
+# How the progress feed names a page's type (builder_crawl.PAGE_TYPES).
+PAGE_KINDS = {'home': 'home page', 'news': 'announcements', 'connect': 'sign-ups', 'staff': 'staff', 'events': 'events',
+              'sermons': 'sermons', 'groups': 'groups', 'ministries': 'ministries', 'locations': 'locations',
+              'visit': 'plan a visit', 'about': 'about', 'contact': 'contact', 'give': 'giving'}
+
+
+def _page_name(source):
+    """A page as the progress feed shows it: its title without the site name, else its path."""
+    title = re.split(r'\s+[|\-–—·:]\s+', source.get('title') or '')[0].strip()
+    if title:
+        return title[:60]
+    path = urlparse(source.get('url') or '').path.strip('/')
+    return path[:60] or 'Home'
+
+
 ROBOTS_UNREACHABLE = ('This website\'s robots.txt could not be read right now, so it cannot be imported safely. '
                       'Try again later, or upload your church materials instead.')
 ROBOTS_REFUSED = ('This website asks automated tools not to read it (robots.txt), so it cannot be imported. '
@@ -458,8 +480,10 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
             raise ValueError(ROBOTS_UNREACHABLE)
         if not robots.allowed(start_url):
             raise ValueError(ROBOTS_REFUSED)
+        builder_run.step(f'Checked robots.txt: {origin} lets Tekton read its pages')
         delay = robots.crawl_delay()
         if delay:
+            builder_run.step(f'This site asks for {delay:g} seconds between pages, so Tekton reads one page at a time')
             # One page at a time, with the pause the site asked for; what fits in the time is all that is read.
             workers, paced = 1, True
             max_pages = max(1, min(max_pages, int(max(0.0, deadline - _now()) * 0.8 / delay)))
@@ -467,6 +491,8 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
         found_by = _now() + max(0.0, deadline - _now()) * 0.2
         mapped = builder_crawl.discover(start_url, robots, polite(fetch_feed, policy, found_by),
                                         lambda urls, f: _fetch_each(urls, f, found_by, workers))
+        if mapped:
+            builder_run.step(f'Found {len(mapped)} pages in the sitemap; reading the most useful first')
         for url in mapped:
             if url not in seen and not builder_crawl.skippable(url):
                 seen.add(url)
@@ -523,7 +549,10 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'logos': [(urljoin(final_url, src), alt) for src, alt in page['logos']],
                             'css': page['css'],
                             'hidden_links': list({urldefrag(urljoin(final_url, h))[0] for h in page['hidden_links']}),
-                            'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']]})
+                            'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']],
+                            'scripts': page['scripts']})
+            kind = PAGE_KINDS.get(sources[-1]['page_type'])
+            builder_run.step(f'Read “{_page_name(sources[-1])}”' + (f' ({kind})' if kind else ''))
             for href in page['feeds']:
                 add_feed(urljoin(final_url, href))
             for link, text, nav in anchors:
@@ -1117,6 +1146,42 @@ def _normalize_space(s):
     return re.sub(r'\s+', ' ', s).strip().lower()
 
 
+BELIEFS_RE = re.compile(r'belie|doctrin|statement[-\s]of[-\s]faith|what[-\s]we[-\s]teach|our[-\s]faith|creed|confession', re.I)
+BELIEFS_PLACEHOLDER_NOTE = ('Your website\'s beliefs section is only a placeholder, so it was not imported. Tekton does '
+                            'not write theology; your pastor can add your statement of faith in Church setup.')
+
+
+def is_beliefs(page):
+    """A page that holds the church's statement of faith, by its address or title."""
+    return bool(BELIEFS_RE.search(urlparse(page.get('url') or '').path + ' ' + (page.get('path') or '') + ' ' + (page.get('title') or '')))
+
+
+def quote_context(text, quote, words=3):
+    """A few words before and after the quote on its page ({'prefix', 'suffix'}), so a link can point at this
+    place on the page when the same words appear twice (a URL text fragment, frontend/src/sourceLink.js).
+    Each side stays on one line of the page: browsers do not always match context across a block boundary, and
+    context that does not match stops the link from scrolling at all."""
+    if not text or not quote:
+        return {}
+    parts = str(quote).split()
+    if not parts:
+        return {}
+    found = re.search(r'\s+'.join(map(re.escape, parts)), text, re.IGNORECASE)
+    if not found:
+        return {}
+    line = lambda chunk: next((l for l in chunk if l.strip()), '')  # noqa: E731, E741
+    head, tail = text[:found.start()].split('\n'), text[found.end():].split('\n')
+    # The words just before the quote on its own line, else the line above it; the same after it.
+    before = (head[-1] if head[-1].strip() else line(reversed(head))).split()[-words:]
+    after = (tail[0] if tail[0].strip() else line(tail)).split()[:words]
+    out = {}
+    if before:
+        out['prefix'] = ' '.join(before)[-80:]
+    if after:
+        out['suffix'] = ' '.join(after)[:80]
+    return out
+
+
 def grounded(quote, text):
     """True when the quote really appears in the source (ignoring whitespace and case)."""
     q = _normalize_space(quote)
@@ -1145,12 +1210,23 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
             errors.append(source['id'])
         return []
     claims = []
+    beliefs = is_beliefs(source)
     for fact in args.get('facts', []) if isinstance(args, dict) else []:
-        field, value, quote = fact.get('field'), str(fact.get('value', '')).strip(), str(fact.get('quote', '')).strip()
-        if field not in AI_FIELDS and field != 'faq' or not value or not grounded(quote, source['text']):
+        if not isinstance(fact, dict):
+            builder_run.drop('not in the expected shape')
             continue
+        field, value, quote = fact.get('field'), str(fact.get('value', '')).strip(), str(fact.get('quote', '')).strip()
+        if field not in AI_FIELDS and field != 'faq' or not value:
+            builder_run.drop('not a detail Tekton asked for')
+            continue
+        if not grounded(quote, source['text']):
+            builder_run.drop('its quote is not on the page')
+            continue
+        if beliefs and field == 'about':
+            continue  # a statement of faith is kept word for word for the pastor, never summarized (is_beliefs)
         if field == 'faq':
             if '||' not in value:
+                builder_run.drop('not in the expected shape')
                 continue
             q, a = (part.strip() for part in value.split('||', 1))
             value = {'question': q, 'answer': a}
@@ -1199,8 +1275,10 @@ def _ai_complete_impl(messages, tools, timeout=None):
                                                           tool_choice='auto', temperature=0, **extra)
         except Exception as failure:
             log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
+            builder_run.ai(model, failed=True)
             error = failure
             continue
+        builder_run.ai(model, getattr(response, 'usage', None))
         calls = response.choices[0].message.tool_calls or []
         return _tool_arguments(calls[0].function.arguments) if calls else None
     raise error
@@ -1257,12 +1335,26 @@ def extract_all(sources, complete=None, deadline=None, notes=None):
                    for name in builder_agents.specialists_for(source)}
         tasks += [(name, source) for source in readable for name in builder_agents.specialists_for(source)
                   if source.get('page_type') not in ('home', 'other') or name not in covered][:MAX_SPECIALIST_CALLS]
+        specialists = [name for name, _ in tasks if name != 'info']
+        builder_run.step(f'AI is reading {len(readable)} ' + ('source' if len(readable) == 1 else 'sources')
+                         + ' for church details' + (f', with {len(specialists)} specialist readers for '
+                         + ', '.join(sorted({SPECIALIST_LABELS[n] for n in specialists})) if specialists else ''))
 
         def run(task):
             name, source = task
             if name == 'info':
                 return ai_claims(source, complete, deadline, failed)
-            return builder_agents.run(name, source, _completer(complete, deadline), list_failed)
+            answer, inner = {}, _completer(complete, deadline)
+
+            def capture(messages, tools):
+                answer['raw'] = inner(messages, tools)
+                return answer['raw']
+            found = builder_agents.run(name, source, capture, list_failed)
+            builder_run.drop('it did not match its page', _specialist_drops(name, answer.get('raw'), found))
+            if source['id'] not in list_failed:
+                builder_run.step(f'{SPECIALIST_LABELS[name].capitalize()} reader on “{_page_name(source)}”: '
+                                 + (f'{len(found)} found' if found else 'nothing to add'))
+            return found
 
         done, _ = _parallel(tasks, run, deadline)
         results, lists = done[:len(readable)], done[len(readable):]
@@ -1289,6 +1381,10 @@ def extract_all(sources, complete=None, deadline=None, notes=None):
                          'Check those lists in the review.')
         for found in lists:
             items += found or []
+        run_now = builder_run.current()
+        removed = sum(run_now.dropped.values()) if run_now else 0
+        builder_run.step(f'Checking facts… {removed} unsupported ' + ('claim' if removed == 1 else 'claims') + ' removed'
+                         if removed else 'Checking facts… every fact matched a quote on its page', 'check')
     elif readable and complete is None and _ai_complete is not None and notes is not None:
         notes.append(AI_MISSING_NOTE)
     for source, result in zip(readable, results):
@@ -1306,6 +1402,26 @@ def extract_all(sources, complete=None, deadline=None, notes=None):
     return claims, items
 
 
+def _specialist_drops(name, raw, kept):
+    """How many items a specialist reader returned that builder_agents.check left out as unsupported (its quote,
+    name or details were not on the page). Events that are already past are skipped, not counted."""
+    entries = raw.get('items') if isinstance(raw, dict) else None
+    if not isinstance(entries, list):
+        return 0
+    today = builder_structured._today()
+    past = 0
+    if name == 'events':
+        for entry in entries:
+            when = entry.get('date') if isinstance(entry, dict) else ''
+            try:
+                past += bool(when) and not builder_structured._upcoming(when, today)
+            except (TypeError, ValueError):
+                pass
+    return max(0, len(entries) - len(kept) - past)
+
+
+SPECIALIST_LABELS = {'events': 'events', 'staff': 'staff', 'ministries': 'ministries and groups', 'sermons': 'sermons',
+                     'locations': 'locations'}
 METHOD_RANK = {'structured': 0, 'pattern': 1, 'ai': 2}
 COLLECTION_LIMITS = {'events': 100, 'staff': 100, 'ministries': 60, 'groups': 100, 'locations': 30, 'sermons': 100}
 COLLECTION_LABELS = {'events': 'Events', 'staff': 'Staff and leaders', 'ministries': 'Ministries', 'groups': 'Small groups',
@@ -1346,7 +1462,8 @@ def collect(items, sources):
                     seen.add((item['source_id'], item['quote']))
                     source = by_id.get(item['source_id'], {})
                     evidence.append({'source_id': item['source_id'], 'url': source.get('url'),
-                                     'title': source.get('title', ''), 'quote': item['quote']})
+                                     'title': source.get('title', ''), 'quote': item['quote'],
+                                     **quote_context(source.get('text', ''), item['quote'])})
             methods = sorted({i['method'] for i in found}, key=lambda m: METHOD_RANK.get(m, 3))
             pages = {i['source_id'] for i in found}
             include = len(pages) >= 2 or 'structured' in methods if collection == 'staff' else True
@@ -1466,7 +1583,9 @@ def _evidence(candidate, by_id, src):
         if key not in seen:
             seen.add(key)
             source = src[claim['source_id']]
-            out.append({'source_id': source['id'], 'url': source['url'], 'title': source.get('title', ''), 'quote': claim['quote']})
+            context = {k: claim[k] for k in ('prefix', 'suffix') if claim.get(k)}
+            out.append({'source_id': source['id'], 'url': source['url'], 'title': source.get('title', ''), 'quote': claim['quote'],
+                        **(context or quote_context(source.get('text', ''), claim['quote']))})
     return out
 
 
@@ -1538,6 +1657,41 @@ def apply_answer(session, field, value):
     return session
 
 
+MAX_EDITS = 40
+
+
+def plan_edit(session, request):
+    """(operations, reply, method) for a request in plain words: the rules first, then the AI."""
+    ops = builder_edit.rule_ops(request)
+    method, reply = 'rules', ''
+    if ops is None:
+        complete = _completer(None, _now() + 25)
+        if not complete or not _ai_available():
+            raise HTTPException(status_code=400, detail='Tekton did not understand that. Try “Put service times above '
+                                                        'ministries” or “Hide the youth ministry”.')
+        ops, reply = builder_edit.ai_ops(session, request, complete, FIELD_LABELS)
+        method = 'ai'
+    return ops, reply, method
+
+
+def apply_edit(session, ops):
+    checked = [op for op in (builder_edit.check_op(session, op) for op in ops) if op]
+    if not checked:
+        raise ValueError('Tekton could not match that to your site. Try “Put service times above ministries” or '
+                         '“Hide the youth ministry”.')
+    return builder_edit.apply_ops(session, checked, apply_answer)
+
+
+def undo_edit(session):
+    return builder_edit.undo(session)
+
+
+def provenance(session):
+    """Where each fact on the preview came from (builder_edit.provenance)."""
+    return builder_edit.provenance(session, {s['id']: s for s in session.get('sources', [])},
+                                   {c['id']: c for c in session.get('claims', [])}, _evidence)
+
+
 def build_content(session, *, allow_unanswered=False):
     """The confirmed profile as ChurchContent (only the sections the builder fills)."""
     open_items = [q['field'] for q in session['questions']]
@@ -1563,6 +1717,9 @@ def build_content(session, *, allow_unanswered=False):
     content.update(collection_content(session.get('collections', {})))
     if session.get('site', {}).get('pages'):
         content.update(builder_site.content(session['site'], info['name']))
+    layout = clean_layout(session.get('layout'))
+    if layout != default_layout():
+        content['site'] = {**content.get('site', {}), 'layout': layout}
     return church_content.normalize(church_content.ChurchContent(**content))
 
 
@@ -1687,14 +1844,28 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None,
         fetch_feed = fetch_feed or _http_feed
         fetch_css = fetch_css or _http_css
     report = (lambda read, found: progress('reading', read, found)) if progress else None
+    builder_run.step(f'Reading {url}')
     policy = host_policy(fetch_feed, deadline) if fetch_feed is not None else builder_crawl.HostPolicy()
     sources = crawl(url, fetch, deadline=min(deadline, started + crawl_budget), notes=notes, fetch_feed=fetch_feed,
                     feeds=feeds, progress=report, policy=policy)
     if not sources:
         raise ValueError('No pages could be read from that address.')
+    if builds_in_browser(sources):
+        # A Wix or Squarespace style app shell: the pages are scripts, not text. Ask the church directly instead.
+        builder_run.step(JS_SITE_NOTE, 'warn')
+        session = session_from_sources(url, [], complete, deadline=deadline, notes=[JS_SITE_NOTE])
+        session['js_rendered'] = True
+        return finish_run(session, pages=len(sources))
     if describe is not None or (_ai_describe is not None and _ai_available()):
-        sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes, policy=policy)
-    sources += read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes, policy)
+        images = read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes, policy=policy)
+        if images:
+            builder_run.step(f'Looked at {len(images)} ' + ('image' if len(images) == 1 else 'images') + ' for times and events')
+        sources += images
+    found_feeds = read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes, policy)
+    for feed in found_feeds:
+        builder_run.step(('Read the calendar feed' if 'BEGIN:VCALENDAR' in feed.get('feed', '')[:2000] else 'Read the sermon feed')
+                         + f' {urlparse(feed.get("url") or "").netloc}')
+    sources += found_feeds
     look = None
     if fetch_css is not None and _now() < deadline:
         paced = polite(fetch_css, policy, min(deadline, _now() + 15))
@@ -1704,18 +1875,125 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None,
     session = session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
     look = look or builder_theme.read(sources[0])
     session['site'].update(theme=look[0], assets=look[1])
+    builder_run.step('Read the colors, fonts and logo from your site')
+    return finish_run(session, pages=len([s for s in sources if s.get('kind', 'page') == 'page']))
+
+
+JS_SITE_NOTE = ('This site builds itself in the browser, so Tekton could not read its text. '
+                'Let me ask you directly instead.')
+APP_SHELL_RE = re.compile(r'wix|squarespace|webflow|weebly|duda|godaddy|site ?builder|gatsby|next\.js|nuxt', re.I)
+
+
+def builds_in_browser(sources):
+    """True when the pages read are almost all scripts and no text: a site that only renders in a browser."""
+    pages = [s for s in sources if s.get('kind', 'page') == 'page']
+    if not pages:
+        return False
+    words = sum(len(s.get('text', '').split()) for s in pages)
+    scripts = sum(s.get('scripts', 0) for s in pages)
+    shell = any(APP_SHELL_RE.search(str(s.get('meta', {}).get('generator', ''))) for s in pages)
+    return words < 40 * len(pages) and words < 150 and (scripts >= 3 * len(pages) or shell)
+
+
+def finish_run(session, pages=0):
+    """The run's last step and summary (time, fact check, cost), saved on the draft for the review screen."""
+    run = builder_run.current()
+    if run is None:
+        return session
+    cost = builder_run.money(run.cost())
+    run.step(f'Done: read {pages} ' + ('page' if pages == 1 else 'pages') + f' in {run.seconds():g}s'
+             + (f', about {cost}' if cost and cost != 'no AI cost' else ''), 'done')
+    session['run'] = run.summary(pages=pages, sources=len(session.get('sources', [])))
     return session
 
 
 def session_from_sources(url, sources, complete=None, deadline=None, notes=None):
     notes = notes if notes is not None else []
     claims, items = extract_all(sources, complete, deadline=deadline, notes=notes)
+    by_id = {s['id']: s for s in sources}
+    for claim in claims:  # while the page text is at hand: where on the page each quote sits, for source links
+        claim.update(quote_context(by_id.get(claim['source_id'], {}).get('text', ''), claim['quote']))
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
+    if sources:
+        for q in qs:
+            label = FIELD_LABELS.get(q['field'], q['field']).lower()
+            builder_run.step(f'Found {len(q["candidates"])} different answers for {label}; Tekton will ask you which is right'
+                             if q['kind'] == 'conflict' else f'Could not find your {label}; Tekton will ask you', 'warn')
+    site = builder_site.build(sources, url or '')
+    beliefs = beliefs_review(site, sources, notes)
     return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(),
             'url': url, 'status': 'clarifying' if qs else 'review',
             'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs, 'notes': notes,
-            'collections': collect(items, sources), 'site': builder_site.build(sources, url or '')}
+            'collections': collect(items, sources), 'site': site, 'beliefs': beliefs, 'layout': default_layout()}
+
+
+PLACEHOLDER_RE = re.compile(r'under construction|coming soon|check back|lorem ipsum|\btbd\b|to be (?:announced|added)|'
+                            r'more (?:info|information) soon|content (?:goes|coming) here', re.I)
+
+
+def _placeholder(sections):
+    text = ' '.join(s.get('text') or '' for s in sections)
+    return bool(PLACEHOLDER_RE.search(text)) or len(text.split()) < 8
+
+
+def beliefs_review(site, sources, notes):
+    """The statement of faith goes back to the pastor. Tekton never writes or summarizes theology:
+    - a beliefs page is kept word for word but left off the new site until the church confirms it (POST .../beliefs);
+    - a beliefs section of another page (one-page sites, "#beliefs") is taken off that page and becomes its own
+      beliefs page, held the same way;
+    - a placeholder ("This page is under construction") or nothing at all is not imported: the pastor adds it."""
+    if not sources or not any(s.get('kind', 'page') == 'page' for s in sources):
+        return None
+    pages = [p for p in site.get('pages', []) if is_beliefs(p)]
+    held = []
+    for page in site.get('pages', []):
+        if page in pages or page.get('sections') is None:
+            continue
+        keep = [s for s in page['sections'] if not BELIEFS_RE.search(s.get('heading') or '')]
+        if len(keep) != len(page['sections']):
+            held += [s for s in page['sections'] if s not in keep]
+            page['sections'], page['section_count'] = keep, len(keep)
+    placeholder = False
+    for page in list(pages):
+        if page.get('sections') is not None and _placeholder(page['sections']):
+            page['include'] = False
+            pages.remove(page)
+            placeholder = True
+    if held and _placeholder(held):
+        held, placeholder = [], True
+    if held:
+        first = next(p for p in site['pages'] if p.get('sections') is not None)
+        pages.append({'id': 'beliefs', 'url': first['url'].split('#')[0] + '#beliefs', 'path': '/beliefs',
+                      'title': held[0].get('heading') or 'What we believe', 'page_type': 'about', 'in_menu': False,
+                      'sections': held, 'section_count': len(held), 'include': False})
+        site['pages'].append(pages[-1])
+    if not pages:
+        if placeholder:
+            builder_run.step('Your beliefs section is only a placeholder (“under construction”). Tekton does not write '
+                             'theology, so it asks your pastor instead', 'warn')
+            notes.append(BELIEFS_PLACEHOLDER_NOTE)
+            return {'status': 'missing', 'placeholder': True}
+        return {'status': 'missing'}
+    for page in pages:
+        page['include'] = False
+    first = pages[0]
+    builder_run.step(f'Found your beliefs, “{_page_name(first)}”. Tekton does not write '
+                     'theology, so they go to your pastor to confirm', 'warn')
+    return {'status': 'needs_pastor', 'page_ids': [p['id'] for p in pages], 'title': _page_name(first),
+            'url': first.get('url', ''), 'confirmed': False}
+
+
+def confirm_beliefs(session, confirmed):
+    """The pastor confirmed the imported statement of faith (or took it back out)."""
+    beliefs = session.get('beliefs') or {}
+    if beliefs.get('status') != 'needs_pastor':
+        raise ValueError('No statement of faith was imported to confirm.')
+    beliefs['confirmed'] = bool(confirmed)
+    for page in session.get('site', {}).get('pages', []):
+        if page['id'] in beliefs['page_ids']:
+            page['include'] = bool(confirmed)
+    return session
 
 
 # ---------------------------------------------------------------- storage and routes
@@ -1873,7 +2151,10 @@ def _ready(draft):
 def _public(session):
     """The draft for the page, without the full page texts (the evidence quotes are enough)."""
     out = {**session, 'notes': session.get('notes', []), 'collections': session.get('collections', {}),
-           'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title') if k in s} for s in session['sources']]}
+           'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title') if k in s} for s in session['sources']],
+           # The copies kept for undo stay on the server; the page only needs to know there is something to undo.
+           'undo_count': len(session.get('undo') or [])}
+    out.pop('undo', None)
     if session.get('site'):
         out['site'] = _without_sections(session['site'])
     return out
@@ -1925,23 +2206,44 @@ def wait_for_imports(timeout=10.0):
 
 def _importing_draft(url):
     return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(), 'url': url,
-            'status': 'importing', 'progress': {'stage': 'starting', 'pages_read': 0, 'pages_found': 0},
+            'status': 'importing', 'progress': {'stage': 'starting', 'pages_read': 0, 'pages_found': 0, 'steps': [],
+                                                'checked': 0, 'seconds': 0},
             'sources': [], 'claims': [], 'fields': {}, 'questions': [], 'notes': [], 'collections': {}}
 
 
-def _run_import(draft):
-    """The import job. Progress is saved at most every 2 seconds; the finished draft replaces it."""
-    last = [0.0]
+PROGRESS_EVERY = 1.0
 
-    def progress(stage, read, found):
-        if stage == 'reading' and _now() - last[0] < 2:
+
+def _run_import(draft):
+    """The import job. Its steps (builder_run) are saved about every second while it reads, so the page's poll
+    shows them as they happen; the finished draft replaces it."""
+    run, token = builder_run.start()
+    state = {'stage': 'starting', 'pages_read': 0, 'pages_found': 0}
+    saved, done = [-1], threading.Event()
+
+    def save_progress():
+        if run.version == saved[0]:
             return
-        last[0] = _now()
+        saved[0] = run.version
         with _draft_lock:
             current = _read(draft['id'])
             if current and current.get('status') == 'importing':
-                _save({**current, 'progress': {'stage': stage, 'pages_read': read, 'pages_found': found}})
+                _save({**current, 'progress': {**state, **run.snapshot()}})
 
+    def progress(stage, read, found):
+        state.update(stage=stage, pages_read=read, pages_found=found)
+        with run.lock:
+            run.version += 1  # saved with the steps on the next tick
+
+    def saver():
+        while not done.wait(PROGRESS_EVERY):
+            try:
+                save_progress()
+            except Exception:  # a missed progress save must never stop the import
+                log.exception('builder: progress save failed for %s', draft['id'])
+
+    thread = threading.Thread(target=saver, name='builder-progress', daemon=True)
+    thread.start()
     try:
         try:
             session = new_session(draft['url'], budget=JOB_BUDGET, crawl_budget=JOB_BUDGET / 2, progress=progress)
@@ -1951,10 +2253,14 @@ def _run_import(draft):
         except Exception:
             log.exception('builder: import %s failed', draft['id'])
             session = {**draft, 'status': 'failed', 'error': 'The import failed. Please try again.'}
+        done.set()
+        thread.join(timeout=5)
         with _draft_lock:
             if _read(draft['id']):  # an expired or consumed draft is not brought back
                 _save(session)
     finally:
+        done.set()
+        builder_run.finish(token)
         import_limiter.release()
 
 
@@ -2026,9 +2332,14 @@ async def _uploaded_files(request, deadline):
 
 
 def _upload_session(files, deadline):
-    notes = []
-    sources = read_files(files, deadline=deadline, notes=notes)
-    return session_from_sources(None, sources, deadline=deadline, notes=notes)
+    run, token = builder_run.start()
+    try:
+        notes = []
+        builder_run.step(f'Reading {len(files)} ' + ('file' if len(files) == 1 else 'files'))
+        sources = read_files(files, deadline=deadline, notes=notes)
+        return finish_run(session_from_sources(None, sources, deadline=deadline, notes=notes), pages=len(sources))
+    finally:
+        builder_run.finish(token)
 
 
 def _save_upload(session):
@@ -2117,7 +2428,59 @@ def preview(draft_id: str):
 @router.get('/api/builder/drafts/{draft_id}/site')
 def site(draft_id: str):
     with _draft_lock:
-        return church_content.public_site(build_content(_with_pages(_ready(_load(draft_id))), allow_unanswered=True))
+        draft = _with_pages(_ready(_load(draft_id)))
+        return {**church_content.public_site(build_content(draft, allow_unanswered=True)), 'provenance': provenance(draft)}
+
+
+class BeliefsBody(BaseModel):
+    confirmed: bool
+
+
+@router.post('/api/builder/drafts/{draft_id}/beliefs')
+def beliefs(draft_id: str, body: BeliefsBody):
+    """The pastor confirms the imported statement of faith (it stays off the new site until then)."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            confirm_beliefs(session, body.confirmed)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+class EditBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    request: str = Field(min_length=3, max_length=300)
+
+
+@router.post('/api/builder/drafts/{draft_id}/edits')
+def edit(draft_id: str, body: EditBody):
+    """A change asked in plain words ("Put service times above ministries"), made as checked operations."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        if len(session.get('edit_log', [])) >= MAX_EDITS:
+            raise HTTPException(status_code=429, detail='This draft has had many changes. Edit the details below instead.')
+    # The AI call (if the rules do not understand the request) runs outside the lock; the draft is read again after.
+    ops, reply, method = plan_edit(session, body.request)
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            changes = apply_edit(session, ops)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        session.setdefault('edit_log', []).append({'request': body.request, 'reply': reply, 'changes': changes, 'method': method})
+        return {'draft': _public(_save(session)), 'reply': reply, 'changes': changes, 'method': method}
+
+
+@router.post('/api/builder/drafts/{draft_id}/edits/undo')
+def undo(draft_id: str):
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            change = undo_edit(session)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {'draft': _public(_save(session)), 'reply': f'Undid: {change}'}
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')

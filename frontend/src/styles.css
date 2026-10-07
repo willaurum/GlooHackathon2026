@@ -1293,6 +1293,50 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .builder-summary dd { margin: 0; white-space: pre-wrap; line-height: 1.6; }
 .builder .field > small { display: block; margin: 6px 0 0; }
 .builder-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+/* Tekton's live steps while it reads a site, and the finished run's report. */
+.tekton-feed { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; margin: 16px 0 0; padding: 12px 14px; list-style: none; border: 1px solid var(--line); border-radius: var(--r); background: var(--green-50); font-size: 13px; }
+.tekton-step { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
+.tekton-step-time { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.tekton-step.warn > span:last-child { color: #8a5300; }
+.tekton-step.check > span:last-child { color: var(--green-700); font-weight: 700; }
+.tekton-step.done > span:last-child { font-weight: 700; }
+.tekton-step.working > span:last-child { color: var(--muted); animation: tekton-pulse 1.4s ease-in-out infinite; }
+@keyframes tekton-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .tekton-step.working > span:last-child { animation: none; } }
+.tekton-check-live { margin: 10px 0 0; color: var(--green-700); font-weight: 700; }
+.builder-run summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; cursor: pointer; }
+.builder-run summary .eyebrow { flex-basis: 100%; }
+.builder-run .builder-notes { margin: 12px 0 0; }
+.builder-run .form-note { margin: 12px 0 0; }
+.tekton-check { background: var(--green-50); color: var(--green-700); }
+.tekton-check.removed { background: #fff4e0; color: #8a5300; }
+.builder-beliefs .builder-item-check { margin-top: 14px; }
+
+/* "Ask Tekton to change something" on the review step and in the preview banner. */
+.tekton-edit { display: grid; gap: 8px; }
+.tekton-edit-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.tekton-edit-row input { flex: 1 1 220px; min-width: 0; }
+.tekton-edit-result p { margin: 0; }
+.tekton-edit-error { color: #a01818; }
+.tekton-edit.compact { flex: 1 1 360px; max-width: 560px; gap: 4px; }
+.tekton-edit.compact input { padding: 6px 10px; font-size: 13px; }
+.tekton-edit.compact button { padding: 6px 12px; font-size: 13px; }
+.tekton-edit.compact .tekton-edit-result { font-size: 12px; }
+.site-preview-banner { flex-wrap: wrap; }
+.site-preview-banner > button { flex: none; padding: 6px 12px; font-size: 13px; }
+
+/* On a preview, an imported fact shows where it came from: hover, focus or tap. */
+.sourced { position: relative; cursor: help; text-decoration: underline dotted var(--green-700); text-underline-offset: 3px; border-radius: 4px; }
+.sourced:focus-visible { outline: 2px solid var(--green-700); outline-offset: 2px; }
+.source-tip { display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 120; width: max-content; max-width: min(360px, 80vw); padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--card); box-shadow: 0 8px 24px rgba(0, 0, 0, .14); color: var(--text); font-size: 13px; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; text-transform: none; letter-spacing: normal; }
+.source-tip::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; }
+.sourced:hover .source-tip, .sourced:focus-within .source-tip, .sourced.open .source-tip { display: grid; gap: 8px; }
+.source-tip-item { display: grid; gap: 4px; }
+.source-tip-from { color: var(--muted); }
+.source-tip-from a { font-weight: 600; }
+.source-tip q { display: block; padding-left: 8px; border-left: 3px solid var(--green-200); }
+.home-ministries ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 20px; }
+.home-ministries li { display: grid; gap: 2px; }
 @media (max-width: 600px) {
   .standalone-builder { padding: 20px 16px 32px; }
   .builder .give-pad { padding: 20px; }

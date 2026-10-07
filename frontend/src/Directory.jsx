@@ -3,12 +3,13 @@ import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import STAFF from './data/staff.json';
+import Sourced from './Sourced.jsx';
 
 const telHref = phone => 'tel:' + (phone || '').replace(/[^\d+]/g, '');
 
-function Person({ name, role, email, note }) {
+function Person({ name, role, email, note, sourced = false }) {
   return <article className="card person">
-    <h3>{name}</h3>
+    <h3>{sourced ? <Sourced list="staff" name={name}>{name}</Sourced> : name}</h3>
     <div className="person-role">{role}</div>
     {note && <p>{note}</p>}
     {email && <a className="link" href={'mailto:' + email}><Icon name="mail" size={16} />{email}</a>}
@@ -51,7 +52,7 @@ export default function Directory() {
 
     {staff.length > 0 && <section>
       <div className="eyebrow">Pastors &amp; staff</div>
-      <div className="people">{staff.map(s => <Person key={s.name} {...s} />)}</div>
+      <div className="people">{staff.map(s => <Person key={s.name} {...s} sourced />)}</div>
     </section>}
 
     {leads.length > 0 && <section>

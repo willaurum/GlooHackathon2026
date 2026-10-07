@@ -27,6 +27,7 @@ import SitePage from './SitePages.jsx';
 import { footerLinks } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
+import TektonEdit from './TektonEdit.jsx';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -112,7 +113,8 @@ export default function App() {
 }
 
 function BuilderPreview() {
-  const [snapshot, setSnapshot] = useState(null), [error, setError] = useState('');
+  const [snapshot, setSnapshot] = useState(null), [error, setError] = useState(''), [version, setVersion] = useState(0);
+  const [draft, setDraft] = useState(null), [loaded, setLoaded] = useState(0), [lastEdit, setLastEdit] = useState(null);
   useEffect(() => {
     document.title = 'Site preview · Tekton';
     let live = true;
@@ -120,20 +122,24 @@ function BuilderPreview() {
     let id;
     try { id = sessionStorage.getItem('tekton-new-draft'); } catch { /* Storage may be unavailable. */ }
     if (!id) setError('Open Tekton and import your website to preview your site.');
-    else draftApi('/' + encodeURIComponent(id) + '/site', { signal: controller.signal })
-      .then(data => { if (live) setSnapshot(data); })
+    else Promise.all([draftApi('/' + encodeURIComponent(id) + '/site', { signal: controller.signal }),
+      draftApi('/' + encodeURIComponent(id), { signal: controller.signal })])
+      .then(([data, saved]) => { if (live) { setSnapshot(data); setDraft(saved); setLoaded(n => n + 1); } })
       .catch(err => { if (live) setError(err.status === 404 ? 'This draft has expired or could not be found. Start a new import in Tekton.' : err.message); });
     return () => { live = false; controller.abort(); stopApiPreview(); };
-  }, []);
+  }, [version]);
   if (!snapshot) return <div className="standalone-builder">
     <header><Brand /></header>
     <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to Tekton</a></main>
   </div>;
-  return <SiteApp snapshot={snapshot} />;
+  // A change asked in the banner reloads the preview with the changed draft (same page, new content).
+  return <SiteApp key={loaded} snapshot={snapshot} draft={draft} lastEdit={lastEdit} onEdited={done => { setLastEdit(done); setVersion(v => v + 1); }} />;
 }
 
-function SiteApp({ snapshot }) {
+function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
   const previewBanner = useRef(null);
+  // On a Tekton preview, each imported fact can show where it came from (Sourced.jsx); on by default.
+  const [showSources, setShowSources] = useState(true);
   const [where, setWhere] = useState(readLocation),
     [chatOpen, setChatOpen] = useState(false),
     [requestsVersion, setRequestsVersion] = useState(0),
@@ -292,9 +298,10 @@ function SiteApp({ snapshot }) {
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
     site: website?.site || null, pages: website?.pages || [],
+    provenance: snapshot?.provenance || null, showSources: !!snapshot && showSources,
     // After staff rename the church in Church setup.
     refresh: () => setListingVersion(v => v + 1),
-  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion, website]);
+  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion, website, showSources]);
 
   const section = route.split('/')[0];
   if (section === 'new') return <ChurchContext.Provider value={church}>
@@ -350,7 +357,12 @@ function SiteApp({ snapshot }) {
 
   return <ChurchContext.Provider value={church}>
     <div className={'app' + (snapshot ? ' site-preview' : '')}>
-      {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to Tekton</a></div>}
+      {snapshot && <div className="site-preview-banner" ref={previewBanner}>
+        <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
+        {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
+        {draft && <TektonEdit draftId={draft.id} undoCount={draft.undo_count || 0} compact lastResult={lastEdit} onChanged={(_, done) => onEdited?.(done)} />}
+        <a href="#/new">Back to Tekton</a>
+      </div>}
       <SiteNav route={route} go={go} savedCount={savedCount} />
       <TopBar onAsk={() => setChatOpen(true)} />
       <div className="content">

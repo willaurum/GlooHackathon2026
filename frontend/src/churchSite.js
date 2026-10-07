@@ -39,5 +39,13 @@ export function nextSteps(events, demo) {
   return (events || []).filter(ev => !demo || open.includes(ev.audience)).slice(0, 3);
 }
 
+/** A page's section keys in the order the church asked Tekton for (site.layout, backend builder_edit.PAGES), then
+ *  any the layout does not name in their usual order, without the ones it hides ('page:section'). */
+export function orderedSections(layout, page, defaults) {
+  const hidden = new Set((layout?.hidden || []).filter(h => h.startsWith(page + ':')).map(h => h.slice(page.length + 1)));
+  const stored = (layout?.[page] || []).filter(key => defaults.includes(key));
+  return [...new Set([...stored, ...defaults])].filter(key => !hidden.has(key));
+}
+
 /** Directions to a campus or address in Google Maps. */
 export const directionsHref = place => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(place)}`;

@@ -35,6 +35,8 @@ type Secrets = {
   BASE_DOMAIN?: string;
   // Optional: turns on GET /api/platform/churches for the platform team (Authorization: Bearer <key>).
   PLATFORM_ADMIN_KEY?: string;
+  // Optional: comma-separated invite codes. With one, Tekton (#/new) can create a church; public signup stays off.
+  TEKTON_INVITE_CODES?: string;
 };
 type GivingEnv = Env & Secrets & { GIVING_REGISTRY: DurableObjectNamespace<GivingRegistry> };
 
@@ -1695,6 +1697,50 @@ function forward(env: GivingEnv, request: Request, doName: string, slug: string,
   return env.GIVING.getByName(doName).fetch(req);
 }
 
+// Creating a church from Tekton (#/new) needs an invite code from TEKTON_INVITE_CODES. Without that secret, or
+// without a right code, nothing is created: public church registration stays off. Wrong codes are limited per IP
+// like the platform key, and new churches per IP and per hour by the registry.
+const REGISTRATION_CLOSED = 'Public church registration is not available on this site.';
+
+async function createChurch(request: Request, env: GivingEnv): Promise<Response> {
+  const codes = String(env.TEKTON_INVITE_CODES || '').split(',').map((c) => c.trim()).filter((c) => c.length >= 8);
+  if (!codes.length) return json({ error: REGISTRATION_CLOSED }, 403);
+  let body: any;
+  try { body = await readJson(request); } catch (err) {
+    return err instanceof BadRequest ? json({ error: err.message }, err.status) : json({ error: 'Body must be valid JSON.' }, 400);
+  }
+  const code = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : '';
+  if (!code) return json({ error: 'Enter your invite code to create a church.', inviteRequired: true }, 403);
+  const registry = env.GIVING_REGISTRY.getByName('registry');
+  const ip = request.headers.get('cf-connecting-ip') || 'anon';
+  if (await registry.platformLocked('invite:' + ip)) return json({ error: 'Too many wrong codes. Wait a minute and try again.' }, 429);
+  // Every code is compared, by digest, so neither which code matched nor its length leaks via timing.
+  const digest = await sha256(code.slice(0, 200));
+  let ok = false;
+  for (const c of codes) ok = ctEqual(digest, await sha256(c)) || ok;
+  if (!ok) {
+    await registry.platformFailed('invite:' + ip);
+    return json({ error: 'That invite code is not right.', inviteRequired: true }, 403);
+  }
+  const name = String(body.name || '').trim(), city = String(body.city || '').trim();
+  const password = String(body.password || ''), ownerName = String(body.ownerName || '').trim();
+  const ownerEmail = String(body.ownerEmail || '').trim().toLowerCase();
+  const currency = CURRENCIES.includes(String(body.currency || 'usd')) ? String(body.currency || 'usd') : 'usd';
+  if (name.length < 3 || name.length > 80) return json({ error: 'Church name must be 3 to 80 characters.' }, 400);
+  if (city.length > 80) return json({ error: 'Town or city must be at most 80 characters.' }, 400);
+  if (ownerName.length < 2 || ownerName.length > 120) return json({ error: 'Add your name.' }, 400);
+  if (!EMAIL_RE.test(ownerEmail) || ownerEmail.length > 200) return json({ error: 'Add a valid email; you sign in with it.' }, 400);
+  if (password.length < 10 || password.length > 200) return json({ error: 'Use a password of at least 10 characters.' }, 400);
+  const reserved = await registry.reserve(name, city, ip);
+  if (!reserved.slug) return json({ error: reserved.error || 'Could not create the church.' }, 429);
+  const result = await env.GIVING.getByName('church:' + reserved.slug).init(reserved.slug, name, city, currency, password, ownerName, ownerEmail);
+  if (!result.token) {
+    await registry.release(reserved.slug);
+    return json({ error: result.error || 'Could not create the church.' }, 409);
+  }
+  return json({ slug: reserved.slug, name, city, token: result.token }, 201);
+}
+
 // Every church, for the platform team only (the #/platform page). Churches never see this list.
 // Off (404) until the PLATFORM_ADMIN_KEY secret is set; then it needs Authorization: Bearer <key>.
 async function platformChurches(request: Request, env: GivingEnv): Promise<Response> {
@@ -1742,7 +1788,7 @@ async function route(request: Request, env: GivingEnv): Promise<Response> {
     const demo = await env.GIVING_REGISTRY.getByName('registry').get(DEMO_SLUG);
     return json({ churches: demo ? [demo] : [] });
   }
-  if (p === '/api/churches' && m === 'POST') return json({ error: 'Public church registration is not available on this site.' }, 403);
+  if (p === '/api/churches' && m === 'POST') return createChurch(request, env);
   if (p === '/api/platform/churches' && m === 'GET') return platformChurches(request, env);
   // One church's public listing (name and city), straight from the registry. The church API uses it to
   // check that a church exists before it opens that church's database.
