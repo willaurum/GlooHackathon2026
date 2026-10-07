@@ -372,5 +372,24 @@ class MinistryContactTests(unittest.TestCase):
         self.assertEqual((session['fields']['phone']['status'], session['fields']['phone']['value']), ('prefilled', '8025550142'))
 
 
+class AddressTests(unittest.TestCase):
+    """Crosspoint's home page says "Join us this sunday at: 150 Alum springs road, lynchburg, va 24502" (lower case);
+    the address reader wanted capitalized words and missed it."""
+
+    def addresses(self, path):
+        return [(c['value'], c['quote']) for c in builder.pattern_claims(source('crosspoint', path)) if c['field'] == 'address']
+
+    def test_a_lower_case_address_is_found_and_shown_title_cased(self):
+        self.assertEqual(self.addresses(''), [('150 Alum Springs Road, Lynchburg, VA 24502', '150 Alum springs road, lynchburg, va 24502')])
+        session = import_site('crosspoint', '')
+        self.assertEqual(session['fields']['address']['value'], '150 Alum Springs Road, Lynchburg, VA 24502')
+        self.assertTrue(session['file_check']['valid'], session['file_check'])
+
+    def test_lower_case_prose_is_not_an_address(self):
+        page = {'id': 's1', 'url': 'https://church.test/', 'title': 'Home',
+                'text': 'We have 2 services on the way in, and 3 more down the road by the lake drive.'}
+        self.assertEqual([c for c in builder.pattern_claims(page) if c['field'] == 'address'], [])
+
+
 if __name__ == '__main__':
     unittest.main()

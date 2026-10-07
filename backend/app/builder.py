@@ -1002,6 +1002,20 @@ SHARED_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+|,)\s*(?=(?:\d{1,
                        r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b)', re.I)
 
 
+# An address written in any case. Lower case is common in prose and headings ("join us at: 150 alum springs road"),
+# where words like "way" or "drive" also appear, so it must end in ", city, ST 12345" to count.
+ANY_CASE_STREET_RE = re.compile(r'\b\d{1,6}\s+(?:[a-z][\w.\'-]*\s+){1,4}(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|'
+                                r'boulevard|blvd|way|court|ct|place|pl|parkway|pkwy|highway|hwy|circle|terrace)\b\.?,?\s+'
+                                r'[a-z][a-z\s.\'-]{1,40},\s*[a-z]{2}\s+\d{5}(?:-\d{4})?\b', re.I)
+
+
+def _address_case(address):
+    """'150 Alum springs road, lynchburg, va 24502' as '150 Alum Springs Road, Lynchburg, VA 24502'."""
+    *street, last = [p.strip() for p in address.split(',')]
+    state = re.sub(r'^([a-z]{2})\b', lambda m: m.group(1).upper(), last, flags=re.I)
+    return ', '.join([' '.join(w[:1].upper() + w[1:] for w in p.split()) for p in street] + [state])
+
+
 def _digits(phone):
     return re.sub(r'\D', '', phone)[-10:]
 
@@ -1135,8 +1149,15 @@ def pattern_claims(source):
         claims.append({'field': 'email', 'value': match.lower(), 'quote': match, 'source_id': sid, 'method': 'pattern'})
     for match in sorted(set(PHONE_RE.findall(text))):
         claims.append({'field': 'phone', 'value': _digits(match), 'quote': match, 'source_id': sid, 'method': 'pattern'})
-    for match in sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(text.replace('\n', ', ')))):
+    flat = text.replace('\n', ', ')
+    found = sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(flat)))
+    for match in found:
         claims.append({'field': 'address', 'value': match, 'quote': match, 'source_id': sid, 'method': 'pattern'})
+    for match in sorted(set(m.group(0).strip(' ,.') for m in ANY_CASE_STREET_RE.finditer(flat))):
+        if not any(match.lower() in f.lower() or f.lower() in match.lower() for f in found):
+            # "150 Alum springs road, lynchburg, va 24502": shown as an address, quoted as the page wrote it.
+            claims.append({'field': 'address', 'value': _address_case(match), 'quote': match, 'source_id': sid,
+                           'method': 'pattern'})
     if source.get('kind', 'page') == 'page':
         name, quote = title_name(source.get('title', '')), source.get('title', '')
         if source.get('site_name') and CHURCH_WORDS.search(source['site_name']):
