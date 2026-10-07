@@ -1,6 +1,6 @@
 import { Container, ContainerProxy, getContainer } from '@cloudflare/containers';
 import { DurableObject } from 'cloudflare:workers';
-import { handleVerse } from './verse';
+import { handleVerse, handleVersions } from './verse';
 import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
 import { DEMO_SLUG, STAFF_SESSION_INVALID, access, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
@@ -161,6 +161,7 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 	// Internal routes are only called by this Worker.
 	if (path.startsWith('/api/internal/')) return json({ detail: 'Not Found' }, 404);
 	if (path === '/api/verse' && request.method === 'GET') return handleVerse(url, env);
+	if (path === '/api/verse/versions' && request.method === 'GET') return handleVersions(env);
 
 	const church = await findChurch(env, target.slug);
 	if (church === 'unavailable') return json({ detail: 'The church directory is unavailable right now. Please try again.' }, 503);

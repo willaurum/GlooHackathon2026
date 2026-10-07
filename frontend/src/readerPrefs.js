@@ -1,9 +1,10 @@
-// Sermon Notes reading preferences (text size and timestamps), kept in localStorage,
+// Sermon Notes reading preferences (text size, timestamps and Bible version), kept in localStorage,
 // plus small formatting helpers for the sermon picker.
 
 /** Transcript text sizes in px, smallest to largest. The default is a step up from body text. */
 export const TEXT_SIZES = [17, 19, 21, 24, 27];
-export const DEFAULT_PREFS = Object.freeze({ size: 1, timestamps: true });
+// version '' is the site's default Bible version.
+export const DEFAULT_PREFS = Object.freeze({ size: 1, timestamps: true, version: '' });
 export const PREFS_KEY = 'sermon-reader-prefs';
 
 /** A valid index into TEXT_SIZES; anything that isn't an integer falls back to the default. */
@@ -17,6 +18,9 @@ export const stepSize = (index, delta) => clampSize(clampSize(index) + delta);
 export const textSizePx = index => TEXT_SIZES[clampSize(index)];
 export const canStep = (index, delta) => stepSize(index, delta) !== clampSize(index);
 
+/** A Bible version id as the API names them (a YouVersion number, or web / kjv); anything else is the default. */
+export const cleanVersion = v => (typeof v === 'string' && /^(\d{1,6}|[a-z]{2,8})$/.test(v) ? v : '');
+
 /** Saved prefs, or the defaults when storage is empty, unreadable or holds junk. */
 export function readPrefs(storage) {
   try {
@@ -25,6 +29,7 @@ export function readPrefs(storage) {
     return {
       size: clampSize(saved.size),
       timestamps: typeof saved.timestamps === 'boolean' ? saved.timestamps : DEFAULT_PREFS.timestamps,
+      version: cleanVersion(saved.version),
     };
   } catch { return { ...DEFAULT_PREFS }; }
 }
@@ -32,7 +37,7 @@ export function readPrefs(storage) {
 /** Saves prefs; false when storage refuses (private mode, quota). */
 export function writePrefs(storage, prefs) {
   try {
-    storage.setItem(PREFS_KEY, JSON.stringify({ size: clampSize(prefs.size), timestamps: prefs.timestamps !== false }));
+    storage.setItem(PREFS_KEY, JSON.stringify({ size: clampSize(prefs.size), timestamps: prefs.timestamps !== false, version: cleanVersion(prefs.version) }));
     return true;
   } catch { return false; }
 }

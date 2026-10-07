@@ -385,6 +385,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .verse-loading { margin: 6px 0; color: #666; }
 .verse-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: baseline; }
 .verse-foot small { color: #666; }
+.verse-note { margin: -4px 0 8px; font-size: 13px; color: var(--muted); }
 .verse-foot a { font-weight: 600; }
 .cat-bible_quote, .hl-bible_quote { --hl-bg: #fbf3dc; --hl-edge: #b8860b; }
 .cat-bible_paraphrase, .hl-bible_paraphrase { --hl-bg: #e6eef9; --hl-edge: #3f6ea8; }
@@ -422,6 +423,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-side-block { display: flex; flex-direction: column; gap: 10px; }
 .pn-side-block h2 { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--font); }
 .pn-side-block > p { font-size: 13px; color: var(--muted); }
+.pn-side .pn-version { margin: 4px 0 0; font-size: 14px; color: var(--muted); }
+.pn-side .pn-version select { margin-top: 6px; min-height: 44px; font-size: 15px; }
 .pn-side-highlights { padding-top: 18px; border-top: 1px solid var(--line); }
 .pn-side .pn-cats { flex-direction: column; flex-wrap: nowrap; margin: 0; padding: 0; overflow: visible; }
 .pn-side .pn-cats button { justify-content: flex-start; min-height: 40px; }

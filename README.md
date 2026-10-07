@@ -272,7 +272,7 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 |---|---|---|
 | `NOTES_API_KEY` | `api/` | Required for Sermon Notes routes. The page asks for it once and keeps it in the browser tab only. |
 | `NOTES_ADMIN_KEY` | `api/` | Changing the church config. |
-| `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the version (default `3034`, Berean Standard Bible). |
+| `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the default version (default `3034`, Berean Standard Bible); readers can switch to any other version the key is licensed for. |
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
 | `YT_HELPER_URL` / `YT_HELPER_KEY` | `api/` | Optional. The [YouTube helper](#youtube-links-the-youtube-helper) that downloads YouTube audio from Jaron's dev server. Set `YT_HELPER_URL` as a GitHub Actions **variable** and `YT_HELPER_KEY` as a GitHub **secret**; Deploy backend copies both to the Worker. The key stays in the Worker. |
 | `GLOO_BUILDER_MODEL` | `api/` | Optional GitHub Actions **variable**; Deploy backend copies it to the Worker. The agentic builder's Gloo model (default: `GLOO_MATCH_MODEL`, then `gloo-anthropic-claude-haiku-4.5`). |
@@ -528,8 +528,10 @@ independent modes:
 The transcript is highlighted by category (Bible quotes, Bible references, current events, politics, personal stories, Scripture claims), and each category can be toggled. When a Bible quote or reference highlight names a passage (for example "Luke 10:25-26", "1 Cor. 13:4" or "Psalm 23"), the label is tappable and opens the passage under that line, with the version, copyright and a "Read on YouVersion" link.
 
 - `frontend/src/verses.js` turns labels into USFM references (all 66 books, common abbreviations, Roman numeral prefixes, ranges) and loads the text.
-- `GET /api/verse?usfm=JHN.3.16-17` (public) reads the passage from the YouVersion Platform API with `YOUVERSION_APP_KEY` and caches it for 7 days. It returns 404 when no key is set and 400 for a bad reference.
-- If the API has no key or fails, the page falls back to the public-domain World English Bible from bible-api.com.
+- `GET /api/verse/versions` (public) lists the English Bibles the app key is licensed for (`GET /v1/bibles?language_ranges[]=en` on YouVersion, cached 6 hours), then the public-domain `web` and `kjv` ones not already listed: `{ default, listed, versions: [{ id, abbreviation, title, language, copyright, source }] }`. If the listing fails it offers just the default plus WEB and KJV, and that answer is not cached.
+- `GET /api/verse?usfm=JHN.3.16-17&version=<id>` (public) reads the passage from the YouVersion Platform API with `YOUVERSION_APP_KEY` and caches it for 7 days per version and passage. `version` must be an id from that listing, or `web` / `kjv` (served from bible-api.com); anything else gets the default. If YouVersion fails, it answers from bible-api.com in the matching public-domain translation, else WEB, with `fallback: true` and `version` naming what came back. It returns 404 when no key is set (for a YouVersion version) and 400 for a bad reference.
+- Readers pick the version under Reading in the Sermon Notes side panel; the choice is kept in localStorage with text size and timestamps.
+- If the API is unreachable, the page falls back to bible-api.com itself: KJV for `kjv`, else the World English Bible.
 
 ### YouTube links: the YouTube helper
 

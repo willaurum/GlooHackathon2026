@@ -68,20 +68,55 @@ export function referenceParts(label) {
   }).filter(p => p.text);
 }
 
-const WEB = { abbreviation: 'WEB', title: 'World English Bible', copyright: 'Public domain' };
+// Public-domain translations bible-api.com serves, used when our API is unreachable. Ids match api/verse.ts.
+const PUBLIC_DOMAIN = {
+  web: { id: 'web', abbreviation: 'WEB', title: 'World English Bible', copyright: 'Public domain', bibleCom: '206' },
+  kjv: { id: 'kjv', abbreviation: 'KJV', title: 'King James Version', copyright: 'Public domain', bibleCom: '1' },
+};
+export const BUILT_IN_VERSIONS = Object.freeze({
+  default: 'web',
+  versions: Object.values(PUBLIC_DOMAIN).map(({ bibleCom, ...v }) => ({ ...v, language: 'en', source: 'public-domain' })),
+});
+
+/** The select's label for a version; public-domain ones say so. */
+export const versionLabel = v =>
+  `${v.title || v.abbreviation} (${[v.abbreviation, v.source === 'public-domain' && 'public domain'].filter(Boolean).join(', ')})`;
+
+/** The id a reader picked if it is still offered, else the default. */
+export const pickVersion = (list, saved) => (list.versions.some(v => v.id === saved) ? saved : list.default);
+
+let versions = null;
+/** The Bible versions this site can show, from /api/verse/versions, or the public-domain ones when that fails. */
+export function fetchVersions() {
+  versions ||= api('/verse/versions').then(
+    body => (Array.isArray(body?.versions) && body.versions.length ? body : BUILT_IN_VERSIONS),
+    () => { versions = null; return BUILT_IN_VERSIONS; },
+  );
+  return versions;
+}
+
+/** One cache entry per version and passage; '' is the API's default version. */
+export const verseCacheKey = (usfm, version = '') => `${version || 'default'}|${usfm}`;
 const cache = new Map();
 
-/** The passage from YouVersion through our API, or the public-domain World English Bible when YouVersion isn't set up. */
-export function fetchVerse(ref) {
-  if (!cache.has(ref.usfm)) {
-    const lookup = api('/verse?usfm=' + encodeURIComponent(ref.usfm)).catch(async () => {
-      const response = await fetch(`https://bible-api.com/${encodeURIComponent(ref.human)}?translation=web`);
+/** The passage in `version` through our API (YouVersion), or public-domain text from bible-api.com when the API fails. */
+export function fetchVerse(ref, version = '') {
+  const key = verseCacheKey(ref.usfm, version);
+  if (!cache.has(key)) {
+    const query = '/verse?usfm=' + encodeURIComponent(ref.usfm) + (version ? '&version=' + encodeURIComponent(version) : '');
+    const lookup = api(query).catch(async () => {
+      const { bibleCom, ...shown } = PUBLIC_DOMAIN[version] || PUBLIC_DOMAIN.web;
+      const response = await fetch(`https://bible-api.com/${encodeURIComponent(ref.human)}?translation=${shown.id}`);
       if (!response.ok) throw new Error('Could not load this passage.');
       const body = await response.json();
-      return { reference: body.reference, text: String(body.text || '').replace(/\s+/g, ' ').trim(), version: WEB, link: `https://www.bible.com/bible/206/${ref.usfm}.WEB`, source: 'web' };
+      return {
+        reference: body.reference, text: String(body.text || '').replace(/\s+/g, ' ').trim(), version: shown,
+        link: `https://www.bible.com/bible/${bibleCom}/${ref.usfm}.${shown.abbreviation}`, source: 'public-domain',
+        requested: version, fallback: Boolean(version) && version !== shown.id,
+      };
     });
-    cache.set(ref.usfm, lookup);
-    lookup.catch(() => cache.delete(ref.usfm));
+    cache.set(key, lookup);
+    lookup.catch(() => cache.delete(key));
   }
-  return cache.get(ref.usfm);
+  return cache.get(key);
 }
