@@ -46,18 +46,20 @@ export function resolveChurch({ host = '', hash = '', saved = '', base = BASE_DO
 }
 
 /** The hash for a page of a church: #/c/<slug>/<route>, so a copied address bar or shared link keeps the church
- * (the demo church too). On a church subdomain the church is already in the host. */
+ * (the demo church too). On a church subdomain the church is already in the host, and the site builder (#/new)
+ * belongs to no church. */
 export function hashFor(slug, route = '', source = '') {
-  if (source === 'subdomain') return '#/' + route;
+  if (source === 'subdomain' || route === 'new') return '#/' + route;
   return '#/c/' + slug + (route ? '/' + route : '/');
 }
 
 /** Whether the address bar should be rewritten to name its church: the older giving link (#/give/c/<slug>),
- * or a plain link (#/serve, no hash) off a church subdomain. A checkout return on /give is left alone, and so is
- * #/platform, the team's list of every church, which belongs to no church. */
+ * or a plain link (#/serve, no hash) off a church subdomain. A checkout return on /give is left alone, and so are
+ * the pages that belong to no church: #/platform (the team's list of every church), the site builder (#/new)
+ * and its site preview (#/new/preview/...). A builder link that names a church (#/c/<slug>/new) becomes #/new. */
 export function needsChurchInHash(hash, source, onGivePath = false) {
-  if (/^#\/?give\/c\//.test(hash || '')) return true;
-  if (source === 'subdomain' || onGivePath || /^#\/?platform\/?$/.test(hash || '')) return false;
+  if (/^#\/?give\/c\//.test(hash || '') || /^#\/?c\/[^/]+\/new\/?$/.test(hash || '')) return true;
+  if (source === 'subdomain' || source === 'preview' || onGivePath || /^#\/?(?:platform|new(?:\/.*)?)\/?$/.test(hash || '')) return false;
   return !/^#\/?c\//.test(hash || '');
 }
 

@@ -43,6 +43,14 @@ test('a plain address gains its church, so copying the address bar keeps it', ()
   assert.equal(needsChurchInHash('#/c/hope-chapel/serve', 'link'), false);
   assert.equal(needsChurchInHash('#/serve', 'subdomain'), false);
   assert.equal(needsChurchInHash('#/platform', 'saved'), false);
+  // The site builder and its preview belong to no church.
+  assert.equal(needsChurchInHash('#/new', 'saved'), false);
+  assert.equal(needsChurchInHash('#/new', 'demo'), false);
+  assert.equal(needsChurchInHash('#/new/preview', 'preview'), false);
+  assert.equal(needsChurchInHash('#/new/preview/serve', 'preview'), false);
+  assert.equal(needsChurchInHash('#/new/preview/p/about', 'preview'), false);
+  assert.equal(needsChurchInHash('#/c/grace-community/new', 'link'), true);
+  assert.equal(hashFor(DEMO_CHURCH, 'new'), '#/new');
   // A checkout return (/give?session_id=…) keeps its address until the Give page has read it.
   assert.equal(needsChurchInHash('', 'link', true), false);
 });
