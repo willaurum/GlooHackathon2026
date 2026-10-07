@@ -115,3 +115,35 @@ export function siteMenuLines(navigation) {
   walk(navigation?.main, 0);
   return lines;
 }
+
+/** "$0.03", "under $0.01", "no AI cost", or '' when the cost is unknown. */
+export function costText(usd) {
+  if (usd == null) return '';
+  if (usd === 0) return 'no AI cost';
+  return usd < 0.01 ? 'under $0.01' : `$${usd.toFixed(2)}`;
+}
+
+/** "Read 12 pages in 41s, about $0.03" for a finished run, or '' before one. */
+export function runSummary(run) {
+  if (!run) return '';
+  const count = run.pages ? `${run.pages} ${run.pages === 1 ? 'page' : 'pages'}` : `${run.sources || 0} ${run.sources === 1 ? 'file' : 'files'}`;
+  const cost = costText(run.cost_usd);
+  return `Read ${count} in ${Math.round(run.seconds || 0)}s` + (cost && cost !== 'no AI cost' ? `, about ${cost}` : '');
+}
+
+/** The fact check in words: "2 unsupported claims removed" with each reason, or that every fact matched. */
+export function factCheck(run) {
+  if (!run) return null;
+  const total = run.dropped_total || 0;
+  return {
+    total,
+    line: total ? `${total} unsupported ${total === 1 ? 'claim' : 'claims'} removed` : 'Every fact matched a quote on its page',
+    reasons: Object.entries(run.dropped || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${count} because ${reason}`),
+  };
+}
+
+/** The steps to show while an import runs (or after it): the first step and the newest ones, at most `limit`. */
+export function feedSteps(steps, limit = 14) {
+  const list = Array.isArray(steps) ? steps : [];
+  return list.length > limit ? [list[0], ...list.slice(-(limit - 1))] : list;
+}

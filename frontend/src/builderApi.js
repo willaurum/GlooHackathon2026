@@ -25,6 +25,14 @@ export const partApi = (draftId, body) => draftApi('/' + encodeURIComponent(draf
 
 export const draftPageApi = (draftId, pageId) => draftApi('/' + encodeURIComponent(draftId) + '/pages/' + encodeURIComponent(pageId));
 
+/** A change asked in plain words ("Put service times above ministries"): { draft, reply, changes, method }. */
+export const editApi = (draftId, request) => draftApi('/' + encodeURIComponent(draftId) + '/edits', { method: 'POST', body: JSON.stringify({ request }) });
+
+export const undoEditApi = draftId => draftApi('/' + encodeURIComponent(draftId) + '/edits/undo', { method: 'POST' });
+
+/** The pastor confirms (or takes back) the statement of faith Tekton kept word for word. */
+export const beliefsApi = (draftId, confirmed) => draftApi('/' + encodeURIComponent(draftId) + '/beliefs', { method: 'POST', body: JSON.stringify({ confirmed }) });
+
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const timer = setTimeout(resolve, ms);
   signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); }, { once: true });
@@ -57,8 +65,15 @@ export function createFromFiles(files) {
 export async function createFromDraft(draftId, account, created, onCreated) {
   let church = created;
   if (!church) {
+    // Creating a church needs an invite code (TEKTON_INVITE_CODES on the giving API); a wrong one is inviteRequired.
     try { church = await gapi('/api/churches', { method: 'POST', body: JSON.stringify(account) }); }
-    catch (err) { if (err.status === 403) err.registrationClosed = true; throw err; }
+    catch (err) {
+      if (err.status === 403) {
+        err.inviteRequired = !!err.body?.inviteRequired;
+        err.registrationClosed = !err.inviteRequired;
+      }
+      throw err;
+    }
     setStaffToken(church.slug, church.token, { verified: true });
     // Retain the target before apply: a failed apply must never cause another signup.
     onCreated({ slug: church.slug, draftId, token: church.token });
