@@ -98,3 +98,32 @@ export async function createFromDraft(draftId, account, created, onCreated) {
     method: 'POST', headers,
   });
 }
+
+export async function createFromJson(files) {
+  if (!files.length || files.length > 5 || files.reduce((n, file) => n + file.size, 0) > 10 * 1024 * 1024) {
+    throw new Error('Choose up to five site JSON files, at most 10 MB of uploads.');
+  }
+  const parsed = [];
+  for (const file of files) {
+    try { parsed.push(JSON.parse(await file.text())); }
+    catch { throw new Error(file.name + ' is not valid JSON.'); }
+  }
+  let content;
+  const names = ['church.json', 'ministries.json', 'events.json', 'builder.json', 'regions.json', 'site.json'];
+  if (files.length === 1 && !names.includes(files[0].name)) content = parsed[0];
+  else {
+    content = {};
+    for (const [i, file] of files.entries()) {
+      if (!names.includes(file.name) || Object.hasOwn(content, file.name)) {
+        throw new Error('Choose unique church.json and site.json files, legacy seed files, or one combined site-files JSON.');
+      }
+      content[file.name] = parsed[i];
+    }
+  }
+  const body = JSON.stringify(content, (_, value) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Site files contain a number that is too large.');
+    return value;
+  });
+  if (new Blob([body]).size > 2 * 1024 * 1024) throw new Error('Site files must be 2 MB or smaller in total.');
+  return draftApi('/json', { method: 'POST', body });
+}

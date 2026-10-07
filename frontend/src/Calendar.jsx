@@ -555,6 +555,8 @@ export default function Calendar({ setError = () => {} }) {
 
           {loading ? (
             <p role="status">Loading church events…</p>
+          ) : events.length === 0 ? (
+            <p className="muted">No events are scheduled yet.</p>
           ) : filteredEvents.length === 0 ? (
             <div className="panel empty-events">
               <span className="empty-icon">🗓</span>
