@@ -10,12 +10,18 @@ import copy
 import re
 
 from . import builder_edit, builder_theme
-from .church_content import ChurchContent, normalize
+from .church_content import HIDEABLE_PAGES, ChurchContent, normalize
 
 MAX_OPS = 6
+DEFAULT_TAGLINE = 'A place to belong, grow and give.'
+# The site's own pages (Give, Serve, Calendar…) are a shared template: their fixed wording is not the church's to
+# change one by one. What a church can change is its own content (DETAILS, FAQs, lists, imported pages) and layout.
+CANNOT_EDIT = ('Tekton can change the headline and text at the top of Home, your church details, questions people '
+               'ask, your lists, and the pages imported from your old website. The wording built into the site '
+               '(like “Give with confidence”) stays the same for every church.')
 MAX_CUSTOM = 60
 LISTS = ('events', 'ministries', 'groups', 'staff', 'locations', 'sermons', 'calendar')
-DETAILS = {'name': 'church name', 'city': 'town or city', 'address': 'street address', 'phone': 'phone number',
+DETAILS = {'tagline': 'headline at the top of Home', 'name': 'church name', 'city': 'town or city', 'address': 'street address', 'phone': 'phone number',
            'email': 'email', 'office_hours': 'office hours', 'about': 'about text', 'first_visit': 'what to expect',
            'services': 'service times'}
 THEME_COLORS = ('primary', 'accent', 'background', 'text')
@@ -105,7 +111,7 @@ def _detail(content, op):
 
 def _layout(content, op):
     site = content.setdefault('site', {})
-    layout = builder_edit.clean_layout(site.get('layout'))
+    layout = _clean_layout(site.get('layout'))
     page, section = op.get('page'), op.get('section')
     if page not in builder_edit.PAGES:
         page = builder_edit._page_for(section) if section else None
@@ -162,12 +168,44 @@ def _remove_item(content, op):
     raise Refused(f'Tekton could not find “{op.get("name")}” on your site.')
 
 
+# Words that mean a person, not the church: a request with one never renames the church.
+PERSON_RE = re.compile(r'\b(?:pastors?|minister|reverend|rev|priest|father|elders?|deacons?|directors?|leaders?|'
+                       r'coordinator|admin(?:istrator)?|secretary|staff|worship leader|youth pastor|music director)\b', re.I)
+PERSON_FIELDS = ('name', 'role', 'email', 'phone', 'bio')
+
+
+def _person(content, op):
+    """Change a staff entry found by its name or its role ("the pastor"), or add one when no one has that role."""
+    staff = content.setdefault('staff', [])
+    who = ' '.join(str(op.get('name') or '').lower().split())
+    person = _find(staff, who) if who else None
+    if person is None and who:
+        by_role = [p for p in staff if who in str(p.get('role') or '').lower()
+                   or str(p.get('role') or '').lower() in who and p.get('role')]
+        person = by_role[0] if len(by_role) == 1 else None
+    changes = {k: ' '.join(str(op[k]).split()) if k != 'bio' else str(op[k]).strip()
+               for k in PERSON_FIELDS[1:] if op.get(k)}
+    if op.get('new_name'):
+        changes['name'] = ' '.join(str(op['new_name']).split())
+    if not changes:
+        raise Refused('What should Tekton change about that person?')
+    if person is None:
+        if not changes.get('name'):
+            raise Refused(f'Tekton could not find “{op.get("name")}” among your staff.')
+        # "Change the pastor to Dr. Lee Brown" with no pastor listed yet: add them in that role.
+        person = {'name': changes['name'], 'role': changes.get('role') or (op.get('name') or '').strip().title()}
+        staff.append(person)
+        op['added'] = True
+    person.update(changes)
+    op['list'] = 'staff'
+
+
 def _page(content, op):
     pages = content.get('pages') or []
     page = _find(pages, op.get('page'), key=lambda p: p.get('title', '')) or next(
         (p for p in pages if p.get('slug') == op.get('page')), None)
     if not page:
-        raise Refused('Tekton could not find that page.')
+        raise Refused(CANNOT_EDIT)
     if op['op'] == 'rename_page':
         title = ' '.join(str(op.get('title') or '').split())
         if not title:
@@ -178,16 +216,63 @@ def _page(content, op):
     section = _find(sections, op.get('heading'), key=lambda s: s.get('heading', '')) if op.get('heading') else (
         sections[0] if sections else None)
     if not section:
-        raise Refused('Tekton could not find that part of the page.')
+        raise Refused(CANNOT_EDIT)
     if op.get('text'):
         section['text'] = str(op['text']).strip()
     if op.get('new_heading'):
         section['heading'] = ' '.join(str(op['new_heading']).split())
 
 
+def _clean_layout(layout):
+    """builder_edit's cleaned Home/Plan your visit layout, keeping the hidden site pages it does not know about."""
+    return {**builder_edit.clean_layout(layout),
+            'hidden_pages': list((layout or {}).get('hidden_pages') or []) if isinstance(layout, dict) else []}
+
+
+# The words people use for each part of the site, most specific first (Layout.hidden_pages keys).
+SITE_PAGES = [
+    ('serve/find', 'Find a place', r'find a place(?: to serve)?'),
+    ('serve/saved', 'Saved connections', r'saved(?: connections| list)?'),
+    ('give/trips', 'Mission trips', r'mission trips?|trips?'),
+    ('guests/welcome', 'Welcome team', r'welcome team|greeters?(?: screen)?'),
+    ('about/beliefs', 'Beliefs', r'beliefs?|what we believe|statement of faith'),
+    ('about/news', 'News', r'news|announcements'),
+    ('about/directory', 'Directory', r'(?:staff )?directory'),
+    ('about/connect', 'Connect', r'connect(?: card)?'),
+    ('notes', 'Sermon Notes', r'sermon notes|notes|sermons? page'),
+    ('calendar', 'Calendar', r'calendar|events? calendar|events? page'),
+    ('prayer', 'Prayer map', r'prayer(?: map)?|map of prayer'),
+    ('give', 'Give', r'give|giving|online giving|donations?|donate|tithes?|offerings?'),
+    ('serve', 'Serve', r'serve|serving|volunteer(?:ing)?|ministries page|serve page'),
+]
+PAGE_LABELS = {key: label for key, label, _ in SITE_PAGES}
+assert set(PAGE_LABELS) == set(HIDEABLE_PAGES)
+
+
+def site_page_key(words):
+    """The part of the site a phrase names ("the calendar", "giving page"), or None."""
+    words = re.sub(r"\b(?:the|our|my|your|a|an|whole|entire|page|pages|tab|tabs|section|area|part|feature|link)\b", ' ', words.lower())
+    words = ' '.join(re.sub(r"[^a-z' -]", ' ', words).split())
+    return next((key for key, _, pattern in SITE_PAGES if re.fullmatch(pattern, words)), None)
+
+
+def _site_page(content, op):
+    site = content.setdefault('site', {})
+    layout = _clean_layout(site.get('layout'))
+    key = op.get('page') if op.get('page') in PAGE_LABELS else site_page_key(str(op.get('page') or ''))
+    if not key:
+        raise Refused('Tekton can hide or show Serve, Sermon Notes, Calendar, Give, Mission trips, the Prayer map, '
+                      'the Welcome team, Beliefs, News, Directory and Connect. Home and Plan your visit always stay.')
+    op['page'] = key
+    hidden = [k for k in layout['hidden_pages'] if k != key]
+    layout['hidden_pages'] = hidden + [key] if op['op'] == 'hide_page' else hidden
+    site['layout'] = layout
+
+
 HANDLERS = {'set_theme': _theme, 'set_detail': _detail, 'move': _layout, 'hide': _layout, 'show': _layout,
             'add_faq': _faq, 'edit_faq': _faq, 'remove_faq': _faq, 'remove_item': _remove_item,
-            'rename_page': _page, 'edit_page_section': _page}
+            'rename_page': _page, 'edit_page_section': _page, 'hide_page': _site_page, 'show_page': _site_page,
+            'edit_person': _person}
 
 
 def _one(content, op):
@@ -241,6 +326,13 @@ def describe(op):
         return f'Changed the answer to “{op["question"]}”'
     if kind == 'remove_faq':
         return f'Removed the question “{op["question"]}”'
+    if kind in ('hide_page', 'show_page'):
+        return f'{"Hid" if kind == "hide_page" else "Showed"} {PAGE_LABELS[op["page"]]} on your site'
+    if kind == 'edit_person':
+        who = op.get('new_name') or op.get('name')
+        if op.get('added'):
+            return f'Added {who} to your staff'
+        return f'Changed “{op["name"]}” to {who} on your staff list' if op.get('new_name') else f'Updated {who} on your staff list'
     if kind == 'remove_item':
         return f'Removed “{op["name"]}”'
     if kind == 'rename_page':
@@ -257,6 +349,12 @@ COLOR_RE = re.compile(r'(?:please )?(?:make|change|set|turn|use)\s+(?:the |our |
 
 VAGUE_COLOR_RE = re.compile(r'.*\b(?:change|update|fix|different|new|pick|choose)\b.*\bcolou?rs?\b.*'
                             r'|.*\bcolou?rs?\b.*\b(?:change|different)\b.*', re.I)
+PERSON_CHANGE_RE = re.compile(r"(?:(?:can|could|would) you |please )*(?:change|update|set|make|replace)\s+"
+                              r"(?:(?:the )?name\s+)?(?:of\s+)?(?:the |our )?(.+?)(?:'s name)?\s+(?:to|be)\s+(.+)$", re.I)
+TAGLINE_RE = re.compile(r'(?:(?:can|could|would) you |please )*(?:change|set|make|update|replace)\s+(?:the |our )?'
+                        r'(?:top of (?:the )?home(?: page)?|home(?: page)? (?:headline|heading|title|tagline)|'
+                        r'headline|tagline|main heading|big heading|hero(?: text| heading)?|welcome (?:headline|heading))'
+                        r'(?:\s+(?:on|of) (?:the )?home(?: page)?)?(?:\s+from\s+.+?)?\s+(?:to|say|read|into)\s+(.+)$', re.I)
 VAGUE_COLOR_REPLY = ('Which colors would you like? For example “Make the main color navy and the buttons gold”, '
                      'or give a color code like #3e6b3a.')
 
@@ -281,6 +379,29 @@ def rule_ops(request, viewing=''):
         if len(colors) > 1 and target == 'primary':
             op['accent'] = colors[1]
         return [op]
+    m = PERSON_CHANGE_RE.match(text)
+    if m and PERSON_RE.fullmatch(m.group(1).strip()):
+        return [{'op': 'edit_person', 'name': m.group(1).strip(), 'new_name': m.group(2).strip().strip('"“”\'')}]
+    m = TAGLINE_RE.match(text)
+    if m:
+        # With quotes ("from "A place to belong" to "B""), the new wording is the last quoted part.
+        quoted = re.findall(r'"([^"]+)"|“([^”]+)”', text)
+        value = ''.join(quoted[-1]) if quoted else m.group(1)
+        value = value.strip().strip('"“”\'').strip()
+        if value:
+            return [{'op': 'set_detail', 'field': 'tagline', 'value': value}]
+    # "Can you hide the calendar, our church does not have one": a whole part of the site, with or without a reason.
+    m = re.match(r"(?:(?:can|could|would) you |please |i'd like to |we want to |let's )*(hide|remove|take out|leave out|"
+                 r"get rid of|drop|turn off|disable|show|bring back|add back|unhide|turn on)\s+(.+?)"
+                 r"(?:\s*(?:,|\.|;|-|\bbecause\b|\bsince\b|\bas\b|\bwe\b|\bour\b|\bit\b|\bthat\b|\bfrom\b|\bplease\b|\bagain\b|\bback\b|\btoo\b).*)?$", text, re.I)
+    if m:
+        key = site_page_key(m.group(2))
+        if key:
+            show = m.group(1).lower() in ('show', 'bring back', 'add back', 'unhide', 'turn on')
+            return [{'op': 'show_page' if show else 'hide_page', 'page': key}]
+    m = re.fullmatch(r"(?:we|our church|the church) (?:do not|don't|doesn't|does not) (?:have|use|need|do) (?:a |an |any )?(.+)", text, re.I)
+    if m and site_page_key(m.group(1)):
+        return [{'op': 'hide_page', 'page': site_page_key(m.group(1))}]
     ops = builder_edit.rule_ops(request)
     if not ops:
         return None
@@ -317,12 +438,16 @@ TOOL = {'type': 'function', 'function': {
                 'text': {'type': 'string', 'description': 'set_theme: text color; edit_page_section: new section text'},
                 'heading_font': {'type': 'string'}, 'body_font': {'type': 'string'},
                 'field': {'type': 'string', 'enum': list(DETAILS)}, 'value': {'type': 'string'},
-                'page': {'type': 'string', 'description': 'move/hide/show: home or visit; rename_page/edit_page_section: the page title'},
+                'page': {'type': 'string', 'description': 'move/hide/show: home or visit; hide_page/show_page: one of '
+                         + ', '.join(HIDEABLE_PAGES) + '; rename_page/edit_page_section: the page title'},
                 'section': {'type': 'string'}, 'before': {'type': 'string'}, 'after': {'type': 'string'},
                 'to': {'type': 'string', 'enum': ['top', 'bottom']},
                 'question': {'type': 'string'}, 'answer': {'type': 'string'}, 'new_question': {'type': 'string'},
                 'list': {'type': 'string', 'enum': list(LISTS)}, 'name': {'type': 'string'},
                 'title': {'type': 'string'}, 'heading': {'type': 'string'}, 'new_heading': {'type': 'string'},
+                'new_name': {'type': 'string', 'description': 'edit_person: the person\'s new name'},
+                'role': {'type': 'string'}, 'email': {'type': 'string'}, 'phone': {'type': 'string'},
+                'bio': {'type': 'string'},
             }}},
     }}}}
 
@@ -332,12 +457,19 @@ def _summary(content, viewing):
     theme = (content.get('site') or {}).get('theme') or {}
     layout = builder_edit.clean_layout((content.get('site') or {}).get('layout'))
     lines = [f'The church is looking at: {viewing or "the home page"}.',
+             f'The top of Home shows the headline (tagline, now "{info.get("tagline") or DEFAULT_TAGLINE}") and under '
+             f'it the about text. Change them with set_detail field tagline or about; never with edit_page_section.',
+             'set_detail field name is the CHURCH name only. A person (pastor, elder, staff) is changed with '
+             'edit_person: name = their current name or role ("pastor"), new_name/role/email/phone as asked.',
              'Details: ' + '; '.join(f'{k}={str(info.get(k) or "")[:80]}' for k in DETAILS if k != 'services'),
              'Service times: ' + ', '.join(f'{s.get("day")} {s.get("time")}' for s in info.get('services') or []),
              'Theme: ' + ', '.join(f'{k}={theme.get(k) or "default"}' for k in (*THEME_COLORS, 'heading_font', 'body_font'))]
     for page, sections in builder_edit.PAGES.items():
         lines.append(f'{page} sections in order: ' + ', '.join(
             f'{k} ({sections[k]}){" [hidden]" if f"{page}:{k}" in layout["hidden"] else ""}' for k in layout[page]))
+    hidden_pages = ((content.get('site') or {}).get('layout') or {}).get('hidden_pages') or []
+    lines.append('Parts of the site (hide_page/show_page; Home and Plan your visit always stay): ' + ', '.join(
+        f'{key} ({label}){" [hidden]" if key in hidden_pages else ""}' for key, label, _ in SITE_PAGES))
     lines.append('Questions people ask: ' + '; '.join(f.get('question', '') for f in (content.get('faqs') or [])[:30]))
     for name in LISTS:
         if content.get(name):

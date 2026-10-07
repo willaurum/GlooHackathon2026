@@ -24,7 +24,7 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 import SitePage from './SitePages.jsx';
-import { footerLinks } from './churchSite.js';
+import { footerLinks, pageHidden } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
 import TektonAgent from './TektonAgent.jsx';
@@ -322,6 +322,8 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
     refresh: () => setListingVersion(v => v + 1),
   }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion, website, showSources]);
 
+  // A part of the site the church hid opens Home instead (an old link, or the address typed in).
+  useEffect(() => { if (pageHidden(website?.site, route)) go(''); }, [route, website]);
   const section = route.split('/')[0];
   if (section === 'new') return <ChurchContext.Provider value={church}>
     <div className="standalone-builder">
@@ -341,7 +343,7 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
     {section === 'about' && <div className="page">
       <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]}
         text={ABOUT_PAGES[route]?.[2]?.replace('{name}', demo ? 'Grace Community Church' : name || 'our church')} />
-      <SubNav tabs={aboutTabsFor(demo, church.pages)} route={route} go={go} />
+      <SubNav tabs={aboutTabsFor(demo, church.pages, church.site)} route={route} go={go} />
       {route === 'about/news' && <News go={go} />}
       {route === 'about' && (demo ? <About go={go} /> : <ChurchStory go={go} />)}
       {route === 'about/beliefs' && (demo ? <Beliefs /> : <ChurchBeliefs go={go} />)}

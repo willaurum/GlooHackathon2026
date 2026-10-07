@@ -3076,7 +3076,12 @@ def customize(draft_id: str, body: CustomizeBody, request: Request):
             raise HTTPException(status_code=502, detail='Tekton is unavailable right now. Please try again in a moment.')
         method = 'ai'
     stored, changes, refused = [], [], []
+    about_person = builder_customize.PERSON_RE.search(body.request)
     for op in ops:
+        if about_person and op.get('op') == 'set_detail' and op.get('field') == 'name':
+            refused.append('That sounds like a person, so Tekton did not rename the church. Try “Change the pastor '
+                           'to Dr. Lee Brown”.')
+            continue
         try:
             op, content = builder_customize.check(content, op)
         except builder_customize.Refused as why:
@@ -3131,7 +3136,7 @@ def _file(draft_id, name):
         content = _draft_content(draft, allow_unanswered=True)
         if draft.get('import_kind') == 'json':
             draft = {**draft, 'site': {'calendars': draft.get('json_calendars') or []}}
-            document = builder_json.files(draft, content=content, sources=draft.get('json_sources') or [])[name]
+            document = builder_json.files(draft, content=content, sources=draft.get('json_sources') or {})[name]
         else:
             document = builder_json.files(draft, content=content)[name]
     # Served as a download: the church (or the team) can keep the files Tekton wrote.

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
 import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
-import { pageOfType } from './churchSite.js';
+import { pageHidden, pageOfType } from './churchSite.js';
 import { siteMenu } from './site.js';
 
 // One navigation for every screen size: a top navigation bar on desktop; on phones, a tab bar holds the
@@ -20,15 +20,15 @@ export const SECTIONS = [
   { route: 'staff', label: 'Church staff', short: 'Staff', icon: 'lock', staffOnly: true },
 ];
 // The sections this visitor can see: staff-only ones are hidden until staff sign in.
-export const visibleSections = staff => SECTIONS.filter(s => staff || !s.staffOnly);
-const childrenFor = (s, demo, pages) => (s.children || []).filter(([r]) => showAbout(r, demo, pages));
+export const visibleSections = (staff, site) => SECTIONS.filter(s => (staff || !s.staffOnly) && !pageHidden(site, s.route));
+const childrenFor = (s, demo, pages, site) => (s.children || []).filter(([r]) => showAbout(r, demo, pages) && !pageHidden(site, r));
 
 // Beliefs holds Grace Community's own statement, so other churches see it only when Tekton imported a
 // statement of belief from their website. Our story, News, Directory and Connect use each church's own content.
 export const ABOUT_DEMO_ONLY = new Set(['about/beliefs']);
 const showAbout = (route, demo, pages) => demo || !ABOUT_DEMO_ONLY.has(route) || !!pageOfType(pages, 'beliefs');
 export const ABOUT_TABS = [['about', 'Our story', 'info'], ['about/beliefs', 'Beliefs', 'book'], ['about/news', 'News', 'news'], ['about/directory', 'Directory', 'phone'], ['about/connect', 'Connect', 'mail']];
-export const aboutTabsFor = (demo, pages) => ABOUT_TABS.filter(([r]) => showAbout(r, demo, pages));
+export const aboutTabsFor = (demo, pages, site) => ABOUT_TABS.filter(([r]) => showAbout(r, demo, pages) && !pageHidden(site, r));
 
 const sectionOf = route => route.split('/')[0];
 
@@ -63,8 +63,8 @@ export function SiteNav({ route, go, savedCount }) {
   return <header className="site-nav">
     <ChurchName staffLink={false} />
     <nav className="site-nav-links" aria-label="Main">
-      {visibleSections(staff).map(s => {
-        const kids = childrenFor(s, demo, pages);
+      {visibleSections(staff, church.site).map(s => {
+        const kids = childrenFor(s, demo, pages, church.site);
         return <div key={s.route} className={'site-nav-item' + (kids.length > 1 ? ' has-menu' : '')}>
           <button className={'site-nav-link' + (current === s.route ? ' active' : '')} aria-current={route === s.route ? 'page' : undefined}
             aria-haspopup={kids.length > 1 ? 'true' : undefined} onClick={e => pick(e, s.route)}>
@@ -163,10 +163,10 @@ export function FirstVisit({ route, go }) {
 }
 
 export function TabBar({ route, go, chatOpen, savedCount }) {
-  const { demo, staff, pages } = useChurch();
+  const { demo, staff, pages, site } = useChurch();
   const [menuOpen, setMenuOpen] = useState(false);
-  const tabs = SECTIONS.filter(s => s.tab);
-  const more = visibleSections(staff).filter(s => !s.tab);
+  const tabs = SECTIONS.filter(s => s.tab && !pageHidden(site, s.route));
+  const more = visibleSections(staff, site).filter(s => !s.tab);
   const current = sectionOf(route);
   const inMenu = more.some(s => s.route === current);
   function open(next) { setMenuOpen(false); go(next); }
@@ -183,7 +183,7 @@ export function TabBar({ route, go, chatOpen, savedCount }) {
     {menuOpen && <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />}
     {menuOpen && <div className="menu-sheet" id="more-menu" role="dialog" aria-label="More pages">
       {more.map(s => {
-        const kids = childrenFor(s, demo, pages);
+        const kids = childrenFor(s, demo, pages, site);
         return <div key={s.route} className="menu-group">
           <button className={'nav-item' + (current === s.route ? ' active' : '')} onClick={() => open(s.route)}><Icon name={s.icon} />{s.label}</button>
           {kids.length > 1 && <div className="nav-children">
@@ -212,8 +212,9 @@ export function PageHeader({ eyebrow, title, text, action }) {
 }
 
 export function SubNav({ tabs, route, go, counts = {} }) {
+  const site = useChurch()?.site;
   return <div className="subnav" role="tablist">
-    {tabs.map(([r, label, icon]) => <button key={r} role="tab" aria-selected={route === r} className={route === r ? 'active' : ''} onClick={() => go(r)}>
+    {tabs.filter(([r]) => !pageHidden(site, r)).map(([r, label, icon]) => <button key={r} role="tab" aria-selected={route === r} className={route === r ? 'active' : ''} onClick={() => go(r)}>
       <Icon name={icon} size={18} />{label}{counts[r] > 0 && <b className="count">{counts[r]}</b>}
     </button>)}
   </div>;

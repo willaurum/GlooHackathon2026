@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { api, fmt } from './api.js';
 import { hashFor } from './church.js';
 import { useChurch } from './ChurchContext.js';
-import { livestreamLink, orderedSections, pageOfType, siteImage } from './churchSite.js';
+import { livestreamLink, orderedSections, pageHidden, pageOfType, siteImage } from './churchSite.js';
 import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
 import { safeHref } from './site.js';
@@ -43,7 +43,7 @@ export default function Home({ go, onAsk }) {
     <section className={'home-hero' + (hero ? ' has-image' : '')}>
       <div className="home-hero-copy">
       <div className="eyebrow">{info?.name || church.name}</div>
-      <h1>A place to belong,<br />grow and give.</h1>
+      <h1>{info?.tagline || <>A place to belong,<br />grow and give.</>}</h1>
       <p>{info?.about ? <Sourced field="about">{info.about}</Sourced> : 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.'}</p>
       <div className="hero-actions">
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
@@ -59,25 +59,25 @@ export default function Home({ go, onAsk }) {
       <span className="icon color3"><Icon name="sparkle" size={24} /></span>
       <h2>{church.name} is just getting started here.</h2>
       <p>{church.staff ? 'Add your service times, address, common questions and serving teams, and this site fills in.' : 'Service times and more are on the way. You can already give online.'}</p>
-      <button className="primary" onClick={() => go(church.staff ? 'setup' : 'give')}>{church.staff ? 'Open church setup' : 'Give online'}<Icon name="arrow" size={18} /></button>
+      {(church.staff || !pageHidden(church.site, 'give')) && <button className="primary" onClick={() => go(church.staff ? 'setup' : 'give')}>{church.staff ? 'Open church setup' : 'Give online'}<Icon name="arrow" size={18} /></button>}
     </section>}
 
     {/* In the order the church asked Tekton for (site.layout). */}
     {orderedSections(church.site?.layout, 'home', HOME_SECTIONS).map(key => <Fragment key={key}>{{
       features: <div className="features">
-        <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
+        {!pageHidden(church.site, 'serve') && <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
           <span className="icon color1"><Icon name="users" size={22} /></span>
           <h2>Serve</h2>
           <p>Browse ministry teams, see where help is needed, and match members to a place that fits.</p>
           <span className="link">Explore ministries<Icon name="arrow" size={16} /></span>
-        </a>
-        <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); go('notes'); }}>
+        </a>}
+        {!pageHidden(church.site, 'notes') && <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); go('notes'); }}>
           <span className="icon color3"><Icon name="book" size={22} /></span>
           <h2>Sermon Notes</h2>
           <p>Read past sermons and ask questions. Answers quote the message with timestamps.</p>
           <span className="link">Open sermon notes<Icon name="arrow" size={16} /></span>
-        </a>
-        <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); go('give'); }}>
+        </a>}
+        {!pageHidden(church.site, 'give') && <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); go('give'); }}>
           <span className="icon color0"><Icon name="heart" size={22} /></span>
           <h2>Give</h2>
           {goal ? <>
@@ -85,7 +85,7 @@ export default function Home({ go, onAsk }) {
             <div className="progress" aria-hidden="true"><span style={{ width: percent(goal.raised, goal.goal) + '%' }} /></div>
           </> : <p>Support the mission with a gift, in a couple of taps.</p>}
           <span className="link">Give online<Icon name="arrow" size={16} /></span>
-        </a>
+        </a>}
       </div>,
       about: <>{/* Beliefs is Grace Community's own statement; other churches show it when Tekton imported theirs. */}
       <section className="know-us" aria-label="Get to know us">
@@ -101,7 +101,7 @@ export default function Home({ go, onAsk }) {
       ministries: (shownMinistries.length > 0 && <section className="card week home-ministries" id="home-ministries">
         <div className="week-head">
           <div><div className="eyebrow">Get involved</div><h2>Ministries</h2></div>
-          <button className="link" onClick={() => go('serve')}>Find a place to serve<Icon name="arrow" size={16} /></button>
+          {!pageHidden(church.site, 'serve') && <button className="link" onClick={() => go('serve')}>Find a place to serve<Icon name="arrow" size={16} /></button>}
         </div>
         <ul>{shownMinistries.map(m => <li key={m.id ?? m.name}>
           <strong><Sourced list="ministries" name={m.name}>{m.name}</Sourced></strong>
@@ -111,7 +111,7 @@ export default function Home({ go, onAsk }) {
       sermons: (recent.length > 0 && <section className="card week home-sermons" id="home-sermons">
         <div className="week-head">
           <div><div className="eyebrow">Watch &amp; listen</div><h2>Recent sermons</h2></div>
-          <button className="link" onClick={() => go('notes')}>All sermons<Icon name="arrow" size={16} /></button>
+          {!pageHidden(church.site, 'notes') && <button className="link" onClick={() => go('notes')}>All sermons<Icon name="arrow" size={16} /></button>}
         </div>
         <ul>{recent.map(s => <li key={s.id ?? s.url}>
           <a className="link" href={safeHref(s.url)} target="_blank" rel="noopener noreferrer">{s.title}</a>
