@@ -83,13 +83,14 @@ def ministries():
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
+    ministries, preferences = db.list_ministries(), body.preferences.model_dump(mode='json')
     try:
-        return recommendations.recommend(body.description, db.list_ministries(),
-                                         preferences=body.preferences.model_dump(mode='json'))
+        return recommendations.recommend(body.description, ministries, preferences=preferences)
     except recommendations.NotConfigured as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    except recommendations.Unavailable as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+    except recommendations.Unavailable:
+        # Every model failed or timed out: show the fitting teams instead of an error.
+        return recommendations.browse_fallback(ministries, preferences)
 
 
 @app.get('/api/connections')
