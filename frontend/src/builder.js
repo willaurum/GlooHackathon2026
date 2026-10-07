@@ -142,6 +142,21 @@ export function factCheck(run) {
   };
 }
 
+/** The file check in words: church.json and site.json against their schemas, and facts traced to their pages. */
+export function fileCheck(check) {
+  if (!check) return null;
+  const problems = [];
+  if (!check.valid) problems.push(`${check.errors.length} schema ${check.errors.length === 1 ? 'problem' : 'problems'}`);
+  const n = check.unsupported_count || 0;
+  if (n) problems.push(`${n} ${n === 1 ? 'fact does not trace to its page' : 'facts do not trace to their pages'}`);
+  const traced = check.facts_checked ? `; all ${check.facts_checked} imported facts trace to their pages` : '';
+  return {
+    ok: !problems.length,
+    line: problems.length ? problems.join(', ') : 'valid' + traced,
+    details: [...(check.errors || []), ...(check.unsupported || []).map(fact => `Not on its page: ${fact}`)],
+  };
+}
+
 /** The steps to show while an import runs (or after it): the first step and the newest ones, at most `limit`. */
 export function feedSteps(steps, limit = 14) {
   const list = Array.isArray(steps) ? steps : [];

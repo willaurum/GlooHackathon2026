@@ -19,6 +19,9 @@ export const draftApi = (path = '', options = {}) => request(apiUrl('/builder/dr
 
 export const createBlank = () => draftApi('/blank', { method: 'POST' });
 
+/** Where a draft's church.json or site.json downloads from (built from the draft as it is now). */
+export const draftFileUrl = (draftId, name) => apiUrl('/builder/drafts/' + encodeURIComponent(draftId) + '/' + name + '.json', DEMO_CHURCH);
+
 export const itemApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/items', { method: 'POST', body: JSON.stringify(body) });
 
 export const partApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/parts', { method: 'POST', body: JSON.stringify(body) });

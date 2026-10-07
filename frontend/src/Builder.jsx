@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { beliefsApi, createBlank, createFromDraft, createFromFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
-import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, factCheck, feedSteps, runSummary, siteMenuLines, sitePartItem } from './builder.js';
+import { beliefsApi, createBlank, createFromDraft, createFromFiles, draftApi, draftFileUrl, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, factCheck, feedSteps, fileCheck, runSummary, siteMenuLines, sitePartItem } from './builder.js';
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
@@ -207,6 +207,7 @@ export default function Builder() {
           <dl className="builder-summary">{Object.entries(preview.info || {}).filter(([field, value]) => field !== 'map_query' && value != null && value !== '' && (!Array.isArray(value) || value.length)).map(([field, value]) => <div key={field}><dt>{BUILDER_LABELS[field] || field.replaceAll('_', ' ')}</dt><dd>{builderValue(field, value)}</dd></div>)}</dl>
           <p>{preview.faqs?.length || 0} FAQs{builderListCounts(session).map(list => `, ${list.included} of ${list.total} ${list.label.toLowerCase()}`).join('')}</p>
         </section>}
+        <FilesCard session={session} />
         <section className="card give-pad builder-build">
           <p>Ready? Create your church and a staff account to manage its new site.</p>
           {editing && <p className="form-note">Save or cancel your edit before continuing.</p>}
@@ -300,6 +301,20 @@ function ImportFeed({ steps, live = false }) {
     </li>)}
     {live && <li className="tekton-step working" aria-hidden="true"><span className="tekton-step-time" /><span>Working…</span></li>}
   </ol>;
+}
+
+// What Tekton wrote: church.json (the church) and site.json (its site), checked against their schemas.
+function FilesCard({ session }) {
+  const check = fileCheck(session.file_check);
+  return <section className="card give-pad builder-files" aria-label="Your church files">
+    <div className="eyebrow">Your church files</div><h2>church.json and site.json</h2>
+    <p>Everything above, written as two files: <strong>church.json</strong> holds your church (details, service times, lists and where each fact came from) and <strong>site.json</strong> holds your site (colors, fonts, menu, section order and pages). They include your answers and edits so far.</p>
+    {check && <p className={'badge tekton-check' + (check.ok ? '' : ' removed')}>Checking church.json and site.json against the schema… {check.line}</p>}
+    {check?.details.length > 0 && <ul className="builder-notes">{check.details.map(detail => <li key={detail}>{detail}</li>)}</ul>}
+    <div className="builder-actions">
+      {['church', 'site'].map(name => <a key={name} className="secondary" href={draftFileUrl(session.id, name)} download={name + '.json'}>Download {name}.json</a>)}
+    </div>
+  </section>;
 }
 
 function RunReport({ run }) {
