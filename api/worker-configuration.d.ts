@@ -5,9 +5,7 @@ interface __BaseEnv_Env {
 	MEDIA: R2Bucket;
 	AI: Ai;
 	ALLOWED_ORIGIN: string;
-	NOTES_ANSWER_ENGINE: string;
 	NOTES_LLM_MODEL: string;
-	GEMINI_MODEL: string;
 	NOTES_MIN_SCORE: string;
 	MAX_UPLOAD_BYTES: string;
 	MAX_DURATION_SEC: string;
@@ -26,7 +24,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "ALLOWED_ORIGIN" | "NOTES_ANSWER_ENGINE" | "NOTES_LLM_MODEL" | "GEMINI_MODEL" | "NOTES_MIN_SCORE" | "MAX_UPLOAD_BYTES" | "MAX_DURATION_SEC">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "ALLOWED_ORIGIN" | "NOTES_LLM_MODEL" | "NOTES_MIN_SCORE" | "MAX_UPLOAD_BYTES" | "MAX_DURATION_SEC">> {}
 }
 
 // Begin runtime types

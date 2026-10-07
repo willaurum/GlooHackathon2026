@@ -1,0 +1,10 @@
+:root {
+  --primary-color: #1f4e5f;
+  --secondary-color: #f4efe6;
+  --link-color: #e07a2f;
+}
+@import url("https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Playfair+Display:wght@700");
+body { font-family: "Lato", Helvetica, sans-serif; color: #2b2b2b; background: #ffffff; }
+h1, h2, h3 { font-family: "Playfair Display", Georgia, serif; color: #1f4e5f; }
+.btn { background-color: #e07a2f; color: #ffffff; border-radius: 4px; }
+.site-header { background: #1f4e5f url("/media/hp/header-texture.png"); }

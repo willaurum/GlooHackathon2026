@@ -112,9 +112,11 @@ const matches = (routes: Route[], method: string, path: string) => routes.some((
 const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/(health|church|info|ministries|events|chat\/status|ai\/status|ollama\/status|regions|news)$/],
 	['GET', /^\/api\/visits\/[A-Za-z0-9_-]+$/],
-	['GET', /^\/api\/verse$/],
+	['GET', /^\/api\/verse(\/versions)?$/],
 	['GET', /^\/api\/blog(?:\/(categories|\d+))?$/],
 	['GET', /^\/api\/events\/\d+$/],
+	// A page of the church's recreated website (slugs as church_content.SLUG).
+	['GET', /^\/api\/church\/pages\/[a-z0-9][a-z0-9-]{0,79}$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
 ];
@@ -123,6 +125,16 @@ const PUBLIC_ROUTES: Route[] = [
 // so a digits-only pattern would let those fall through to a weaker rule. A bad id is the container's 404.
 const ID = '[^/]+';
 
+// Public imports use capability ids; malformed ids are the container's 404.
+const PUBLIC_BUILDER_ROUTES: Route[] = [
+	['POST', /^\/api\/builder\/drafts$/],
+	['POST', /^\/api\/builder\/drafts\/(blank|upload)$/],
+	['GET', new RegExp(`^/api/builder/drafts/${ID}$`)],
+	['GET', new RegExp(`^/api/builder/drafts/${ID}/site$`)],
+	['GET', new RegExp(`^/api/builder/drafts/${ID}/pages/${ID}$`)],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|parts|preview)$`)],
+];
+
 // Staff work requires a church session, including on the demo church.
 const STAFF_WORK_ROUTES: Route[] = [
 	['GET', /^\/api\/(connections|requests|visits)$/],
@@ -130,7 +142,7 @@ const STAFF_WORK_ROUTES: Route[] = [
 	['POST', /^\/api\/events$/],
 	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],
 	['POST', /^\/api\/events\/summarize-all$/],
-	['DELETE', new RegExp(`^/api/(connections|requests)/${ID}$`)],
+	['DELETE', new RegExp(`^/api/(connections|requests|events)/${ID}$`)],
 	['PATCH', new RegExp(`^/api/requests/${ID}$`)],
 ];
 
@@ -147,6 +159,7 @@ const STAFF_ROUTES: Route[] = [
 	['PUT', /^\/api\/blog(?:\/.*)?$/],
 	['PATCH', /^\/api\/blog(?:\/.*)?$/],
 	['DELETE', /^\/api\/blog(?:\/.*)?$/],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/apply$`)],
 ];
 
 export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
@@ -154,6 +167,9 @@ export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
 /** Who may call a route. Anything not listed (Sermon Notes, the chat log) takes the API key or a staff session. */
 export function access(method: string, path: string, demo: boolean): Access {
 	if (matches(STAFF_ROUTES, method, path)) return 'staff';
+	if (matches(PUBLIC_BUILDER_ROUTES, method, path)) return 'public';
+	// All other builder paths and methods stay staff only.
+	if (/^\/api\/builder(?:\/.*)?$/.test(path)) return 'staff';
 	if (matches(PUBLIC_ROUTES, method, path)) return 'public';
 	if (matches(STAFF_WORK_ROUTES, method, path)) return 'staff';
 	if (matches(OPERATOR_ROUTES, method, path)) return 'key';

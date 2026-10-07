@@ -42,7 +42,7 @@ class ProviderSelectionTests(unittest.TestCase):
 
     @patch.dict('os.environ', GLOO, clear=True)
     def test_setting_gloo_key_switches_everything_to_gloo(self):
-        self.assertEqual(chat.status()['providers'], ['gloo:gloo-anthropic-claude-haiku-4.5', 'ollama:qwen3.8:27b'])
+        self.assertEqual(chat.status()['providers'], ['gloo:gloo-qwen-3.7-flash', 'ollama:qwen3.8:27b'])
         target = ai_client.endpoint()
         self.assertEqual(target['provider'], 'gloo')
         self.assertEqual(target['base_url'], 'https://platform.ai.gloo.com/ai/v2/guarded')
@@ -80,7 +80,9 @@ class FallbackTests(unittest.TestCase):
         self.ministries = json.loads((Path(chat.__file__).parent / 'ministries.json').read_text(encoding='utf-8'))
         patches = {
             'get_church_info': {'return_value': church['info']},
-            'list_content': {'side_effect': lambda kind: church[kind]},
+            'list_content': {'side_effect': lambda kind: church.get(kind, [])},
+            'get_site': {'return_value': None},
+            'list_events': {'return_value': []},
             'list_ministries': {'return_value': self.ministries},
             'log_chat': {},
         }

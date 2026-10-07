@@ -22,6 +22,9 @@ NLP_KEYWORD_RULES = [
 ]
 
 
+MAX_CATEGORY_CHARS = 40
+
+
 def _heuristic_nlp_categories(text: str, max_categories: int = 3) -> List[str]:
     """Fallback NLP rule-based classifier based on keyword frequency."""
     text_lower = text.lower()
@@ -37,8 +40,29 @@ def _heuristic_nlp_categories(text: str, max_categories: int = 3) -> List[str]:
     return categories
 
 
+def _category_list(raw: str) -> List[str]:
+    """Up to 4 categories from the first JSON array of short strings in a model reply. The reply may carry
+    reasoning, a code fence or a sentence around the array (which can contain brackets of its own)."""
+    text = re.sub(r"<think>[\s\S]*?(?:</think>|$)", "", raw or "", flags=re.IGNORECASE)
+    decoder = json.JSONDecoder()
+    start = text.find("[")
+    while start >= 0:
+        try:
+            value, _ = decoder.raw_decode(text, start)
+        except ValueError:
+            value = None
+        if isinstance(value, list) and value and all(isinstance(c, str) for c in value):
+            cats = [c.strip().strip("'\"") for c in value if c.strip()]
+            cats = list(dict.fromkeys(c for c in cats if 0 < len(c) <= MAX_CATEGORY_CHARS))
+            if cats:
+                return cats[:4]
+        start = text.find("[", start + 1)
+    return []
+
+
 async def categorize_blog_post(title: str, content: str, model: Optional[str] = None) -> List[str]:
-    """Categorize a blog post using NLP/LLM, with heuristic fallback."""
+    """Categorize a blog post with the configured model (Gloo on Cloudflare). The keyword rules are the
+    fallback when no model answers or the reply has no usable list, so a post always gets categories."""
     system_prompt = (
         "You are an NLP text classification system for a church community blog. "
         "Analyze the given blog title and content, and determine 2 to 4 concise, relevant topic categories "
@@ -55,19 +79,13 @@ async def categorize_blog_post(title: str, content: str, model: Optional[str] = 
             user_prompt=user_prompt,
             model=model,
             temperature=0.3,
-            max_tokens=200,
+            # Gloo's default model reasons before it answers, and the thinking counts toward this limit.
+            max_tokens=1024,
         )
-        # Attempt to parse JSON array from raw response
-        cleaned = raw.strip()
-        if "```" in cleaned:
-            cleaned = re.sub(r"```(?:json)?", "", cleaned).strip()
-        match = re.search(r"\[[\s\S]*?\]", cleaned)
-        if match:
-            categories = json.loads(match.group(0))
-            if isinstance(categories, list) and categories:
-                valid_cats = [str(c).strip().strip("'\"") for c in categories if str(c).strip()]
-                if valid_cats:
-                    return valid_cats[:4]
+        categories = _category_list(raw)
+        if categories:
+            return categories
+        logger.info("LLM categorization returned no category list; using heuristic NLP rules.")
     except Exception as exc:
         logger.info(f"LLM categorization failed ({exc}); using heuristic NLP rules.")
 

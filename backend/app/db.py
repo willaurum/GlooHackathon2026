@@ -12,6 +12,7 @@ a church creates its tables; only the demo church is seeded with the JSON files.
 
 import datetime
 import os
+import hashlib
 import json
 import logging
 import secrets
@@ -33,8 +34,13 @@ _client = httpx.Client(base_url="http://church-db" if _USE_LOCAL_SQLITE else CHU
 _sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+BLOG_SEEDED = "SELECT 1 FROM config WHERE key = 'blog_seeded'"
+NEWS_POSTS_SEEDED = "SELECT 1 FROM config WHERE key = 'news_posts_seeded'"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
+# Every chunk records the embedding model that made its vector; the Worker only compares a question with chunks
+# from its current model (api/embed.ts). Rows from before the tag existed were Workers AI bge-base with cls pooling.
+LEGACY_EMBED_TAG = 'workers-ai:@cf/baai/bge-base-en-v1.5:cls'
 ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
                          'political_event', 'personal_story', 'inerrancy_claim')
 
@@ -150,11 +156,49 @@ def initialize():
         _initializing.add(slug)
         try:
             _create_tables(seed=slug == DEMO_CHURCH)
+            _ensure_embed_column()
+            _ensure_highlight_engine_column()
             if slug != DEMO_CHURCH:
                 start_church(name or slug, city)
             _ready.add(slug)
         finally:
             _initializing.discard(slug)
+
+
+def _ensure_embed_column():
+    """Add chunks.embed_model to a database made before it existed; its rows are tagged as the legacy model.
+    The Worker does the same (api/embed.ts), so either side may get there first."""
+    def has_column():
+        try:
+            run(("SELECT embed_model FROM chunks LIMIT 0", ()))
+            return True
+        except Exception:
+            return False
+    if has_column():
+        return
+    try:
+        run((f"ALTER TABLE chunks ADD COLUMN embed_model TEXT NOT NULL DEFAULT '{LEGACY_EMBED_TAG}'", ()))
+    except Exception:
+        if not has_column():
+            raise
+
+
+def _ensure_highlight_engine_column():
+    """Add notes.highlight_engine (which model tagged the highlights) to a database made before it existed.
+    Notes processed before then keep '' (unknown)."""
+    def has_column():
+        try:
+            run(("SELECT highlight_engine FROM notes LIMIT 0", ()))
+            return True
+        except Exception:
+            return False
+    if has_column():
+        return
+    try:
+        run(("ALTER TABLE notes ADD COLUMN highlight_engine TEXT NOT NULL DEFAULT ''", ()))
+    except Exception:
+        if not has_column():
+            raise
 
 
 def _create_tables(seed=True):
@@ -191,7 +235,8 @@ def _create_tables(seed=True):
             word_count INTEGER,
             transcript TEXT,
             started_at TEXT,
-            created_at TEXT NOT NULL DEFAULT {NOW}
+            created_at TEXT NOT NULL DEFAULT {NOW},
+            highlight_engine TEXT NOT NULL DEFAULT ''
         )""", ()),
         ("""CREATE TABLE IF NOT EXISTS segments (
             note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -210,6 +255,7 @@ def _create_tables(seed=True):
             seg_to INTEGER NOT NULL,
             text TEXT NOT NULL,
             embedding TEXT NOT NULL,
+            embed_model TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (note_id, idx)
         )""", ()),
         # Transcript passages tagged by category (Bible quote, personal story, ...), as segment ranges.
@@ -299,10 +345,18 @@ def _create_tables(seed=True):
     statements.append(('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, location TEXT NOT NULL, ministry_name TEXT, description TEXT NOT NULL, ai_summary TEXT)', ()))
     events_file = Path(__file__).with_name('events.json')
     if events_file.exists():
+        # Each sample event is added once, with a marker per event: an event staff delete stays deleted
+        # across container restarts, and an event added to events.json later still reaches the demo church.
+        # It keeps its id unless staff events already took it, and is skipped if the same event is there.
         for event in json.loads(events_file.read_text(encoding='utf-8')):
-            statements.append(('INSERT OR IGNORE INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
-                 event.get('ministry_name'), event['description'], event.get('ai_summary'))))
+            marker = f"event_seeded:{event['id']}"
+            statements.append(('INSERT INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) '
+                               'SELECT CASE WHEN EXISTS (SELECT 1 FROM events WHERE id = ?) THEN NULL ELSE ? END, ?, ?, ?, ?, ?, ?, ?, ? '
+                               'WHERE NOT EXISTS (SELECT 1 FROM config WHERE key = ?) '
+                               'AND NOT EXISTS (SELECT 1 FROM events WHERE title = ? AND date = ?)',
+                (event['id'], event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
+                 event.get('ministry_name'), event['description'], event.get('ai_summary'), marker, event['title'], event['date'])))
+            statements.append(("INSERT OR IGNORE INTO config VALUES (?, 'true')", (marker,)))
     statements += [("INSERT OR IGNORE INTO ministries VALUES (?, ?)", (m['id'], json.dumps(m))) for m in ministries]
     church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
     statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
@@ -346,7 +400,7 @@ def _create_tables(seed=True):
     )
     statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
         SELECT 1, 'Walking in Faith: Cultivating Joy in Seasons of Change', ?, 'Pastor Marcus Vance', ?, ?, {NOW}, {NOW}
-        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1)""", (post1_content, post1_cats, post1_bullets)))
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1) AND NOT EXISTS ({BLOG_SEEDED})""", (post1_content, post1_cats, post1_bullets)))
 
     post2_cats = json.dumps(["Local Outreach", "Volunteering", "Compassion Ministry"])
     post2_bullets = json.dumps([
@@ -364,18 +418,23 @@ def _create_tables(seed=True):
     )
     statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
         SELECT 2, 'The Heart of Service: How Everyday Acts Build Lasting Hope', ?, 'Elena Rostova, Outreach Director', ?, ?, {NOW}, {NOW}
-        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2)""", (post2_content, post2_cats, post2_bullets)))
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2) AND NOT EXISTS ({BLOG_SEEDED})""", (post2_content, post2_cats, post2_bullets)))
+    # The sample posts are seeded once. Without this marker every container start (deploys, and waking
+    # after sleepAfter) would bring back a sample post that staff had deleted.
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('blog_seeded', 'true')", ()))
 
     # More News posts: mostly short updates that point somewhere, plus articles with key takeaways.
+    # Seeded once, like the sample posts above (a separate marker, so a church seeded before these existed gets them).
     for post in json.loads(Path(__file__).with_name('news_posts.json').read_text(encoding='utf-8')):
         posted = post['date'] + 'T12:00:00Z'
         categories = post.get('categories') or [post['category']]
-        statements.append(("""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+        statements.append((f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?)""",
+            WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?) AND NOT EXISTS ({NEWS_POSTS_SEEDED})""",
             (post['title'], post['content'], post.get('author', 'Church Staff'), json.dumps(categories),
              json.dumps(post.get('bullet_summary', [])), post.get('kind', 'update'),
              post.get('link_url', ''), post.get('link_label', ''), posted, posted, post['title'])))
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('news_posts_seeded', 'true')", ()))
 
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
@@ -385,7 +444,12 @@ def _create_tables(seed=True):
     if not seed:
         return
     if live_news:
-        replace_news(live_news)
+        # Only when the snapshot shipped with this build is new to this church: a container start must not
+        # undo a POST /api/news/refresh, and a deploy with a newer snapshot still takes effect.
+        stamp = hashlib.sha256(json.dumps(live_news, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+        applied = one("SELECT data FROM config WHERE key = 'news_snapshot'")
+        if not applied or _data(applied) != stamp:
+            replace_news(live_news, snapshot=stamp)
     # Backfill shift schedules and requirements into existing ministries without overwriting.
     seeds = {m['id']: m for m in ministries}
     updates = []
@@ -454,6 +518,16 @@ def get_church_info():
     return _data(one("SELECT data FROM church_content WHERE kind = 'info'"))
 
 
+def get_site():
+    row = one("SELECT data FROM church_content WHERE kind = 'site'")
+    return _data(row) if row else None
+
+
+def get_page(slug):
+    row = one("SELECT data FROM church_content WHERE kind = 'pages' AND json_extract(data, '$.slug') = ?", (slug,))
+    return _data(row) if row else None
+
+
 def list_content(kind):
     return [_data(row) for row in query("SELECT data FROM church_content WHERE kind = ? ORDER BY id", (kind,))]
 
@@ -463,7 +537,7 @@ def list_content(kind):
 # The info fields every church has. A new church starts with these empty except its name and city.
 BLANK_INFO = {'name': '', 'city': '', 'address': '', 'phone': '', 'email': '', 'office_hours': '',
               'services': [], 'about': '', 'first_visit': '', 'care_team': '', 'map_query': ''}
-CONTENT_KINDS = ('faqs', 'events', 'groups')
+CONTENT_KINDS = ('faqs', 'events', 'groups', 'staff', 'locations', 'sermons', 'pages')
 EVENT_COLUMNS = ('title', 'category', 'date', 'time', 'location', 'ministry_name', 'description', 'ai_summary')
 
 
@@ -476,13 +550,14 @@ def start_church(name, city=''):
 
 def export_content():
     """Everything a church shows, in the import shape (see replace_content and README.md)."""
-    return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS},
+    return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS}, 'site': get_site(),
             'ministries': [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")],
             'calendar': list_events(), 'regions': list_regions()}
 
 
 def replace_content(content):
-    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar, regions)
+    """Replace the sections present in `content` (info, faqs, events, groups, staff, locations, sermons, ministries,
+    calendar, regions)
     in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
     A ministry that saved connections or requests still point at is kept, so they stay readable."""
     statements = []
@@ -492,6 +567,9 @@ def replace_content(content):
              (json.dumps(content['info']),)),
             ("UPDATE config SET data = json_set(data, '$.name', ?) WHERE key = 'church'", (content['info']['name'],)),
         ]
+    if 'site' in content:
+        statements.append(("INSERT INTO church_content VALUES ('site', 0, ?) ON CONFLICT (kind, id) DO UPDATE SET data = excluded.data",
+                           (json.dumps(content['site']),)))
     for kind in CONTENT_KINDS:
         if kind in content:
             statements.append(("DELETE FROM church_content WHERE kind = ?", (kind,)))
@@ -621,7 +699,7 @@ def update_config(fields):
 
 # --- Pastor Notes ---
 
-NOTE_COLUMNS = "id, title, source_kind, source_url, status, error, duration, word_count, created_at"
+NOTE_COLUMNS = "id, title, source_kind, source_url, status, error, duration, word_count, created_at, highlight_engine"
 
 
 def create_note(note_id, title, source_kind, source_url=None, r2_key=None):
@@ -669,25 +747,43 @@ def fail_note(note_id, error):
     query("UPDATE notes SET status = 'failed', error = ? WHERE id = ?", (error[:300], note_id))
 
 
-def save_transcript(note_id, segments, chunks, duration, annotations=()):
-    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction."""
+def save_transcript(note_id, segments, chunks, duration, annotations=(), highlight_engine=''):
+    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction.
+    highlight_engine names the model(s) that tagged the annotations (for example gloo:gloo-qwen-3.7-flash)."""
     text = ' '.join(s['text'] for s in segments).strip()
     statements = [("DELETE FROM segments WHERE note_id = ?", (note_id,)),
                   ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
                   ("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
     statements += [('INSERT INTO segments (note_id, idx, start, "end", text) VALUES (?, ?, ?, ?, ?)',
                     (note_id, i, s['start'], s['end'], s['text'])) for i, s in enumerate(segments)]
-    statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'], json.dumps(c['embedding'])))
+    # A chunk without a vector (embeddings were unavailable) is stored with '' for both; the Worker embeds it later.
+    statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding, embed_model) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'],
+                     *((json.dumps(c['embedding']), c.get('embed_model') or '') if c.get('embedding') else ('', ''))))
                    for i, c in enumerate(chunks)]
     statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
                     'VALUES (?, ?, ?, ?, ?, ?)',
                     (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
                    for a in annotations]
-    statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?
-        WHERE id = ?""", (text, duration, len(text.split()), note_id)))
+    statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?,
+        highlight_engine = ? WHERE id = ?""", (text, duration, len(text.split()), highlight_engine or '', note_id)))
     run(*statements)
+
+
+def replace_annotations(note_id, annotations, highlight_engine):
+    """Replace a note's annotations and record which model tagged them, in one transaction."""
+    statements = [("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
+    statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
+                   for a in annotations]
+    statements.append(("UPDATE notes SET highlight_engine = ? WHERE id = ?", (highlight_engine or '', note_id)))
+    run(*statements)
+
+
+def set_highlight_engine(note_id, highlight_engine):
+    query("UPDATE notes SET highlight_engine = ? WHERE id = ?", (highlight_engine, note_id))
 
 
 def delete_note(note_id):
@@ -724,6 +820,11 @@ def update_event_summary(event_id, ai_summary):
     return one("""UPDATE events SET ai_summary = ? WHERE id = ?
         RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
                (ai_summary, event_id))
+
+
+def delete_event(event_id):
+    """Remove one calendar event. True if it existed."""
+    return one("DELETE FROM events WHERE id = ? RETURNING id", (event_id,)) is not None
 
 
 def create_event(title, category, date, time, location, description, ministry_name=None, ai_summary=None):
@@ -827,11 +928,15 @@ def _live_news():
     return json.loads(live_file.read_text(encoding='utf-8')) if live_file.exists() else []
 
 
-def replace_news(items):
-    """Replace every news row of the current church with `items`, in one transaction."""
+def replace_news(items, snapshot=None):
+    """Replace every news row of the current church with `items`, in one transaction. `snapshot` records
+    which shipped news_live.json this was, so startup does not apply the same snapshot again."""
+    marker = [("INSERT INTO config VALUES ('news_snapshot', ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+               (json.dumps(snapshot),))] if snapshot else []
     run(("DELETE FROM news_events", ()),
         *[("INSERT INTO news_events VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
-           (item['id'], json.dumps(item))) for item in items])
+           (item['id'], json.dumps(item))) for item in items],
+        *marker)
 
 
 # --- Blog posts ---

@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api, fmt } from './api.js';
+import { hashFor } from './church.js';
 import { useChurch } from './ChurchContext.js';
+import { livestreamLink, pageOfType } from './churchSite.js';
 import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
+import { safeHref } from './site.js';
 
 const STEPS = [
   ['See the need', 'A shared view of volunteer coverage and what each team does.'],
@@ -12,11 +15,15 @@ const STEPS = [
 
 export default function Home({ go, onAsk }) {
   const church = useChurch();
-  const [info, setInfo] = useState(null), [giving, setGiving] = useState(null);
+  const [info, setInfo] = useState(null), [giving, setGiving] = useState(null), [sermons, setSermons] = useState([]);
   useEffect(() => {
     api('/info').then(setInfo).catch(() => {});
     loadChurch(church.slug).then(setGiving).catch(() => {});
+    // Sermons the church publishes on its website (imported by Tekton or added in Church setup).
+    if (!church.demo) api('/church').then(c => setSermons((c.sermons || []).filter(s => safeHref(s.url)))).catch(() => {});
   }, []);
+  const live = livestreamLink(church.site);
+  const recent = [...sermons].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3);
   // The first fund with a goal gets the progress bar on the Give card.
   const goal = giving && [...giving.funds, ...giving.trips].find(f => f.goal > 0);
   const newChurch = !church.demo && info && !info.services?.length;
@@ -30,6 +37,7 @@ export default function Home({ go, onAsk }) {
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={() => go('guests/plan')}>Planning your first visit?<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Tekton</button>
+        {live && <a className="btn secondary" href={live.url} target="_blank" rel="noopener noreferrer"><Icon name="play" size={18} />Watch live</a>}
       </div>
       <div className="hero-art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /></div>
     </section>
@@ -42,19 +50,19 @@ export default function Home({ go, onAsk }) {
     </section>}
 
     <div className="features">
-      <a className="card feature" href="#/serve" onClick={e => { e.preventDefault(); go('serve'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
         <span className="icon color1"><Icon name="users" size={22} /></span>
         <h2>Serve</h2>
         <p>Browse ministry teams, see where help is needed, and match members to a place that fits.</p>
         <span className="link">Explore ministries<Icon name="arrow" size={16} /></span>
       </a>
-      <a className="card feature" href="#/notes" onClick={e => { e.preventDefault(); go('notes'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); go('notes'); }}>
         <span className="icon color3"><Icon name="book" size={22} /></span>
         <h2>Sermon Notes</h2>
         <p>Read past sermons and ask questions. Answers quote the message with timestamps.</p>
         <span className="link">Open sermon notes<Icon name="arrow" size={16} /></span>
       </a>
-      <a className="card feature" href="#/give" onClick={e => { e.preventDefault(); go('give'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); go('give'); }}>
         <span className="icon color0"><Icon name="heart" size={22} /></span>
         <h2>Give</h2>
         {goal ? <>
@@ -65,16 +73,27 @@ export default function Home({ go, onAsk }) {
       </a>
     </div>
 
-    {/* The About pages hold the demo church's own text; other churches do not show these links yet. */}
-    {church.demo && <section className="know-us" aria-label="Get to know us">
+    {/* Beliefs is Grace Community's own statement; other churches show it when Tekton imported theirs. */}
+    <section className="know-us" aria-label="Get to know us">
       <div className="eyebrow">Get to know us</div>
       <div className="know-links">
         <button className="secondary" onClick={() => go('about')}><Icon name="info" size={18} />Our story</button>
-        <button className="secondary" onClick={() => go('about/beliefs')}><Icon name="book" size={18} />What we believe</button>
+        {(church.demo || pageOfType(church.pages, 'beliefs')) && <button className="secondary" onClick={() => go('about/beliefs')}><Icon name="book" size={18} />What we believe</button>}
         <button className="secondary" onClick={() => go('about/news')}><Icon name="news" size={18} />News</button>
         <button className="secondary" onClick={() => go('about/directory')}><Icon name="phone" size={18} />Contact directory</button>
         <button className="primary" onClick={() => go('about/connect')}><Icon name="mail" size={18} />Connect with us</button>
       </div>
+    </section>
+
+    {recent.length > 0 && <section className="card week home-sermons" id="home-sermons">
+      <div className="week-head">
+        <div><div className="eyebrow">Watch &amp; listen</div><h2>Recent sermons</h2></div>
+        <button className="link" onClick={() => go('notes')}>All sermons<Icon name="arrow" size={16} /></button>
+      </div>
+      <ul>{recent.map(s => <li key={s.id ?? s.url}>
+        <a className="link" href={safeHref(s.url)} target="_blank" rel="noopener noreferrer">{s.title}</a>
+        <small>{[s.date, s.speaker, s.series, s.scripture].filter(Boolean).join(' · ')}</small>
+      </li>)}</ul>
     </section>}
 
     {info?.services?.length > 0 && <section className="card week" id="home-service-times">

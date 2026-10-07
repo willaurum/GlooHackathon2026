@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import ChurchMap from './ChurchMap.jsx';
 import { useChurch } from './ChurchContext.js';
+import { directionsHref, nextSteps as pickNextSteps } from './churchSite.js';
 import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS } from './visitMap.js';
 
 const TOKEN_KEY = 'belong.visitToken';
@@ -40,7 +41,8 @@ export default function VisitPage() {
         // An API build from before the guest-visits merge answers /church with the
         // sermon-notes config ({ name, timezone, default_language }), which has no info.
         if (!Array.isArray(data?.info?.services)) throw new Error('The church API returned an unexpected response.');
-        setChurch({ ...data, events: Array.isArray(data.events) ? data.events : [] });
+        const list = key => Array.isArray(data[key]) ? data[key] : [];
+        setChurch({ ...data, events: list('events'), faqs: list('faqs'), locations: list('locations') });
         const first = data.info.services[0];
         if (first) setService(prev => prev || `${first.day} ${first.time}`);
         const token = readToken(tokenKey);
@@ -102,7 +104,9 @@ export default function VisitPage() {
   // The parking and entrances map is an illustration made for the demo church; other churches get directions to their address.
   const place = site.demo ? EXAMPLE_CAMPUS.directionsQuery : [info.address, info.city].filter(Boolean).join(', ') || info.map_query || '';
   const directions = encodeURIComponent(place);
-  const nextSteps = church.events.filter(ev => ev.audience === 'Newcomers' || ev.audience === 'Everyone' || ev.audience === 'Families').slice(0, 3);
+  const nextSteps = pickNextSteps(church.events, site.demo);
+  // The demo church's own questions are about Grace Community, so they stay in the chat; other churches show theirs.
+  const faqs = site.demo ? [] : church.faqs;
 
   return <div className="visit-page">
     {error && <div className="api-message" role="alert">{error}</div>}
@@ -134,6 +138,31 @@ export default function VisitPage() {
       </div>
     </section>}
 
+    {church.locations.length > 0 && <section className="card visit-section" id="visit-locations">
+      <div className="eyebrow">OUR CAMPUSES</div>
+      <h2>Places we meet</h2>
+      <div className="service-cards">
+        {church.locations.map(loc => <article key={loc.id ?? loc.name} className="service-card campus-card">
+          <strong>{loc.name}</strong>
+          {loc.address && <p>{loc.address}</p>}
+          {loc.service_times && <p>{loc.service_times}</p>}
+          {loc.note && <p>{loc.note}</p>}
+          {(loc.map_query || loc.address) && <a className="link" href={directionsHref(loc.map_query || loc.address)} target="_blank" rel="noopener noreferrer">Get directions</a>}
+        </article>)}
+      </div>
+    </section>}
+
+    {faqs.length > 0 && <section className="card visit-section" id="visit-good-to-know">
+      <div className="eyebrow">GOOD TO KNOW</div>
+      <h2>Questions people ask</h2>
+      <div className="faq-list">
+        {faqs.map(f => <details key={f.id ?? f.question} className="faq">
+          <summary>{f.question}</summary>
+          <p>{f.answer}</p>
+        </details>)}
+      </div>
+    </section>}
+
     {site.demo && <section className="card visit-section" id="visit-map">
       <div className="eyebrow">FIND YOUR WAY</div>
       <h2>Parking, entrances &amp; kids check-in</h2>
@@ -162,7 +191,7 @@ export default function VisitPage() {
       <div className="service-cards">
         {nextSteps.map(ev => <article key={ev.id} className="service-card">
           <strong>{ev.name}</strong>
-          <p>{ev.when} · {ev.where}</p>
+          <p>{[ev.when, ev.where].filter(Boolean).join(' · ')}</p>
           <p>{ev.description}</p>
         </article>)}
       </div>
@@ -209,7 +238,7 @@ export default function VisitPage() {
         {visit.status === 'arrived' && (visit.wants_host ? <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>The welcome team has been notified…</h2>
-          <p>Hang tight — someone will come find you at the main entrance shortly.</p>
+          <p>Hang tight. Someone will come find you at the main entrance shortly.</p>
         </> : <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>Thanks for letting us know. Enjoy the service!</h2>

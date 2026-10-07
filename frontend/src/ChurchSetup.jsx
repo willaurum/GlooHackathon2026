@@ -61,6 +61,7 @@ export function StaffSignIn() {
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
     <p className="form-note">Need an account? Ask your church Owner to add you in Church staff → Team.</p>
+    <p className="form-note">Starting a new church site? <a href="/#/new">Create it from your current website</a>.</p>
   </form>;
 }
 
@@ -101,6 +102,7 @@ function SetupForms() {
     <Services info={info} save={save} />
     <Faqs faqs={content.faqs} save={save} />
     <Teams ministries={content.ministries} save={save} />
+    {LISTS.map(list => <ListPart key={list.kind} list={list} items={content[list.kind] || []} save={save} />)}
     <Places regions={content.regions} save={save} />
   </div>;
 }
@@ -223,6 +225,49 @@ function Teams({ ministries, save }) {
       <button type="button" className="ghost" onClick={() => setRows(x => x.filter((_, j) => j !== i))}><Icon name="x" size={16} />Remove this team</button>
     </div>)}
     <button type="button" className="secondary" onClick={() => setRows(x => [...x, { ...blank }])}><Icon name="plus" size={18} />Add a team</button>
+  </Part>;
+}
+
+// Simple lists a church keeps (the site builder fills these from the church's website). Fields:
+// [key, label, placeholder, max length, wide]. The first field is required.
+const LISTS = [
+  { kind: 'staff', id: 'setup-staff', icon: 'users', title: 'Staff and leaders', item: 'person',
+    text: 'The people listed in your directory. Names, roles and emails here are public.',
+    fields: [['name', 'Name', 'e.g. Pastor Pat Lee', 120], ['role', 'Role', 'e.g. Lead Pastor', 120], ['email', 'Email', 'e.g. pat@yourchurch.org', 200], ['phone', 'Phone', '', 60], ['bio', 'Short bio', '', 2000, true]] },
+  { kind: 'locations', id: 'setup-locations', icon: 'pin', title: 'Locations', item: 'location',
+    text: 'Campuses or other places you meet. Your main address stays under Your church.',
+    fields: [['name', 'Name', 'e.g. Riverside Campus', 120], ['address', 'Address', 'e.g. 410 Mill Street, Austin, TX', 300], ['service_times', 'Service times', 'e.g. Sundays 10:00 AM', 300]] },
+  { kind: 'events', id: 'setup-events', icon: 'clock', title: 'Regular gatherings', item: 'gathering',
+    text: 'Things that happen every week or month. One-time events go on the Calendar.',
+    fields: [['name', 'Name', 'e.g. Wednesday night dinner', 200], ['when', 'When', 'e.g. Wednesdays 6:00 PM', 200], ['where', 'Where', 'e.g. Fellowship Hall', 200], ['description', 'Description', '', 2000, true]] },
+  { kind: 'groups', id: 'setup-groups', icon: 'users', title: 'Small groups', item: 'group',
+    text: 'Groups, classes and Bible studies people can join. The chat assistant suggests these.',
+    fields: [['name', 'Name', "e.g. Tuesday women's group", 200], ['when', 'When', 'e.g. Tuesdays 9:30 AM', 200], ['where', 'Where', '', 200], ['audience', 'Who it is for', 'e.g. women', 100], ['description', 'Description', '', 2000, true]] },
+  { kind: 'sermons', id: 'setup-sermons', icon: 'book', title: 'Sermons online', item: 'sermon',
+    text: 'Links to sermons you publish. Staff can transcribe a YouTube sermon from Sermon Notes.',
+    fields: [['title', 'Title', '', 200], ['date', 'Date', 'YYYY-MM-DD', 10], ['speaker', 'Speaker', '', 120], ['scripture', 'Scripture', '', 120], ['url', 'Link', 'https://…', 500, true]] },
+];
+
+function ListPart({ list, items, save }) {
+  const blank = () => Object.fromEntries(list.fields.map(([key]) => [key, '']));
+  const [rows, setRows] = useState(() => items.map(item => ({ ...blank(), ...item })));
+  const set = (i, k) => e => setRows(r => r.map((row, j) => (j === i ? { ...row, [k]: e.target.value } : row)));
+  const required = list.fields[0][0];
+  async function onSave() {
+    const kept = rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])))
+      .filter(r => list.fields.some(([key]) => r[key]));
+    if (kept.some(r => !r[required])) throw new Error(`Each ${list.item} needs a ${list.fields[0][1].toLowerCase()}. Fill it in, or remove it.`);
+    if (list.kind === 'sermons' && kept.some(r => r.date && !/^\d{4}-\d{2}-\d{2}$/.test(r.date))) throw new Error('Write sermon dates as YYYY-MM-DD.');
+    if (list.kind === 'sermons' && kept.some(r => r.url && !/^https?:\/\/\S+$/.test(r.url))) throw new Error('Sermon links must start with https://');
+    return save({ [list.kind]: kept });
+  }
+  return <Part id={list.id} icon={list.icon} title={list.title} text={list.text} onSave={onSave}>
+    {rows.map((r, i) => <div key={r.id ?? 'new-' + i} className="setup-item">
+      <div className="form-row">{list.fields.filter(f => !f[4]).map(([key, label, ph, max]) => <label key={key} className="field">{label}<input value={r[key] || ''} maxLength={max} placeholder={ph} onChange={set(i, key)} /></label>)}</div>
+      {list.fields.filter(f => f[4]).map(([key, label, ph, max]) => <label key={key} className="field">{label} <small>Optional</small><textarea rows={2} value={r[key] || ''} maxLength={max} placeholder={ph} onChange={set(i, key)} /></label>)}
+      <button type="button" className="ghost" onClick={() => setRows(x => x.filter((_, j) => j !== i))}><Icon name="x" size={16} />Remove this {list.item}</button>
+    </div>)}
+    <button type="button" className="secondary" onClick={() => setRows(x => [...x, blank()])}><Icon name="plus" size={18} />Add a {list.item}</button>
   </Part>;
 }
 

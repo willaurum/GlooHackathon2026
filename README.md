@@ -2,7 +2,7 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-Tekton is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton is the base church-site template for a future Agentic Website Builder. The Agentic Website Builder is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
@@ -20,7 +20,7 @@ An **Ask Tekton** chat assistant is available on every page.
 |---|---|---|
 | `gloo-hackathon2026` | https://gloo-hackathon2026.jaronwilson2025.workers.dev | The live site: the React frontend built from `main` (static assets, repo root `wrangler.jsonc`). |
 | `preview-jaron-frontend-gloo-hackathon2026` | https://preview-jaron-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev | The integration preview: the latest `jaron-frontend`, which every PR goes into. Check new work here before it goes to `main`. It uses the two APIs below through its `/api` and `/giving-api` proxy. |
-| `gloo-hackathon2026-api-pastor-notes` | https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev | Church API (`api/`): a Cloudflare **Container** running the FastAPI backend, a **SQLite Durable Object** database, **R2** for sermon media, **Workers AI** for transcription and embeddings. Serves Serve, Guests, Calendar, Prayer map, the chat, Sermon Notes and Bible verses. |
+| `gloo-hackathon2026-api-pastor-notes` | https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev | Church API (`api/`): a Cloudflare **Container** running the FastAPI backend, a **SQLite Durable Object** database, **R2** for sermon media, **Workers AI** for transcription (Whisper) and **Gloo AI** for the language work, including sermon-note embeddings. Serves Serve, Guests, Calendar, Prayer map, the chat, Sermon Notes and Bible verses. |
 | `gloo-hackathon2026-api-donate-giving` | https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev | Giving API (`api-giving/`): a Worker with one SQLite Durable Object per church plus a small registry object. |
 
 ### Branch and PR previews
@@ -108,7 +108,7 @@ For local API development run `npx wrangler dev` in `api/` or `api-giving/`.
 
 ## Churches
 
-Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future templatizer provisioning is outside this change.
+Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future Agentic Website Builder provisioning is outside this change.
 
 ### Which church the site shows
 
@@ -119,7 +119,7 @@ Grace Community is the fictional demo of the base template. Existing church site
 3. **Saved**: the church this browser picked last (localStorage `belong-church`). Opening a church link also saves it.
 4. **Demo**: `grace-community`.
 
-Routes without a church, like `#/serve`, keep working and use whichever church that picks. Links to the demo church stay short (`#/serve`); links to any other church name it (`#/c/<slug>/serve`). The church name sits at the left of the desktop top bar, with **Staff sign in / Church setup** (`#/setup`) at its right end; on phones both sit in the top bar.
+Routes without a church, like `#/serve`, keep working and use whichever church that picks, and the address bar is then rewritten to name it. Every link and in-app navigation names the church (`#/c/<slug>/serve`), the demo church too, so a copied address or a shared link (Church setup, the giving staff page) keeps the church. On a church subdomain the hash stays plain. The church name sits at the left of the desktop top bar, with **Staff sign in / Church setup** (`#/setup`) at its right end; on phones both sit in the top bar.
 
 **Churches do not see each other.** There is no church list, search or switcher anywhere on the site (the hidden, key-protected [platform list](#the-platform-list-for-the-team-building-tekton) is for the team only): a visitor reaches a church only by its own link (`#/c/<slug>/` today, `<slug>.<BASE_DOMAIN>` once subdomains are on), and the saved church brings them back. The giving Worker's `GET /api/churches` no longer lists the registry; whatever the query, it answers with only the public demo church, so older builds still render. Exact lookups by slug (`/api/directory/<slug>`, `/api/churches/<slug>`) stay, since links need them. Church setup shows the church's link with a Copy button ("Share this link with your church"), plus its future subdomain when the build sets `VITE_BASE_DOMAIN`. An unknown slug shows "We could not find that church." with **See the demo church**, and is not kept as the saved church. Grace Community stays a public demo.
 
@@ -150,7 +150,7 @@ sessions remain valid until sign-out or expiry. Grace Community always retains t
 Owner login with email blank; its password lives in `ADMIN_KEY` in `api-giving/wrangler.jsonc`.
 Public `POST /api/churches` returns 403 and creates nothing. Internal church initialization
 remains for existing infrastructure and local test fixtures; no new provisioning UI or
-templatizer is included. Deploy the giving API alongside the frontend to disable the old
+Agentic Website Builder is included. Deploy the giving API alongside the frontend to disable the old
 public endpoint and enable staff accounts.
 
 For the full local giving checks (Node 22.13+), run `node test/fake-stripe.mjs` and
@@ -222,6 +222,18 @@ A church is one JSON document, read with `GET /api/church/content` and written w
 
 Extra fields are kept. A ministry that saved connections or requests still point at is not deleted by an import, so those stay readable. Giving funds and mission trips are not part of this document: they live in the giving Worker (`/api/churches/<slug>/admin/funds`), with the same staff session. Prayer map places and their field updates are in it under `regions`.
 
+### Agentic builder
+
+Anyone can open `#/new`, a standalone **Create your church site** page, to follow **Import → Clarify → Review → Create your church**. Import an existing website, resolve conflicts using the page and exact quote behind each candidate, fill missing details, and review or edit the confirmed content. **Preview your site** opens the normal site template at `#/new/preview`, filled with the draft's content, without an account. Navigation stays in preview, a banner links back to the builder, and live actions are disabled. Public church registration remains closed; the create step explains this and offers the preview. The browser tab remembers the draft and any previously created church across reloads. If loading fails after an earlier signup, **Try again** applies to the same church. Import notes show when pages or sources were skipped. The in-church `#/build` page and its Church setup entry have been removed.
+
+Import can also start with **Upload church materials** (1–5 PDF, text, HTML, DOCX or PNG/JPEG/WebP files, each up to 5 MB and at most 10 MB total), or **Answer questions instead**. File evidence shows the filename and exact quote. Scanned PDFs and images use the vision reader when configured; otherwise import notes explain why they were skipped. All three choices share the same claims, questions, answers, review and preview flow.
+
+The backend is `backend/app/builder.py`. Public routes are `POST /api/builder/drafts` (a website import: answers 202 and runs in the background; poll the draft until its status is no longer `importing`), `/blank` or `/upload` (multipart field `files`), `GET /api/builder/drafts/<id>` or `/site`, and `POST /api/builder/drafts/<id>/answers`, `/items` (include, leave out or edit an imported event, person, ministry, group, location or sermon), `/parts` (keep or leave out imported pages, links, forms, players and images, and confirm permission for images) or `/preview`, and `GET /api/builder/drafts/<id>/pages/<page>` (one imported page). Website imports follow robots.txt (including `Crawl-delay`) for every host, read the sitemap and up to 40 pages, most useful first, plus calendar and sermon feeds and the site's stylesheets, and keep the site's menu, pages, calls to action, forms, players, colors and fonts so it can be recreated (applied pages are public at `GET /api/church/pages/<slug>` and shown at `#/p/<slug>`); see `docs/agentic-builder.md`. The content preview requires all questions to be answered. The read-only site snapshot also accepts unfinished drafts and returns the same info, church, ministries and calendar shapes as the live public endpoints, without writing a church database. `POST /api/builder/drafts/<id>/apply` requires the target church's staff session, refuses the demo church, and consumes the draft after a successful write. All other builder paths stay staff only; the old sessions routes are gone.
+
+Drafts are church-independent: they live in the reserved platform database space `builder`, in its `config` table as `draft:<id>`. The registry reserves the `builder` slug. Only the unguessable draft id grants public access; drafts expire 24 hours after creation, and page texts stay on the server. Public imports refuse private-network addresses and are limited to 5 starts per client IP per rolling hour, 60 overall per hour, and 3 concurrent imports in the single backend container. Limit failures return 429; the Worker forwards Cloudflare's client IP header.
+
+On Cloudflare the container can only reach the hosts in `allowedHosts`, and a church's website can be anywhere, so the builder fetches pages and images through the Worker: the container gets `BUILDER_FETCH_URL=http://builder-fetch`, and the `builder-fetch` outbound handler (`api/builderfetch.ts`) does the request. It allows http(s) on the default ports only, refuses credentials, local names (`localhost`, `.local`, `.internal`, single-label names), and any private, loopback, link-local, metadata or reserved IP, whether it is in the URL or what the name resolves to (checked over DNS-over-HTTPS), and checks every redirect the same way. Pages, sitemaps and feeds are cut at 1 MB, stylesheets at 500 KB, images over 4 MB are refused, and each fetch has 10 seconds. The builder's AI runs on Gloo like everything else, with a fast model that also reads images: `GLOO_BUILDER_MODEL`, then `GLOO_MATCH_MODEL`, then `gloo-anthropic-claude-haiku-4.5`. When the AI is offline or slow, the import still finishes with the rule-based details and says so in its notes.
+
 ### Adding an endpoint
 
 Nothing extra: any endpoint that goes through `db.py` already runs against the church of the request. In the Worker, add the route to the right list in `api/churches.ts` (public, staff work that the demo church leaves open, or staff only); a route on no list needs the API key or a staff session. A new table goes in `db.initialize` as usual. Its seed `INSERT`s only run for the demo church.
@@ -260,9 +272,13 @@ Secrets are set with `npx wrangler secret put <NAME>` in the worker's directory 
 |---|---|---|
 | `NOTES_API_KEY` | `api/` | Required for Sermon Notes routes. The page asks for it once and keeps it in the browser tab only. |
 | `NOTES_ADMIN_KEY` | `api/` | Changing the church config. |
-| `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the version (default `3034`, Berean Standard Bible). |
+| `YOUVERSION_APP_KEY` | `api/` | YouVersion Platform app key for Bible passages in Sermon Notes. Optional `YOUVERSION_BIBLE_ID` picks the default version (default `3034`, Berean Standard Bible); readers can switch to any other version the key is licensed for. |
 | `YTDLP_COOKIES` | `api/` | Optional; helps YouTube downloads (see below). |
-| `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. |
+| `YT_HELPER_URL` / `YT_HELPER_KEY` | `api/` | Optional. The [YouTube helper](#youtube-links-the-youtube-helper) that downloads YouTube audio from Jaron's dev server. Set `YT_HELPER_URL` as a GitHub Actions **variable** and `YT_HELPER_KEY` as a GitHub **secret**; Deploy backend copies both to the Worker. The key stays in the Worker. |
+| `GLOO_BUILDER_MODEL` | `api/` | Optional GitHub Actions **variable**; Deploy backend copies it to the Worker. The agentic builder's Gloo model (default: `GLOO_MATCH_MODEL`, then `gloo-anthropic-claude-haiku-4.5`). |
+| `GLOO_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `api/` | Optional; switches the chat from demo replies to a real model. `GLOO_API_KEY` also turns on sermon-note embeddings. |
+| `GLOO_EMBED_MODEL` | `api/` | Optional, not secret. The Gloo embedding model for sermon-note search (default `gloo-baai-bge-base-en-v1.5`). Set it as a GitHub Actions **variable**, next to `GLOO_MODEL`; Deploy backend copies both to the Worker. |
+| `GLOO_NOTES_MODEL` | `api/` | Optional, not secret. The Gloo model that tags sermon highlights (default: `GLOO_MODEL`, then `gloo-qwen-3.7-flash`). Also a GitHub Actions **variable**; Deploy backend copies it to the Worker, which passes it to the container. |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `api-giving/` | Encrypts each church's stored Stripe key. Without it, churches cannot connect Stripe. If it is lost or changed, churches must paste their Stripe keys again. |
 | `PLATFORM_ADMIN_KEY` | `api-giving/` | Optional. Turns on the platform team's list of every church (`GET /api/platform/churches` and the `#/platform` page). Set with `npx wrangler secret put PLATFORM_ADMIN_KEY --name gloo-hackathon2026-api-donate-giving`. Without it the route is a 404. Never give it to a church. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `api-giving/` | Legacy single-church settings from before church sign-up. Churches now connect their own Stripe key from the staff area. |
@@ -276,6 +292,7 @@ Workers secrets cannot be read back once set, so Jaron keeps a copy of each key 
 | `PLATFORM_ADMIN_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-platform-admin-key.txt` |
 | `STRIPE_KEY_ENCRYPTION_KEY` | `gloo-hackathon2026-api-donate-giving` | `~/.secrets/gloo-stripe-key-encryption-key.txt` |
 | `YOUVERSION_APP_KEY` | `gloo-hackathon2026-api-pastor-notes` | `~/.secrets/youversion-app-key.txt` (app `belong-Gloo-Hackathon2026` on platform.youversion.com) |
+| `YT_HELPER_KEY` | GitHub secret, copied to `gloo-hackathon2026-api-pastor-notes` | `~/.secrets/youtube-helper-key.txt` (the helper reads the same file) |
 
 - **Opening the platform list:** run `cat ~/.secrets/gloo-platform-admin-key.txt` on the dev server, open `<site>/#/platform` and paste the key. Share it with the team in person or through a password manager, never in chat or in a commit.
 - **Seeing what is set:** `npx wrangler secret list --name <worker>` shows the names (never the values).
@@ -320,6 +337,67 @@ The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) ta
 - The chat can suggest a page with a **Take me there** button: home, plan-visit, ministries, find-place, saved-connections, calendar, give, and prayer-map. A suggestion can also name a section to scroll to (home: service-times; plan-visit: service-times, what-to-expect, good-to-know, map, next-steps, sign-up), so "Where do I park?" lands on the parking card. The backend allowlists pages and sections (`SITE_PAGES` and `SITE_SECTIONS` in `chat.py`), and `frontend/src/chatNavigation.js` maps them to hash routes and element ids; the model cannot supply URLs or ids. To add a section, give the element an id and add it to both lists. For personalized serving suggestions, the chat points people to Find a place instead of ranking ministries itself.
 - Guardrails: the system prompt keeps the assistant to church and site topics and tells it to decline everything else, and obvious prompt-override attempts ("ignore previous instructions", "system prompt", "developer mode") get a fixed reply without calling the model. These reduce off-topic use; they are not a guarantee.
 - Replies may use **bold** and simple lists, rendered by `frontend/src/chatFormat.js` as React elements (never raw HTML).
+
+#### Which AI does what
+
+On Cloudflare, Gloo does all the language work, embeddings included. The one exception is transcription: Whisper stays on Workers AI because Gloo has no speech-to-text model (its [model catalog](https://platform.ai.gloo.com/platform/v2/models) lists none).
+
+| Job | Model | When the model is unavailable |
+| --- | --- | --- |
+| Website chat, Find a place | Gloo (`GLOO_MODEL`, default `gloo-qwen-3.7-flash`) | Chat: `AI_FALLBACK` if set, else a "not configured" or office-contact reply. Find a place: the teams that fit the visitor's answers (deterministic filter). |
+| Calendar summaries, blog summaries | Gloo (`GLOO_MODEL`) | The request reports an AI error; nothing is saved. |
+| Blog categories | Gloo (`GLOO_MODEL`) | Keyword rules (`NLP_KEYWORD_RULES` in `backend/app/blog_ai.py`), so a post always gets categories. |
+| Sermon-note questions | Gloo (`GLOO_MODEL`) | The extractive answerer: verbatim transcript quotes with timestamps, no model. |
+| Sermon highlights (Bible quotes, personal stories, ...) | Gloo (`GLOO_NOTES_MODEL`, else `GLOO_MODEL`) | Per window: Workers AI `NOTES_LLM_MODEL` (llama-3.1-8b) through the Worker's `/llm` bridge, else that window is skipped. Highlights never fail a note. |
+| Passage and question embeddings for sermon-note search | Gloo, `gloo-baai-bge-base-en-v1.5` (`GLOO_EMBED_MODEL`) | Keyword search over the same passages. |
+| Transcribing sermon audio | Workers AI, `@cf/openai/whisper-large-v3-turbo` | The note fails with `transcription_failed` and can be retried. |
+
+Every Gloo call uses `https://platform.ai.gloo.com/ai/v2/guarded/chat/completions` (embeddings: `/ai/v2/direct/embeddings`) with a Bearer key and `auto_routing: false`, and waits up to 60 seconds: `gloo-qwen-3.7-flash` reasons before it answers, and Cloudflare ends a proxied request after about 100. Replies are parsed leniently (a `<think>` block, a code fence or a sentence around the JSON is fine).
+
+**Sermon highlights.** The container splits the transcript into windows of about 1,500 words, tags up to 3 windows at a time with Gloo, and stores which model did it on the note: `GET /api/notes/<id>` returns `highlight_engine`, for example `gloo:gloo-qwen-3.7-flash`. A note where some windows fell back says so (`gloo:...+workers-ai:@cf/meta/llama-3.1-8b-instruct-fp8`), `none` means no window could be tagged, and notes processed before this field existed show `""`.
+
+- **Quotes versus references:** `bible_quote` means the speaker actually reads or recites a verse ("In the beginning God created the heavens and the earth"). Naming a passage, inviting people to open it ("let me invite you to open to Genesis chapter 1") or retelling it is `bible_paraphrase`, shown as "Bible references". The prompt defines both with examples, and a cheap check after the model (`_reference_not_quote` in `pastor_notes.py`) turns a "quote" into a reference when its words are navigation language ("turn to", "open to", "chapter", "let me invite you") with no clause that reads like verse text.
+- **Re-categorize a note:** `POST /api/notes/<id>/recategorize` (or `/api/churches/<slug>/notes/<id>/recategorize`), with the `X-API-Key` or a staff session, re-runs highlights from the stored transcript. Nothing is downloaded or transcribed again. It answers 202 at once; `GET /api/notes/<id>` shows `highlight_engine: "recategorizing"` until it is done (a minute or two), then the model that tagged it. Notes processed before a prompt change keep their old labels until they are re-categorized:
+
+  ```bash
+  curl -fsS -X POST -H "X-API-Key: $NOTES_API_KEY" \
+      https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev/api/churches/grace-community/notes/<id>/recategorize
+  ```
+
+**Sermon-note answers** come from Gloo when `GLOO_API_KEY` is set, and from the extractive answerer otherwise. Asking for `extractive` explicitly always wins, and any model answer that fails the citation check falls back to it.
+
+**Deliberate non-model rules.** These stay deterministic because they are fast, free and do their job: the chat's prompt-override filter (`OVERRIDE_PATTERNS` in `chat.py`, in front of Gloo's guarded endpoint), Find a place's eligibility filter (availability and requirements), and the Prayer Map news filter in `newsdata.py` (drops ads, stock tickers and non-English items, and keeps headlines that name the country).
+
+On the laptop build (`jaron-frontend`, `AI_PROVIDER=ollama`) the chat, Find a place, summaries and blog categories use the local Ollama through the same provider settings; sermon highlights use Gloo when `GLOO_API_KEY` is set there too.
+
+Gloo serves embeddings (`POST https://platform.ai.gloo.com/ai/v2/direct/embeddings`, OpenAI-shaped; see [Gloo's guide](https://docs.gloo.com/api-guides/embeddings)), and `api/embed.ts` is the one place that calls it, for ingest (the container's `/embed` bridge) and for questions.
+
+**Embeddings are tagged with their model.** Every chunk stores `embed_model` (for example `gloo:gloo-baai-bge-base-en-v1.5`), and a question is only compared with chunks that carry the current tag. Chunks stored before the switch were made by Workers AI (`@cf/baai/bge-base-en-v1.5`, cls pooling); they are tagged `workers-ai:@cf/baai/bge-base-en-v1.5:cls` and are never compared with Gloo vectors. Changing `GLOO_EMBED_MODEL` works the same way: old chunks simply stop matching the tag.
+
+- **Re-embedding is lazy:** the first question on a note re-embeds its stale chunks from the stored chunk text. Nothing is transcribed again.
+- **Backfill a whole church:** `POST /api/churches/<slug>/notes/reembed` (or `/api/notes/reembed` for the demo church), with the `X-API-Key` or a staff session. Each call does up to `?limit=` chunks (default 256, max 1024), saves after every batch of 64, and returns `{"embedded", "remaining", "done"}`. Call it again until `done` is true; it resumes where it stopped. Each church is its own database, so run it once per church:
+
+  ```bash
+  until curl -fsS -X POST -H "X-API-Key: $NOTES_API_KEY" \
+      https://gloo-hackathon2026-api-pastor-notes.jaronwilson2025.workers.dev/api/churches/grace-community/notes/reembed \
+      | tee /dev/stderr | grep -q '"done":true'; do sleep 1; done
+  ```
+- **If Gloo embeddings fail or there is no key,** ingest still saves the transcript and the chunks, marked unembedded, and the note is ready. Questions then rank passages by shared topic words instead (`"retrieval": "keyword"` in the answer, with a `retrieval_reason`), and the chunks are embedded on a later question or backfill. Nothing falls back to embedding with a different model.
+
+#### Two branches: laptops, or Cloudflare
+
+Nothing in this project depends on a machine that is neither a laptop nor Cloudflare. Two branches keep that honest:
+
+- **`jaron-frontend`** runs entirely on a laptop: docker compose brings up the frontend, the FastAPI backend and Postgres, and the AI is an Ollama reached from the container. Set `AI_PROVIDER=ollama` in `.env`; see the HPC tunnel section below, or point `OLLAMA_BASE_URL` at an Ollama on that same laptop.
+- **`jaron-cloudflare-frontend`** runs entirely on Cloudflare: Workers, the container, a Durable Object per church database, and Gloo AI over HTTPS. The only setup is one secret, run in `api/`:
+
+  ```
+  npx wrangler secret put GLOO_API_KEY
+  ```
+
+  Nothing else is needed. `AI_PROVIDER` is not passed into the container, so it takes its default of `gloo` from `backend/app/config.py`, and `platform.ai.gloo.com` is already in the container's `allowedHosts`. No laptop is in the path: no VPN, no SSH tunnel, no teammate running a bridge.
+
+Both branches build from the same source and differ in configuration, not behaviour. Keep the `jaron-` prefix on any new branch: `previews.yml` triggers on prefixes, so a name outside its patterns is a branch that silently never deploys.
 
 #### Running on one laptop
 
@@ -412,7 +490,7 @@ Run the Python tests from the repo root with the backend requirements installed.
 
 ## Sermon Notes
 
-Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded and stored, and questions are answered only from what the transcript supports. The sermon list and an open sermon have their own routes (`#/notes`, `#/notes/<id>`); on phones an open sermon takes over the page, with a back button.
+Upload a video (or paste a YouTube link). It is transcribed on Cloudflare (Whisper large-v3-turbo via Workers AI), chunked, embedded with Gloo (`gloo-baai-bge-base-en-v1.5`), highlighted by Gloo and stored, and questions are answered only from what the transcript supports. The sermon list and an open sermon have their own routes (`#/notes`, `#/notes/<id>`); on phones an open sermon takes over the page, with a back button.
 
 ### How it works
 
@@ -425,8 +503,9 @@ Container (ffmpeg + yt-dlp) ----> R2 (raw media)
         v  Workers AI: whisper-large-v3-turbo
    transcript + timestamped segments
         |
-        v  Workers AI: bge-base-en-v1.5 (embeddings)
-   chunks in the SQLite Durable Object
+        v  Gloo: gloo-baai-bge-base-en-v1.5 (embeddings, tagged with the model)
+        v  Gloo: GLOO_NOTES_MODEL (highlights by category)
+   chunks + highlights in the SQLite Durable Object
         |
         v  ask a question
    ranked chunks -> grounded answer with citations
@@ -439,29 +518,77 @@ independent modes:
   transcript passages, each with a timestamp citation. A passage must pass
   a similarity floor **and** a keyword-overlap ground check to be returned;
   otherwise the answer is "Not found in this note."
-- **`workers-ai` LLM engine (optional):** set `NOTES_ANSWER_ENGINE=workers-ai`
-  in `api/wrangler.jsonc` and redeploy. A Llama-3.1-8B (Workers AI) then
-  writes prose answers, but every passage it cites is string-verified
-  against the actual transcript, and any quote that fails falls back to the
-  verbatim answer. The LLM can only make answers *prettier*, never less
-  grounded.
+- **Gloo answers (when `GLOO_API_KEY` is set):** Gloo (`GLOO_MODEL`) writes
+  prose answers, but every passage it cites is string-verified against the
+  actual transcript, and any quote that fails falls back to the verbatim
+  answer. The model can only make answers *prettier*, never less grounded.
 
 ### Highlights and Bible passages
 
 The transcript is highlighted by category (Bible quotes, Bible references, current events, politics, personal stories, Scripture claims), and each category can be toggled. When a Bible quote or reference highlight names a passage (for example "Luke 10:25-26", "1 Cor. 13:4" or "Psalm 23"), the label is tappable and opens the passage under that line, with the version, copyright and a "Read on YouVersion" link.
 
 - `frontend/src/verses.js` turns labels into USFM references (all 66 books, common abbreviations, Roman numeral prefixes, ranges) and loads the text.
-- `GET /api/verse?usfm=JHN.3.16-17` (public) reads the passage from the YouVersion Platform API with `YOUVERSION_APP_KEY` and caches it for 7 days. It returns 404 when no key is set and 400 for a bad reference.
-- If the API has no key or fails, the page falls back to the public-domain World English Bible from bible-api.com.
+- `GET /api/verse/versions` (public) lists the English Bibles the app key is licensed for (`GET /v1/bibles?language_ranges[]=en` on YouVersion, cached 6 hours), then the public-domain `web` and `kjv` ones not already listed: `{ default, listed, versions: [{ id, abbreviation, title, language, copyright, source }] }`. If the listing fails it offers just the default plus WEB and KJV, and that answer is not cached.
+- `GET /api/verse?usfm=JHN.3.16-17&version=<id>` (public) reads the passage from the YouVersion Platform API with `YOUVERSION_APP_KEY` and caches it for 7 days per version and passage. `version` must be an id from that listing, or `web` / `kjv` (served from bible-api.com); anything else gets the default. If YouVersion fails, it answers from bible-api.com in the matching public-domain translation, else WEB, with `fallback: true` and `version` naming what came back. It returns 404 when no key is set (for a YouVersion version) and 400 for a bad reference.
+- Readers pick the version under Reading in the Sermon Notes side panel; the choice is kept in localStorage with text size and timestamps.
+- If the API is unreachable, the page falls back to bible-api.com itself: KJV for `kjv`, else the World English Bible.
 
-### Known limitation: YouTube egress
+### YouTube links: the YouTube helper
 
-YouTube intermittently refuses downloads from Cloudflare's server IPs, so a
-YouTube link can fail with a clear `youtube_blocked` error. Two workarounds:
+YouTube refuses most downloads from Cloudflare's data-center IPs, so a YouTube
+link sent straight from the container usually fails. The **YouTube helper**
+(`scripts/youtube-helper/`) fixes that: a small Python service that runs on
+Jaron's dev server (`jaron-dev-server`, a home internet connection YouTube
+accepts) and downloads only the audio with yt-dlp.
+
+- **Order:** with `YT_HELPER_URL` and `YT_HELPER_KEY` set on the API Worker, a
+  YouTube note is fetched through the helper first. If the helper is down or
+  fails, the container tries yt-dlp directly (the old path, below). If that
+  fails too, the note fails with "YouTube wouldn't let us download this video.
+  Upload the video file instead (in YouTube Studio: Content > the video > ⋮ >
+  Download)." A private or too-long video fails right away with its own message.
+- **Wiring:** the container calls `http://youtube-helper/fetch`; the Worker's
+  `youtube-helper` outbound handler (`api/ythelper.ts`) adds the key and forwards
+  only `POST /fetch` to `YT_HELPER_URL`, so the container never sees the key.
+- **The helper:** `POST /fetch {"url": ...}` with `Authorization: Bearer <key>`
+  (checked in constant time) returns the audio (m4a when YouTube has it), or a
+  JSON error. It accepts only youtube.com and youtu.be video links and hands
+  yt-dlp the canonical `watch?v=<id>` link, so it cannot be pointed anywhere
+  else. It enforces the same limits as the backend (`MAX_DURATION_SEC` 5400 and
+  the 95 MB upload cap), runs at most two downloads at once, deletes its temp
+  files, never logs the key, and updates yt-dlp every time it starts. A
+  50-minute sermon downloads in about 12 seconds.
+- **Where it runs:** a systemd user service, `youtube-helper`, on
+  `127.0.0.1:8096`, published with Tailscale Funnel at
+  `https://jaron-dev-server.tail90b62a.ts.net:8443` (that is `YT_HELPER_URL`).
+  Funnel on port 443 is not used, so the dev server's tailnet-only pages stay
+  private. The key is `~/.secrets/youtube-helper-key.txt`.
+
+On the dev server:
+
+```bash
+scripts/youtube-helper/install.sh              # first time, or after changing helper.py: venv, key, unit, start
+systemctl --user status youtube-helper         # is it running?
+systemctl --user restart youtube-helper        # restart (also updates yt-dlp)
+systemctl --user stop youtube-helper           # stop it; Sermon Notes falls back as described above
+journalctl --user -u youtube-helper -f         # logs
+tailscale funnel --bg --https=8443 http://127.0.0.1:8096   # publish it (once; survives restarts)
+tailscale funnel --https=8443 off              # unpublish it
+curl https://jaron-dev-server.tail90b62a.ts.net:8443/health
+```
+
+**When the helper is down** (the dev server is off or the service is stopped),
+nothing breaks: YouTube links fall back to the direct download, and if YouTube
+blocks that, the page asks for a file upload, which always works.
+
+#### Direct download (the fallback)
+
+Without the helper, YouTube intermittently refuses downloads from Cloudflare's
+server IPs, so a YouTube link can fail with `youtube_blocked`. Workarounds:
 
 1. **Upload the video file instead**: the "Upload a file" tab. 100%
    reliable, never touches YouTube's servers.
-2. **Set the `YTDLP_COOKIES` secret**: a permanent fix for YouTube links.
+2. **Set the `YTDLP_COOKIES` secret**.
 
 The block is flaky, not total, so the container retries on its own: yt-dlp
 paces its requests and backs off on transient errors, and a bot check or rate
@@ -471,6 +598,13 @@ the note fails with `youtube_blocked`. The delays come from
 default `30,120`). yt-dlp is pinned with a minimum version rather than an exact
 one, since YouTube support breaks on stale releases; a rebuild picks up the
 latest.
+
+#### Tests
+
+```bash
+python -m unittest backend.tests.test_youtube_helper backend.tests.test_youtube_helper_service backend.tests.test_youtube_download
+node --test api/test/ythelper.test.mjs frontend/src/noteErrors.test.js
+```
 
 ## Give
 

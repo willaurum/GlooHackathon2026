@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations
+from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, recommendations
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ app = FastAPI(title="Tekton API", lifespan=lifespan)
 app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
 app.include_router(church_content.router)
+app.include_router(builder.router)
 
 
 class AvailabilityWindow(BaseModel):
@@ -73,23 +74,24 @@ class ConnectionRequest(BaseModel):
 @app.get('/api/info')
 def church_info():
     # Public church details (address, service times) for the home page.
-    return db.get_church_info()
+    return church_content.public_info({'info': db.get_church_info()})
 
 
 @app.get('/api/ministries')
 def ministries():
-    return db.list_ministries()
+    return church_content.public_ministries({'ministries': db.list_ministries()})
 
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
+    ministries, preferences = db.list_ministries(), body.preferences.model_dump(mode='json')
     try:
-        return recommendations.recommend(body.description, db.list_ministries(),
-                                         preferences=body.preferences.model_dump(mode='json'))
+        return recommendations.recommend(body.description, ministries, preferences=preferences)
     except recommendations.NotConfigured as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    except recommendations.Unavailable as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+    except recommendations.Unavailable:
+        # Every model failed or timed out: show the fitting teams instead of an error.
+        return recommendations.browse_fallback(ministries, preferences)
 
 
 @app.get('/api/connections')
@@ -229,7 +231,8 @@ class ClaimRequest(BaseModel):
 
 @app.get('/api/church')
 def church():
-    return {'info': db.get_church_info(), 'faqs': db.list_content('faqs'), 'events': db.list_content('events')}
+    return church_content.public_church({'info': db.get_church_info(), 'site': db.get_site(),
+                                         **{kind: db.list_content(kind) for kind in db.CONTENT_KINDS}})
 
 
 @app.post('/api/visits', status_code=201)
@@ -389,7 +392,7 @@ async def auto_summarize_background():
 
 @app.get("/api/events")
 def get_events():
-    return db.list_events()
+    return church_content.public_events({'calendar': db.list_events()})
 
 
 @app.get("/api/events/{event_id}")
@@ -405,6 +408,13 @@ def post_event(body: EventCreate):
     return db.create_event(title=body.title, category=body.category, date=body.date,
                             time=body.time, location=body.location, description=body.description,
                             ministry_name=body.ministry_name)
+
+
+@app.delete("/api/events/{event_id}", status_code=204)
+def delete_event(event_id: int):
+    # Staff only: the API Worker allows DELETE /api/events/<id> for a staff session (api/churches.ts).
+    if not db.delete_event(event_id):
+        raise HTTPException(status_code=404, detail="Event not found")
 
 
 @app.post("/api/events/{event_id}/summarize")

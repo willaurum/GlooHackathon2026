@@ -117,12 +117,13 @@ test('who may call what', () => {
 });
 
 test('the container gets the church from the Worker, never from the browser', () => {
-  const spoofed = new Headers({ 'X-Church': 'grace-community', 'X-Church-Name': 'Evil', Authorization: 'Bearer ' + 'a'.repeat(32), 'Content-Type': 'application/json' });
+  const spoofed = new Headers({ 'X-Church': 'grace-community', 'X-Church-Name': 'Evil', Authorization: 'Bearer ' + 'a'.repeat(32), 'Content-Type': 'application/json', 'cf-connecting-ip': '192.0.2.1' });
   const out = churchHeaders(spoofed, { slug: 'hope-chapel', name: 'Hope Chapel & Friends', city: 'Austin', demo: false });
   assert.equal(out.get('X-Church'), 'hope-chapel');
   assert.equal(decodeURIComponent(out.get('X-Church-Name')), 'Hope Chapel & Friends');
   assert.equal(out.get('Authorization'), null);
   assert.equal(out.get('Content-Type'), 'application/json');
+  assert.equal(out.get('cf-connecting-ip'), '192.0.2.1');
 });
 
 test('church subdomains of BASE_DOMAIN are allowed origins', () => {
@@ -145,7 +146,7 @@ test('visitors can read posts and summaries but cannot publish, approve or regen
       ['POST', '/api/blog'], ['POST', '/api/blog/categorize'], ['POST', '/api/blog/12/summarize'],
       ['POST', '/api/blog/12/approve'], ['PATCH', '/api/blog/12'], ['PUT', '/api/blog/12'],
       ['DELETE', '/api/blog/12'], ['POST', '/api/events/12/summarize'],
-      ['POST', '/api/events/summarize-all'],
+      ['POST', '/api/events/summarize-all'], ['DELETE', '/api/events/12'], ['DELETE', '/api/events/+12'],
     ]) assert.equal(access(method, path, demo), 'staff', method + ' ' + path);
     assert.equal(access('POST', '/api/ai/model', demo), 'key');
     assert.equal(access('POST', '/api/ollama/model', demo), 'key');
@@ -200,4 +201,57 @@ test('a rejected staff session is flagged so the browser drops it; no session se
   assert.equal((await outage.json()).code, undefined);
   assert.equal(sentStaffToken(asStaff('short')), true);
   assert.equal(sentStaffToken(new Request('https://api.test', { headers: { 'X-API-Key': 'k' } })), false);
+});
+
+test('drafts are public; apply and all unknown builder routes stay staff only', () => {
+  for (const demo of [true, false]) {
+    assert.equal(access('POST', '/api/builder/drafts', demo), 'public');
+    for (const action of ['blank', 'upload']) {
+      assert.equal(access('POST', `/api/builder/drafts/${action}`, demo), 'public');
+      for (const method of ['PUT', 'PATCH', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${action}`, demo), 'staff');
+      assert.equal(access('POST', `/api/builder/drafts/${action}/extra`, demo), 'staff');
+    }
+    for (const id of ['abc123def', '+1', '01', '1_0', ' 1', 'odd.id']) {
+      for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
+        ['GET', `/api/builder/drafts/${id}/site`],
+        ['GET', `/api/builder/drafts/${id}/pages/s1`],
+        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/items`],
+        ['POST', `/api/builder/drafts/${id}/parts`], ['POST', `/api/builder/drafts/${id}/preview`]])
+        assert.equal(access(m, p, demo), 'public', m + ' ' + p);
+      assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${id}/site`, demo), 'staff');
+    }
+    for (const p of ['/api/builder', '/api/builder/sessions', '/api/builder/unknown',
+      '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra', '/api/builder/drafts/x/site/extra',
+      '/api/builder/drafts/x/pages', '/api/builder/drafts/x/pages/s1/extra', '/api/builder/drafts/x/parts/extra'])
+      for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+        if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
+  }
+});
+
+test('recreated pages are public to read; site content stays staff only', () => {
+  for (const demo of [true, false]) {
+    for (const slug of ['home', 'team', 'blog-2030-08-01'])
+      assert.equal(access('GET', `/api/church/pages/${slug}`, demo), 'public');
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+      assert.equal(access(method, '/api/church/pages/team', demo), 'key-or-staff');
+    for (const p of ['/api/church/pages', '/api/church/pages/', '/api/church/pages/Team', '/api/church/pages/../content',
+      '/api/church/pages/-x', '/api/church/pages/a/b'])
+      assert.notEqual(access('GET', p, demo), 'public', p);
+    assert.equal(access('GET', '/api/church/content', demo), 'staff');
+  }
+});
+
+test('multipart headers and file bytes reach the container unchanged', async () => {
+  const body = new FormData();
+  body.append('files', new File(['Sunday worship at 9am'], 'bulletin.txt', { type: 'text/plain' }));
+  const original = new Request('https://api.test/api/builder/drafts/upload', { method: 'POST', body });
+  const bytes = await original.clone().arrayBuffer();
+  const forwarded = new Request(original.url, { method: original.method,
+    headers: churchHeaders(original.headers, { slug: 'materials-test', name: 'Materials Test Chapel', city: 'Thistlemere', demo: false }),
+    body: original.body, redirect: 'manual', duplex: 'half' });
+  assert.equal(forwarded.headers.get('Content-Type'), original.headers.get('Content-Type'));
+  assert.deepEqual(await forwarded.arrayBuffer(), bytes);
 });
