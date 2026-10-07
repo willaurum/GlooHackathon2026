@@ -685,6 +685,8 @@ class RouteTests(ChurchTestCase):
                 self.assertEqual(response.json()['fields']['services']['value'], [{'day': 'Sunday', 'time': '10:00'}])
 
     def test_rate_limit_is_shared_by_all_import_paths(self):
+        # Earlier imports from this address, so the five below reach the limit.
+        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(builder.IMPORTS_PER_ADDRESS - 5))
         self.create()
         for _ in range(2):
             self.assertEqual(self.client.post('/api/builder/drafts/blank').status_code, 201)
@@ -848,7 +850,7 @@ class RouteTests(ChurchTestCase):
             self.assertIsNone(db.one('SELECT data FROM config WHERE key = ?', ('draft:' + sid,)))
 
     def test_per_ip_limit_and_forwarded_client_ip(self):
-        for _ in range(5):
+        for _ in range(builder.IMPORTS_PER_ADDRESS):
             self.create({'cf-connecting-ip': '192.0.2.1'})
         with mock.patch.object(builder, 'new_session') as importing:
             limited = self.client.post('/api/builder/drafts', headers={'cf-connecting-ip': '192.0.2.1'},
@@ -859,14 +861,14 @@ class RouteTests(ChurchTestCase):
         self.create({'cf-connecting-ip': '192.0.2.2'})
 
     def test_socket_ip_limit_and_rolling_hour(self):
-        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(5))
+        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(builder.IMPORTS_PER_ADDRESS))
         self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'}).status_code, 429)
         builder.import_limiter.reset()
-        builder.import_limiter.starts.extend((time.monotonic() - 3601, 'testclient') for _ in range(5))
+        builder.import_limiter.starts.extend((time.monotonic() - 3601, 'testclient') for _ in range(builder.IMPORTS_PER_ADDRESS))
         self.create()
 
     def test_overall_limit(self):
-        builder.import_limiter.starts.extend((time.monotonic(), f'client-{i}') for i in range(60))
+        builder.import_limiter.starts.extend((time.monotonic(), f'client-{i}') for i in range(builder.IMPORTS_PER_HOUR))
         r = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
         self.assertEqual(r.status_code, 429)
         self.assertIn('hour', r.json()['detail'])

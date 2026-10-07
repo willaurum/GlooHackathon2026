@@ -1669,6 +1669,19 @@ DRAFT_TTL = 24 * 60 * 60
 _draft_lock = threading.RLock()
 
 
+def _limit(name, default):
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+# Per rolling hour. A venue or office shares one address, so one address gets room for a room full of people
+# trying the builder; BUILDER_IMPORTS_PER_ADDRESS and BUILDER_IMPORTS_PER_HOUR override these.
+IMPORTS_PER_ADDRESS = _limit('BUILDER_IMPORTS_PER_ADDRESS', 20)
+IMPORTS_PER_HOUR = _limit('BUILDER_IMPORTS_PER_HOUR', 60)
+
+
 class ImportLimiter:
     """One container's rolling hour of imports; reset() keeps tests independent."""
     def __init__(self):
@@ -1695,9 +1708,9 @@ class ImportLimiter:
             now = time.monotonic()
             while self.starts and self.starts[0][0] <= now - 3600:
                 self.starts.popleft()
-            if sum(client == ip for _, client in self.starts) >= 5:
+            if sum(client == ip for _, client in self.starts) >= IMPORTS_PER_ADDRESS:
                 raise HTTPException(status_code=429, detail='Too many imports from this address. Try again in an hour.')
-            if len(self.starts) >= 60:
+            if len(self.starts) >= IMPORTS_PER_HOUR:
                 raise HTTPException(status_code=429, detail='Too many imports this hour. Please try again later.')
             if self.running >= 3:
                 raise HTTPException(status_code=429, detail='Three imports are already running. Please try again shortly.')
