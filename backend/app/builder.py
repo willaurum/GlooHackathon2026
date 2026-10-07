@@ -43,6 +43,8 @@ FIELD_LABELS = {'name': 'Church name', 'address': 'Street address', 'phone': 'Ph
                 'services': 'Service times', 'office_hours': 'Office hours', 'about': 'About the church',
                 'first_visit': 'What to expect on a first visit'}
 DAYS = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+# "Wednesday", "Wednesdays", "Wed", "Weds": whole words only, any case.
+DAY_RE = {d: re.compile(rf'\b(?:{d}|{d[:3]})s?\b', re.I) for d in DAYS}
 
 
 # ---------------------------------------------------------------- 1. Import
@@ -262,7 +264,7 @@ def service_times(text):
     found = {}
     lines = text.split('\n')
     for i, sentence in enumerate(_sentences(text)):
-        days = [d for d in DAYS if re.search(rf'\b{d[:3]}(?:day)?s?\b', sentence)]
+        days = [d for d in DAYS if DAY_RE[d].search(sentence)]
         if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence):
             continue
         times = [_clock(h, m, ap) for h, m, ap in TIME_RE.findall(sentence)]
@@ -545,8 +547,20 @@ def questions(fields, claims, sources):
 # ---------------------------------------------------------------- 4–5. Answer, confirm, build
 
 def _parse_services(text):
-    found = service_times(text if re.search(r'\b(sun|mon|tue|wed|thu|fri|sat)', text, re.I) else 'Sunday worship ' + text)
-    return [{'day': day, 'time': t} for day in DAYS for t, _ in found.get(day, [])]
+    """A typed answer like "Sunday 8:30 AM, Sunday 10:45 AM, Wednesday 7:00 PM" or "Sundays 9 and 11".
+    Each time belongs to the day written before it; with no day at all, Sunday."""
+    out, day = [], 'Sunday'
+    for part in re.split(r'[,;]|\band\b(?=\s*[A-Za-z]{3})', text):
+        named = next((d for d in DAYS if DAY_RE[d].search(part)), None)
+        day = named or day
+        times = [_clock(h, m, ap) for h, m, ap in TIME_RE.findall(part)]
+        if not times:
+            for h1, m1, h2, m2 in BARE_TIMES_RE.findall(part):
+                times += [_clock(h1, m1, None), _clock(h2, m2, None)]
+        if not times:
+            times = [_clock(h, m, None) for h, m in re.findall(r'\b(\d{1,2})(?::(\d{2}))?\b', part) if 1 <= int(h) <= 12]
+        out += [{'day': day, 'time': t} for t in times if {'day': day, 'time': t} not in out]
+    return sorted(out, key=lambda s: (DAYS.index(s['day']), s['time']))
 
 
 def apply_answer(session, field, value):

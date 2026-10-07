@@ -79,6 +79,14 @@ class MessySiteTests(BuilderTestCase):
         self.assertEqual(info['email'], 'hello@harborlight.example.org')
         self.assertEqual([(x['day'], x['time']) for x in info['services']], [('Sunday', '9:00 AM'), ('Sunday', '11:00 AM')])
 
+    def test_typed_service_times_keep_each_time_on_its_own_day(self):
+        s = self.session('cedar-hollow-static')
+        builder.apply_answer(s, 'services', 'Sunday 8:30 AM, Sunday 10:45 AM, Wednesday 7:00 PM')
+        self.assertEqual(s['fields']['services']['value'], [{'day': 'Sunday', 'time': '08:30'}, {'day': 'Sunday', 'time': '10:45'},
+                                                            {'day': 'Wednesday', 'time': '19:00'}])
+        builder.apply_answer(s, 'services', 'Sun 9am; Weds 6:30pm')
+        self.assertEqual(s['fields']['services']['value'], [{'day': 'Sunday', 'time': '09:00'}, {'day': 'Wednesday', 'time': '18:30'}])
+
     def test_bad_answers_are_refused(self):
         s = self.session('harborlight-messy')
         for field, value in [('phone', '555-12'), ('email', 'not an email'), ('services', 'whenever'), ('nope', 'x')]:
