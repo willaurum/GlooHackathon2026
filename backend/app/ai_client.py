@@ -25,7 +25,7 @@ def endpoint() -> dict:
     AI_BASE_URL (or OPENAI_BASE_URL) wins, for local setups. Otherwise the chat's first configured
     provider: the team AI bridge today, Gloo as soon as GLOO_API_KEY is set. Otherwise a local Ollama.
     """
-    explicit = os.environ.get("AI_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+    explicit = (os.environ.get("AI_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "").strip()
     if not explicit:
         from . import chat
 

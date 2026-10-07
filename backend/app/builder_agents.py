@@ -152,11 +152,23 @@ ROUTES = {'staff': ('staff',), 'about': ('staff',), 'events': ('events',), 'mini
           'news': ('events',)}
 
 
+# A one-page site (or a long home page) puts its lists under headings instead of on their own pages.
+SECTION_HEADINGS = {
+    'staff': re.compile(r'(our |meet (the|our) )?(staff|team|leadership|pastors|leaders|elders)', re.I),
+    'events': re.compile(r'(upcoming |church )?(events|calendar|happenings)|what\W?s (happening|coming up)', re.I),
+    'ministries': re.compile(r'(our )?(ministries|ministry|small groups|groups|get involved|programs)', re.I),
+    'sermons': re.compile(r'(recent |latest |past )?(sermons|messages)|watch( online)?', re.I),
+}
+
+
 def specialists_for(source):
     if source.get('kind', 'page') != 'page':
         return ()
     if source.get('page_type') == 'news' and builder_crawl.is_post(source.get('url', '')):
         return ()  # one announcements page is worth reading for events; thirty blog posts are not
+    if source.get('page_type') in ('home', 'other'):
+        headings = {line.strip(' :') for line in source.get('text', '').split('\n') if 0 < len(line.strip()) <= 40}
+        return tuple(name for name, pattern in SECTION_HEADINGS.items() if any(pattern.fullmatch(h) for h in headings))
     return ROUTES.get(source.get('page_type'), ())
 
 
