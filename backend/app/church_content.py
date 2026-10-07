@@ -50,6 +50,8 @@ class Info(Loose):
     office_hours: str = Text(200)
     services: list[Service] = Field(default_factory=list, max_length=30)
     about: str = Text(4000)
+    # The big headline at the top of Home; empty shows the template's own ("A place to belong, grow and give.").
+    tagline: str = Text(160)
     first_visit: str = Text(4000)
     care_team: str = Text(4000)
     map_query: str = Text(300)
@@ -310,17 +312,30 @@ class Asset(Strict):
     rights: bool = False
 
 
+# The parts of the church site Layout.hidden_pages may hide (frontend routes; Layout.jsx SECTIONS).
+HIDEABLE_PAGES = ('serve', 'serve/find', 'serve/saved', 'notes', 'calendar', 'give', 'give/trips', 'prayer',
+                  'guests/welcome', 'about/beliefs', 'about/news', 'about/directory', 'about/connect')
+
+
 class Layout(Strict):
     """The order of the Home and Plan your visit sections, and the ones hidden ('page:section'), set by a request
     to Tekton ("Put service times above ministries"). The keys are builder_edit.PAGES."""
     home: list[str] = Field(default_factory=list, max_length=20)
     visit: list[str] = Field(default_factory=list, max_length=20)
     hidden: list[str] = Field(default_factory=list, max_length=40)
+    # Parts of the site the church does not use ("We don't have a calendar"), as routes: left out of the menus,
+    # Home's cards and links, and opening one goes Home. Home and Plan your visit cannot be hidden.
+    hidden_pages: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator('home', 'visit', 'hidden')
     @classmethod
     def _keys(cls, value):
         return [key for key in value if re.fullmatch(r'[a-z_]{1,30}(:[a-z_]{1,30})?', key)]
+
+    @field_validator('hidden_pages')
+    @classmethod
+    def _pages(cls, value):
+        return list(dict.fromkeys(key for key in value if key in HIDEABLE_PAGES))
 
 
 class Site(Strict):

@@ -56,6 +56,13 @@ export function nextSteps(events, demo) {
   return (events || []).filter(ev => !demo || open.includes(ev.audience)).slice(0, 3);
 }
 
+/** Whether the church hid this part of its site with Tekton ("We don't have a calendar"): site.layout.hidden_pages
+ *  holds routes, and hiding a section hides its pages. Home and Plan your visit are never hidden. */
+export function pageHidden(site, route) {
+  const hidden = site?.layout?.hidden_pages;
+  return !!hidden?.length && !!route && (hidden.includes(route) || hidden.includes(route.split('/')[0]));
+}
+
 /** A page's section keys in the order the church asked Tekton for (site.layout, backend builder_edit.PAGES), then
  *  any the layout does not name in their usual order, without the ones it hides ('page:section'). */
 export function orderedSections(layout, page, defaults) {

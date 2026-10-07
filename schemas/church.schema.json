@@ -245,6 +245,12 @@
           "maxItems": 30,
           "title": "Services",
           "type": "array"
+        },
+        "tagline": {
+          "default": "",
+          "maxLength": 160,
+          "title": "Tagline",
+          "type": "string"
         }
       },
       "required": [

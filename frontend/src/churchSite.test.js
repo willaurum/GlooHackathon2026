@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { directionsHref, footerLinks, givingLink, livestreamLink, nextSteps, pageOfType, signupLinks, siteLinks } from './churchSite.js';
+import { directionsHref, footerLinks, givingLink, livestreamLink, nextSteps, pageHidden, pageOfType, signupLinks, siteLinks } from './churchSite.js';
 
 const site = { links: [
   { kind: 'giving', url: 'https://tithe.ly/give?c=1', text: 'Give', provider: 'Tithe.ly' },
@@ -42,4 +42,12 @@ test('next steps: tagged ones for the demo church, the first three otherwise', (
   assert.deepEqual(nextSteps(events, true).map(e => e.name), ['C']);
   assert.deepEqual(nextSteps(events, false).map(e => e.name), ['A', 'B', 'C']);
   assert.equal(directionsHref('1 Main St, Lynchburg'), 'https://www.google.com/maps/dir/?api=1&destination=1%20Main%20St%2C%20Lynchburg');
+});
+
+test('a hidden part of the site hides its own pages, and nothing else', () => {
+  const site = { layout: { hidden_pages: ['calendar', 'give', 'about/news'] } };
+  for (const route of ['calendar', 'give', 'give/trips', 'about/news']) assert.equal(pageHidden(site, route), true, route);
+  for (const route of ['', 'guests/plan', 'about', 'about/directory', 'serve']) assert.equal(pageHidden(site, route), false, route);
+  assert.equal(pageHidden(null, 'calendar'), false);
+  assert.equal(pageHidden({ layout: {} }, 'calendar'), false);
 });

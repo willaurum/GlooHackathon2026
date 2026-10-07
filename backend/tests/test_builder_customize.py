@@ -91,6 +91,54 @@ class CustomizeTests(ChurchTestCase):
         self.assertIn('Where do I park?', [f['question'] for f in site['church']['faqs']])
         self.assertNotEqual(site['church']['site']['theme'].get('background'), '#000000')
 
+    def test_hide_and_show_whole_parts_of_the_site(self):
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            hid = self.ask('can you hide the calendar our church does not have one')
+            self.assertEqual(hid.status_code, 200, hid.text)
+            self.assertEqual(hid.json()['changes'], ['Hid Calendar on your site'])
+            self.assertEqual(self.ask("we don't have a prayer map").json()['changes'], ['Hid Prayer map on your site'])
+            self.assertEqual(self.ask('hide the map').json()['changes'], ['Hid “Where we meet” on Plan your visit'])
+        layout = self.site()['church']['site']['layout']
+        self.assertEqual(layout['hidden_pages'], ['calendar', 'prayer'])  # a Home section change keeps them
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            self.assertEqual(self.ask('show the calendar again').json()['changes'], ['Showed Calendar on your site'])
+            self.assertEqual(self.ask('hide the home page').status_code, 400)
+        self.assertEqual(self.site()['church']['site']['layout']['hidden_pages'], ['prayer'])
+        files = self.client.get(self.base + '/site.json').json()
+        self.assertEqual(files['site']['layout']['hidden_pages'], ['prayer'])
+
+    def test_the_headline_at_the_top_of_home(self):
+        # Ben's test case: the wording to replace contains "to", and the new wording is the last quoted part.
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            made = self.ask('Could you change the top of the home page from "A place to belong, grow and give" to '
+                            '"A place to grow in your relationship with the Church"?')
+            self.assertEqual(made.status_code, 200, made.text)
+            self.assertEqual(made.json()['changes'], ['Changed the headline at the top of Home'])
+            # Built-in wording on other pages is the template's, and the refusal says what can change.
+            built_in = self.ask('rename the Give with confidence heading to Generosity')
+            self.assertEqual(built_in.status_code, 400)
+        self.assertEqual(self.site()['info']['tagline'], 'A place to grow in your relationship with the Church')
+
+    def test_changing_a_person_never_renames_the_church(self):
+        church = self.site()['info']['name']
+        staff = self.site()['church']['staff']
+        # Ben's test case, typo included; the draft's staff entry is found by its role or added.
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            made = self.ask('Can you change of the pastor to Dr. Lee Brown')
+        self.assertEqual(made.status_code, 200, made.text)
+        site = self.site()
+        self.assertEqual(site['info']['name'], church)
+        self.assertIn('Dr. Lee Brown', [p['name'] for p in site['church']['staff']])
+        self.assertLessEqual(len(site['church']['staff']), len(staff) + 1)
+        # Even when the AI gets it wrong, a request about a person cannot rename the church.
+        with mock.patch.object(builder, '_completer', return_value=lambda messages, tools: {
+                 'reply': 'Done.', 'operations': [{'op': 'set_detail', 'field': 'name', 'value': 'Rev. Sam Example'}]}), \
+             mock.patch.object(builder, '_ai_available', return_value=True):
+            wrong = self.ask('our new minister is Rev. Sam Example, update that')
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIn('sounds like a person', wrong.json()['detail'])
+        self.assertEqual(self.site()['info']['name'], church)
+
     def test_stored_changes_that_no_longer_fit_are_skipped(self):
         content = {'info': {'name': 'Example Chapel'}, 'faqs': [{'question': 'Kids?', 'answer': 'Yes.'}]}
         out = builder_customize.apply(content, [{'op': 'remove_faq', 'question': 'Kids?'},
