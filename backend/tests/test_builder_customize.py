@@ -119,6 +119,26 @@ class CustomizeTests(ChurchTestCase):
             self.assertEqual(built_in.status_code, 400)
         self.assertEqual(self.site()['info']['tagline'], 'A place to grow in your relationship with the Church')
 
+    def test_changing_a_person_never_renames_the_church(self):
+        church = self.site()['info']['name']
+        staff = self.site()['church']['staff']
+        # Ben's test case, typo included; the draft's staff entry is found by its role or added.
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            made = self.ask('Can you change of the pastor to Dr. Lee Brown')
+        self.assertEqual(made.status_code, 200, made.text)
+        site = self.site()
+        self.assertEqual(site['info']['name'], church)
+        self.assertIn('Dr. Lee Brown', [p['name'] for p in site['church']['staff']])
+        self.assertLessEqual(len(site['church']['staff']), len(staff) + 1)
+        # Even when the AI gets it wrong, a request about a person cannot rename the church.
+        with mock.patch.object(builder, '_completer', return_value=lambda messages, tools: {
+                 'reply': 'Done.', 'operations': [{'op': 'set_detail', 'field': 'name', 'value': 'Rev. Sam Example'}]}), \
+             mock.patch.object(builder, '_ai_available', return_value=True):
+            wrong = self.ask('our new minister is Rev. Sam Example, update that')
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIn('sounds like a person', wrong.json()['detail'])
+        self.assertEqual(self.site()['info']['name'], church)
+
     def test_stored_changes_that_no_longer_fit_are_skipped(self):
         content = {'info': {'name': 'Example Chapel'}, 'faqs': [{'question': 'Kids?', 'answer': 'Yes.'}]}
         out = builder_customize.apply(content, [{'op': 'remove_faq', 'question': 'Kids?'},

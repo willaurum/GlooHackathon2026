@@ -168,6 +168,38 @@ def _remove_item(content, op):
     raise Refused(f'Tekton could not find “{op.get("name")}” on your site.')
 
 
+# Words that mean a person, not the church: a request with one never renames the church.
+PERSON_RE = re.compile(r'\b(?:pastors?|minister|reverend|rev|priest|father|elders?|deacons?|directors?|leaders?|'
+                       r'coordinator|admin(?:istrator)?|secretary|staff|worship leader|youth pastor|music director)\b', re.I)
+PERSON_FIELDS = ('name', 'role', 'email', 'phone', 'bio')
+
+
+def _person(content, op):
+    """Change a staff entry found by its name or its role ("the pastor"), or add one when no one has that role."""
+    staff = content.setdefault('staff', [])
+    who = ' '.join(str(op.get('name') or '').lower().split())
+    person = _find(staff, who) if who else None
+    if person is None and who:
+        by_role = [p for p in staff if who in str(p.get('role') or '').lower()
+                   or str(p.get('role') or '').lower() in who and p.get('role')]
+        person = by_role[0] if len(by_role) == 1 else None
+    changes = {k: ' '.join(str(op[k]).split()) if k != 'bio' else str(op[k]).strip()
+               for k in PERSON_FIELDS[1:] if op.get(k)}
+    if op.get('new_name'):
+        changes['name'] = ' '.join(str(op['new_name']).split())
+    if not changes:
+        raise Refused('What should Tekton change about that person?')
+    if person is None:
+        if not changes.get('name'):
+            raise Refused(f'Tekton could not find “{op.get("name")}” among your staff.')
+        # "Change the pastor to Dr. Lee Brown" with no pastor listed yet: add them in that role.
+        person = {'name': changes['name'], 'role': changes.get('role') or (op.get('name') or '').strip().title()}
+        staff.append(person)
+        op['added'] = True
+    person.update(changes)
+    op['list'] = 'staff'
+
+
 def _page(content, op):
     pages = content.get('pages') or []
     page = _find(pages, op.get('page'), key=lambda p: p.get('title', '')) or next(
@@ -239,7 +271,8 @@ def _site_page(content, op):
 
 HANDLERS = {'set_theme': _theme, 'set_detail': _detail, 'move': _layout, 'hide': _layout, 'show': _layout,
             'add_faq': _faq, 'edit_faq': _faq, 'remove_faq': _faq, 'remove_item': _remove_item,
-            'rename_page': _page, 'edit_page_section': _page, 'hide_page': _site_page, 'show_page': _site_page}
+            'rename_page': _page, 'edit_page_section': _page, 'hide_page': _site_page, 'show_page': _site_page,
+            'edit_person': _person}
 
 
 def _one(content, op):
@@ -295,6 +328,11 @@ def describe(op):
         return f'Removed the question “{op["question"]}”'
     if kind in ('hide_page', 'show_page'):
         return f'{"Hid" if kind == "hide_page" else "Showed"} {PAGE_LABELS[op["page"]]} on your site'
+    if kind == 'edit_person':
+        who = op.get('new_name') or op.get('name')
+        if op.get('added'):
+            return f'Added {who} to your staff'
+        return f'Changed “{op["name"]}” to {who} on your staff list' if op.get('new_name') else f'Updated {who} on your staff list'
     if kind == 'remove_item':
         return f'Removed “{op["name"]}”'
     if kind == 'rename_page':
@@ -311,6 +349,8 @@ COLOR_RE = re.compile(r'(?:please )?(?:make|change|set|turn|use)\s+(?:the |our |
 
 VAGUE_COLOR_RE = re.compile(r'.*\b(?:change|update|fix|different|new|pick|choose)\b.*\bcolou?rs?\b.*'
                             r'|.*\bcolou?rs?\b.*\b(?:change|different)\b.*', re.I)
+PERSON_CHANGE_RE = re.compile(r"(?:(?:can|could|would) you |please )*(?:change|update|set|make|replace)\s+"
+                              r"(?:(?:the )?name\s+)?(?:of\s+)?(?:the |our )?(.+?)(?:'s name)?\s+(?:to|be)\s+(.+)$", re.I)
 TAGLINE_RE = re.compile(r'(?:(?:can|could|would) you |please )*(?:change|set|make|update|replace)\s+(?:the |our )?'
                         r'(?:top of (?:the )?home(?: page)?|home(?: page)? (?:headline|heading|title|tagline)|'
                         r'headline|tagline|main heading|big heading|hero(?: text| heading)?|welcome (?:headline|heading))'
@@ -339,6 +379,9 @@ def rule_ops(request, viewing=''):
         if len(colors) > 1 and target == 'primary':
             op['accent'] = colors[1]
         return [op]
+    m = PERSON_CHANGE_RE.match(text)
+    if m and PERSON_RE.fullmatch(m.group(1).strip()):
+        return [{'op': 'edit_person', 'name': m.group(1).strip(), 'new_name': m.group(2).strip().strip('"“”\'')}]
     m = TAGLINE_RE.match(text)
     if m:
         # With quotes ("from "A place to belong" to "B""), the new wording is the last quoted part.
@@ -402,6 +445,9 @@ TOOL = {'type': 'function', 'function': {
                 'question': {'type': 'string'}, 'answer': {'type': 'string'}, 'new_question': {'type': 'string'},
                 'list': {'type': 'string', 'enum': list(LISTS)}, 'name': {'type': 'string'},
                 'title': {'type': 'string'}, 'heading': {'type': 'string'}, 'new_heading': {'type': 'string'},
+                'new_name': {'type': 'string', 'description': 'edit_person: the person\'s new name'},
+                'role': {'type': 'string'}, 'email': {'type': 'string'}, 'phone': {'type': 'string'},
+                'bio': {'type': 'string'},
             }}},
     }}}}
 
@@ -413,6 +459,8 @@ def _summary(content, viewing):
     lines = [f'The church is looking at: {viewing or "the home page"}.',
              f'The top of Home shows the headline (tagline, now "{info.get("tagline") or DEFAULT_TAGLINE}") and under '
              f'it the about text. Change them with set_detail field tagline or about; never with edit_page_section.',
+             'set_detail field name is the CHURCH name only. A person (pastor, elder, staff) is changed with '
+             'edit_person: name = their current name or role ("pastor"), new_name/role/email/phone as asked.',
              'Details: ' + '; '.join(f'{k}={str(info.get(k) or "")[:80]}' for k in DETAILS if k != 'services'),
              'Service times: ' + ', '.join(f'{s.get("day")} {s.get("time")}' for s in info.get('services') or []),
              'Theme: ' + ', '.join(f'{k}={theme.get(k) or "default"}' for k in (*THEME_COLORS, 'heading_font', 'body_font'))]
