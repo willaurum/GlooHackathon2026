@@ -287,11 +287,22 @@ function Transcript({ segments, bySegment, activeCats, prefs }) {
 }
 
 // Where Ask and the highlight chips sit around the transcript.
+// Here: the chips are a thin row above the text, and a floating Ask button opens the question box in a panel.
 function ReaderBody({ asker, toggles, transcript }) {
+  const [askOpen, setAskOpen] = useState(false);
+  const answered = Boolean(asker.answer) && !askOpen;
   return <div className="pn-body">
-    <AskBox asker={asker} />
-    {toggles}
+    {toggles && <div className="pn-chiprow">{toggles}</div>}
     {transcript}
+    <button type="button" className="primary pn-fab" data-ask-open aria-haspopup="dialog" aria-expanded={askOpen}
+      aria-label={'Ask about this sermon' + (answered ? ', has an answer' : '')} onClick={() => setAskOpen(true)}>
+      <Icon name="sparkle" size={18} /><span>Ask</span>
+      {answered && <span className="pn-fab-dot" aria-hidden="true" />}
+    </button>
+    {askOpen && <Sheet title="Ask about this sermon" className="pn-ask-sheet" focusField onClose={() => setAskOpen(false)}>
+      <AskBox asker={asker} label="Your question" />
+      <p className="pn-ask-hint">Answers quote the sermon, with the time each quote was said.</p>
+    </Sheet>}
   </div>;
 }
 
