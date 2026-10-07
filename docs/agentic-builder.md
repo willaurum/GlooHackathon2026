@@ -39,6 +39,8 @@ We split the work between deterministic rules ("NLP" in the classic sense: regul
 
 Each AI suggestion must come with the **exact quote** from the page it read. `grounded()` checks that quote against the page text. If the quote is not there, the suggestion is dropped. This stops the model from inventing a phone number or "correcting" a service time. Every value shown to the person links back to a real sentence on a real page. That's what the conflict cards show ("HLC - Welcome!!: *Come worship with us Sundays 9 & 11.*").
 
+**Removed by the fact check.** A suggestion the fact check drops (its quote is not on the page, a name quote that does not name the church, a service time offered as office hours, a list item that does not match its page, a ministry offered as a person) is kept on the draft as `removed` (at most 200, each field and value once): the field or list, the value, the reason, and the page's title, address and quote, never the page text. The Review screen lists them, grouped, in a collapsed "Removed by the fact check (N)" panel with a link to each quote. **Add it anyway** (`POST /api/builder/drafts/{id}/removed/{removed_id}/add`) puts one back as the church's own: a list item joins its list (its source is "You added this"); a detail fills an empty field, joins an open question as another answer, or, when the field already has a different value (even one the church confirmed), becomes a question with both answers, so nothing is overwritten without the church choosing.
+
 ### The orchestrator and its specialist readers
 
 `extract_all` is the orchestrator. It is plain code, not an agent loop:
@@ -351,3 +353,11 @@ On `#/new`, choose **Start from JSON files**. Upload the versioned `church.json`
 The loaded draft goes straight to Review, preserves all supplied content in the site preview, and creates a church through the existing invite-code and Owner-account flow. Change the files and import again to edit before launch; Church setup remains available after launch. Plain-word extraction edits are unavailable for JSON drafts. Draft expiry and retrying a failed apply work as usual.
 
 Offline verification: `python -m unittest backend.tests.test_builder_json_import` runs the local giving adapter (Node 24 and `api-giving` dependencies required) on an ephemeral port with a generated, test-only invite code. The test checks the real Worker registry lookup and Owner-token gate before applying with its church headers. It skips the integration case if Node or adapter dependencies are missing.
+
+### Imported site display and page editing
+
+Approved assets (`rights: true`) supply the church logo and Home hero image, with the existing illustration or initials as a fallback when an image fails. Imported background, accent and text colors apply alongside the primary color and fonts. Registration links include the imported forms' action URLs. Links to imported pages open their new Tekton routes rather than sending visitors back to the old website.
+
+After launch, authorized staff can edit imported page titles, section headings and text under **Church setup → Website pages**, and add sections. Saving preserves each page's address, links and embeds and refreshes the menu. Visitors need no account; the creation flow registers the church's Owner account with an invite code.
+
+**Ask Tekton to change something** is available on Review and in the website preview banner for extracted or questionnaire drafts. JSON drafts currently have no plain-language editing control. The public Home **Ask Tekton** button answers questions; it is separate from the draft editor.

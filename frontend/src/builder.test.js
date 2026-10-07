@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BUILDER_LISTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder } from './builder.js';
+import { BUILDER_LISTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder, removedGroups } from './builder.js';
 
 test('review requires resolved fields and no questions, even if the session says review', () => {
   const session = { status: 'review', questions: [], fields: { services: { status: 'conflict', value: [{ day: 'Sunday', time: '09:00' }] } } };
@@ -120,4 +120,19 @@ test('a found calendar shows its provider, page and what the church can do with 
   assert.equal(link.canImport, false);
   assert.match(link.status, /No public feed/);
   assert.equal(calendarLine({ provider: 'Outlook', feed_url: 'x', status: 'failed' }).canImport, true);
+});
+
+test('removed claims are grouped by detail or list with their reason and source', () => {
+  const groups = removedGroups([
+    { id: 'r1', kind: 'field', field: 'office_hours', value: 'Sundays 9:00 AM', reason: 'not office hours', quote: 'Join us every Sunday', source: { title: 'Home', url: 'https://c.test/' } },
+    { id: 'r2', kind: 'item', field: 'staff', value: { name: 'Pat Lee', role: 'Deacon' }, reason: 'it did not match its page', quote: 'Pat Lee', source: { title: 'Staff', url: 'https://c.test/staff' } },
+    { id: 'r3', kind: 'field', field: 'faq', value: 'Is there parking? || Yes, behind the church', reason: 'its quote is not on the page', quote: 'q', source: {} },
+    { id: 'r4', kind: 'field', field: 'office_hours', value: 'Mondays', reason: 'not office hours', quote: 'q', source: { url: 'https://c.test/' } },
+    { id: 'r5', kind: 'item', field: 'events', value: {}, reason: 'x', quote: '', source: {} },
+  ]);
+  assert.deepEqual(groups.map(g => [g.label, g.entries.length]), [['Office hours', 2], ['Staff and leaders', 1], ['Questions and answers', 1]]);
+  assert.deepEqual(groups[0].entries[0], { id: 'r1', text: 'Sundays 9:00 AM', reason: 'Removed because not office hours.', evidence: { title: 'Home', url: 'https://c.test/', quote: 'Join us every Sunday' } });
+  assert.equal(groups[1].entries[0].text, 'Pat Lee, Deacon');
+  assert.equal(groups[2].entries[0].text, 'Is there parking?: Yes, behind the church');
+  assert.deepEqual(removedGroups(undefined), []);
 });

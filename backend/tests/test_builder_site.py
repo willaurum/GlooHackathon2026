@@ -204,7 +204,7 @@ class SiteRouteTests(ChurchTestCase):
         self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.HOPE).status_code, 200)
         church = self.client.get('/api/church', headers=self.HOPE).json()
         self.assertEqual(church['site']['navigation']['main'][0], {'label': 'Home', 'page': 'home', 'url': '', 'children': []})
-        self.assertIn({'id': 1, 'slug': 'team', 'title': 'Our Team', 'page_type': 'staff'}, church['pages'])
+        self.assertIn({'id': 1, 'slug': 'team', 'title': 'Our Team', 'page_type': 'staff', 'source_url': 'https://church.test/team'}, church['pages'])
         self.assertNotIn('sections', json.dumps(church['pages']))
         team_page = self.client.get('/api/church/pages/team', headers=self.HOPE).json()
         self.assertEqual(team_page['sections'][2]['text'], 'Tom Baker\nLuis Romero\nGrace Kim')

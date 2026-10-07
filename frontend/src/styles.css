@@ -1311,6 +1311,11 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .tekton-check { background: var(--green-50); color: var(--green-700); }
 .tekton-check.removed { background: #fff4e0; color: #8a5300; }
 .builder-beliefs .builder-item-check { margin-top: 14px; }
+.builder-removed { margin-top: 12px; }
+.builder-removed > summary { cursor: pointer; font-weight: 600; }
+.builder-removed h3 { margin: 14px 0 6px; font-size: 1rem; }
+.builder-removed-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.builder-removed-list li { display: grid; gap: 4px; }
 .builder-calendar-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 14px; }
 .builder-calendar-list li > div:first-child { display: grid; gap: 2px; }
 .builder-calendar-list .builder-actions { margin-top: 8px; }
@@ -1389,3 +1394,18 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .home-sermons li, .connect-list li { display: grid; gap: 2px; }
 .home-sermons small, .connect-list small { color: var(--muted); }
 .give-elsewhere { margin-bottom: 16px; }
+
+
+/* The church's approved imagery, on desktop and phones. */
+.church-logo { position: relative; overflow: hidden; }
+.church-logo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--card); }
+.home-hero.has-image { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .7fr); gap: 32px; background: var(--green-50); }
+.home-hero.has-image .hero-art { position: relative; inset: auto; transform: none; width: 100%; height: 320px; }
+.home-hero.has-image .hero-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-lg); }
+.home-hero.has-image .orbit { display: none; }
+.setup-page-section { margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--r); min-width: 0; }
+.setup-page-section legend { color: var(--muted); padding: 0 6px; }
+@media (max-width: 700px) {
+  .home-hero.has-image { display: block; }
+  .home-hero.has-image .hero-art { display: grid; margin-top: 24px; height: 220px; opacity: 1; }
+}

@@ -38,6 +38,10 @@ export const undoEditApi = draftId => draftApi('/' + encodeURIComponent(draftId)
 export const calendarApi = (draftId, calendarId, action) => draftApi('/' + encodeURIComponent(draftId) + '/calendars/'
   + encodeURIComponent(calendarId) + '/' + (action === 'import' ? 'import' : 'decline'), { method: 'POST' });
 
+/** "Add it anyway": something the fact check removed, added back by the church (marked as added by the church). */
+export const removedApi = (draftId, removedId) => draftApi('/' + encodeURIComponent(draftId) + '/removed/'
+  + encodeURIComponent(removedId) + '/add', { method: 'POST' });
+
 /** The pastor confirms (or takes back) the statement of faith Tekton kept word for word. */
 export const beliefsApi = (draftId, confirmed) => draftApi('/' + encodeURIComponent(draftId) + '/beliefs', { method: 'POST', body: JSON.stringify({ confirmed }) });
 

@@ -267,11 +267,15 @@ def check(name, raw, source, today=None):
         value = item.model_dump(exclude={'quote'})
         label = value.get('name') or value.get('title')
         text = source['text']
+        listed = spec['collection'] if name != 'ministries' else ('groups' if value.get('kind') == 'group' else 'ministries')
+        kept = {k: v for k, v in value.items() if k != 'kind' and v not in ('', None)}
         if not grounded(item.quote, text) or _norm(label) not in _norm(text):
-            dropped += 1
+            dropped += 1  # counted by the orchestrator (builder._specialist_drops)
+            builder_run.removed('it did not match its page', listed, kept, source, item.quote, kind='item')
             continue
         if name == 'staff' and value.get('role') and not builder_structured.ROLE_NOUN_RE.search(value['role']):
             builder_run.drop('not a person')  # "World Changers" / "Student Missions" is a ministry
+            builder_run.removed('not a person', listed, kept, source, item.quote, kind='item')
             continue
         if value.get('email') and value['email'].lower() not in text.lower():
             value['email'] = ''

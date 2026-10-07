@@ -222,9 +222,12 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
         ['POST', `/api/builder/drafts/${id}/beliefs`], ['POST', `/api/builder/drafts/${id}/edits`],
         ['POST', `/api/builder/drafts/${id}/edits/undo`],
         ['GET', `/api/builder/drafts/${id}/church.json`], ['GET', `/api/builder/drafts/${id}/site.json`],
-        ['POST', `/api/builder/drafts/${id}/calendars/c1/import`], ['POST', `/api/builder/drafts/${id}/calendars/c1/decline`]])
+        ['POST', `/api/builder/drafts/${id}/calendars/c1/import`], ['POST', `/api/builder/drafts/${id}/calendars/c1/decline`],
+        ['POST', `/api/builder/drafts/${id}/removed/r1/add`]])
         assert.equal(access(m, p, demo), 'public', m + ' ' + p);
       assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
+      for (const method of ['GET', 'PUT', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${id}/removed/r1/add`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
         assert.equal(access(method, `/api/builder/drafts/${id}/site`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -235,7 +238,9 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
       '/api/builder/drafts/x/files/extra', '/api/builder/drafts/x/pages', '/api/builder/drafts/x/pages/s1/extra', '/api/builder/drafts/x/parts/extra',
       '/api/builder/drafts/x/edits/undo/extra', '/api/builder/drafts/x/edits/redo', '/api/builder/drafts/x/churchjson',
       '/api/builder/drafts/x/other.json', '/api/builder/drafts/x/church.json/extra', '/api/builder/drafts/x/calendars/c1',
-      '/api/builder/drafts/x/calendars/c1/delete', '/api/builder/drafts/x/calendars/c1/decline/extra'])
+      '/api/builder/drafts/x/calendars/c1/delete', '/api/builder/drafts/x/calendars/c1/decline/extra',
+      '/api/builder/drafts/x/removed', '/api/builder/drafts/x/removed/r1', '/api/builder/drafts/x/removed/r1/add/extra',
+      '/api/builder/drafts/x/removed/r1/delete'])
       for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
         if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
   }
