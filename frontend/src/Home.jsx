@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmt } from './api.js';
+import { hashFor } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
@@ -29,7 +30,7 @@ export default function Home({ go, onAsk }) {
       <div className="hero-actions">
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={() => go('guests/plan')}>Planning your first visit?<Icon name="arrow" size={18} /></button>
-        <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Belong</button>
+        <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Tekton</button>
       </div>
       <div className="hero-art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /></div>
     </section>
@@ -42,19 +43,19 @@ export default function Home({ go, onAsk }) {
     </section>}
 
     <div className="features">
-      <a className="card feature" href="#/serve" onClick={e => { e.preventDefault(); go('serve'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
         <span className="icon color1"><Icon name="users" size={22} /></span>
         <h2>Serve</h2>
         <p>Browse ministry teams, see where help is needed, and match members to a place that fits.</p>
         <span className="link">Explore ministries<Icon name="arrow" size={16} /></span>
       </a>
-      <a className="card feature" href="#/notes" onClick={e => { e.preventDefault(); go('notes'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); go('notes'); }}>
         <span className="icon color3"><Icon name="book" size={22} /></span>
         <h2>Sermon Notes</h2>
         <p>Read past sermons and ask questions. Answers quote the message with timestamps.</p>
         <span className="link">Open sermon notes<Icon name="arrow" size={16} /></span>
       </a>
-      <a className="card feature" href="#/give" onClick={e => { e.preventDefault(); go('give'); }}>
+      <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); go('give'); }}>
         <span className="icon color0"><Icon name="heart" size={22} /></span>
         <h2>Give</h2>
         {goal ? <>
@@ -94,7 +95,7 @@ export default function Home({ go, onAsk }) {
       <div>
         <div className="eyebrow">For church leaders</div>
         <h2>A big church can still feel personal.</h2>
-        <p>Belong helps leaders turn a desire to serve into a real connection: see which teams need people, meet a member where they are, and hand off to the right ministry lead.</p>
+        <p>Tekton helps leaders turn a desire to serve into a real connection: see which teams need people, meet a member where they are, and hand off to the right ministry lead.</p>
       </div>
       <ol className="steps">{STEPS.map(([title, text], i) => <li key={title}><span>{String(i + 1).padStart(2, '0')}</span><b>{title}</b><p>{text}</p></li>)}</ol>
     </section>

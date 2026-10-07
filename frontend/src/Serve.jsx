@@ -103,7 +103,7 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
     {loading && <p className="muted" role="status">Loading church data…</p>}
 
     {route === 'serve' && !loading && !error && !teams.length && <SetUpThis icon="users" title="No serving teams listed yet."
-      text={church.name + ' has not listed its serving teams yet. Ask Belong or the church office how to get involved.'}
+      text={church.name + ' has not listed its serving teams yet. Ask Tekton or the church office how to get involved.'}
       staffText="Add your teams, what they do and who leads them, and people can find a place to serve here." />}
     {route === 'serve' && teams.length > 0 && <>
       <div className="stats">

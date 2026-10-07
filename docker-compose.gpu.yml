@@ -1,0 +1,13 @@
+# Optional: give the ollama container an NVIDIA GPU, which makes replies much faster.
+# Needs the NVIDIA Container Toolkit installed on the host. Opt in per command:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Without this file the stack runs the model on the CPU and needs nothing installed.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

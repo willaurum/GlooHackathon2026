@@ -10,7 +10,9 @@ goes to that church, so endpoints never pass a church around. The first call for
 a church creates its tables; only the demo church is seeded with the JSON files.
 """
 
+import datetime
 import os
+import hashlib
 import json
 import logging
 import secrets
@@ -32,8 +34,13 @@ _client = httpx.Client(base_url="http://church-db" if _USE_LOCAL_SQLITE else CHU
 _sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+BLOG_SEEDED = "SELECT 1 FROM config WHERE key = 'blog_seeded'"
+NEWS_POSTS_SEEDED = "SELECT 1 FROM config WHERE key = 'news_posts_seeded'"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
+# Every chunk records the embedding model that made its vector; the Worker only compares a question with chunks
+# from its current model (api/embed.ts). Rows from before the tag existed were Workers AI bge-base with cls pooling.
+LEGACY_EMBED_TAG = 'workers-ai:@cf/baai/bge-base-en-v1.5:cls'
 ANNOTATION_CATEGORIES = ('bible_quote', 'bible_paraphrase', 'recent_event',
                          'political_event', 'personal_story', 'inerrancy_claim')
 
@@ -149,6 +156,8 @@ def initialize():
         _initializing.add(slug)
         try:
             _create_tables(seed=slug == DEMO_CHURCH)
+            _ensure_embed_column()
+            _ensure_highlight_engine_column()
             if slug != DEMO_CHURCH:
                 start_church(name or slug, city)
             _ready.add(slug)
@@ -156,10 +165,47 @@ def initialize():
             _initializing.discard(slug)
 
 
+def _ensure_embed_column():
+    """Add chunks.embed_model to a database made before it existed; its rows are tagged as the legacy model.
+    The Worker does the same (api/embed.ts), so either side may get there first."""
+    def has_column():
+        try:
+            run(("SELECT embed_model FROM chunks LIMIT 0", ()))
+            return True
+        except Exception:
+            return False
+    if has_column():
+        return
+    try:
+        run((f"ALTER TABLE chunks ADD COLUMN embed_model TEXT NOT NULL DEFAULT '{LEGACY_EMBED_TAG}'", ()))
+    except Exception:
+        if not has_column():
+            raise
+
+
+def _ensure_highlight_engine_column():
+    """Add notes.highlight_engine (which model tagged the highlights) to a database made before it existed.
+    Notes processed before then keep '' (unknown)."""
+    def has_column():
+        try:
+            run(("SELECT highlight_engine FROM notes LIMIT 0", ()))
+            return True
+        except Exception:
+            return False
+    if has_column():
+        return
+    try:
+        run(("ALTER TABLE notes ADD COLUMN highlight_engine TEXT NOT NULL DEFAULT ''", ()))
+    except Exception:
+        if not has_column():
+            raise
+
+
 def _create_tables(seed=True):
     """Create tables and seed content without resetting user data. One batch.
     With seed=False only the tables are made (every INSERT is left out)."""
     ministries = json.loads(Path(__file__).with_name('ministries.json').read_text(encoding='utf-8'))
+    _add_news_columns()
     statements = [
         ("CREATE TABLE IF NOT EXISTS ministries (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
         ("""CREATE TABLE IF NOT EXISTS connections (
@@ -189,7 +235,8 @@ def _create_tables(seed=True):
             word_count INTEGER,
             transcript TEXT,
             started_at TEXT,
-            created_at TEXT NOT NULL DEFAULT {NOW}
+            created_at TEXT NOT NULL DEFAULT {NOW},
+            highlight_engine TEXT NOT NULL DEFAULT ''
         )""", ()),
         ("""CREATE TABLE IF NOT EXISTS segments (
             note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -208,6 +255,7 @@ def _create_tables(seed=True):
             seg_to INTEGER NOT NULL,
             text TEXT NOT NULL,
             embedding TEXT NOT NULL,
+            embed_model TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (note_id, idx)
         )""", ()),
         # Transcript passages tagged by category (Bible quote, personal story, ...), as segment ranges.
@@ -245,14 +293,16 @@ def _create_tables(seed=True):
         # Prayer map: missionary presence regions and curated regional news.
         ("CREATE TABLE IF NOT EXISTS regions (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
         ("CREATE TABLE IF NOT EXISTS news_events (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
-        ("""CREATE TABLE IF NOT EXISTS prayer_angles (
-            angle_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        # Dated "From the field" updates, newest first on the Prayer map. Prayer points were removed.
+        ("DROP TABLE IF EXISTS prayer_angles", ()),
+        (f"""CREATE TABLE IF NOT EXISTS field_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             region_id INTEGER NOT NULL REFERENCES regions(id),
-            angle TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            prayer_points TEXT NOT NULL,
-            source_news_ids TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            date TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL,
+            author TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
         # Requests filed by the chat agent. Nothing happens until staff approve them.
         (f"""CREATE TABLE IF NOT EXISTS requests (
@@ -273,6 +323,8 @@ def _create_tables(seed=True):
             data TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
+        # News posts. kind 'update' is a short post that points somewhere (link_url) and never has
+        # key takeaways; kind 'article' is a longer read with key takeaways and an optional link.
         (f"""CREATE TABLE IF NOT EXISTS blog_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -281,7 +333,10 @@ def _create_tables(seed=True):
             categories TEXT NOT NULL DEFAULT '[]',
             bullet_summary TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT {NOW},
-            updated_at TEXT NOT NULL DEFAULT {NOW}
+            updated_at TEXT NOT NULL DEFAULT {NOW},
+            kind TEXT NOT NULL DEFAULT 'article',
+            link_url TEXT NOT NULL DEFAULT '',
+            link_label TEXT NOT NULL DEFAULT ''
         )""", ()),
         ("INSERT OR IGNORE INTO config VALUES ('church', ?)", (json.dumps(DEFAULT_CONFIG),)),
         # A restart interrupts any job that was running; let it be retried.
@@ -290,19 +345,33 @@ def _create_tables(seed=True):
     statements.append(('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, location TEXT NOT NULL, ministry_name TEXT, description TEXT NOT NULL, ai_summary TEXT)', ()))
     events_file = Path(__file__).with_name('events.json')
     if events_file.exists():
+        # Each sample event is added once, with a marker per event: an event staff delete stays deleted
+        # across container restarts, and an event added to events.json later still reaches the demo church.
+        # It keeps its id unless staff events already took it, and is skipped if the same event is there.
         for event in json.loads(events_file.read_text(encoding='utf-8')):
-            statements.append(('INSERT OR IGNORE INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
-                 event.get('ministry_name'), event['description'], event.get('ai_summary'))))
+            marker = f"event_seeded:{event['id']}"
+            statements.append(('INSERT INTO events (id, title, category, date, time, location, ministry_name, description, ai_summary) '
+                               'SELECT CASE WHEN EXISTS (SELECT 1 FROM events WHERE id = ?) THEN NULL ELSE ? END, ?, ?, ?, ?, ?, ?, ?, ? '
+                               'WHERE NOT EXISTS (SELECT 1 FROM config WHERE key = ?) '
+                               'AND NOT EXISTS (SELECT 1 FROM events WHERE title = ? AND date = ?)',
+                (event['id'], event['id'], event['title'], event['category'], event['date'], event['time'], event['location'],
+                 event.get('ministry_name'), event['description'], event.get('ai_summary'), marker, event['title'], event['date'])))
+            statements.append(("INSERT OR IGNORE INTO config VALUES (?, 'true')", (marker,)))
     statements += [("INSERT OR IGNORE INTO ministries VALUES (?, ?)", (m['id'], json.dumps(m))) for m in ministries]
     church = json.loads(Path(__file__).with_name('church.json').read_text(encoding='utf-8'))
     statements.append(("INSERT OR IGNORE INTO church_content VALUES ('info', 0, ?)", (json.dumps(church['info']),)))
     statements += [("INSERT OR IGNORE INTO church_content VALUES (?, ?, ?)", (kind, item['id'], json.dumps(item)))
                    for kind in ('faqs', 'events', 'groups') for item in church[kind]]
-    # Prayer map seed data
+    # Prayer map seed data. A region's first update is added only together with the region itself,
+    # so an update a church deletes does not come back on the next start.
     regions_file = Path(__file__).with_name('regions.json')
     if regions_file.exists():
         for region in json.loads(regions_file.read_text(encoding='utf-8')):
+            updates = region.pop('updates', [])
+            statements += [("""INSERT INTO field_updates (region_id, date, title, body, author)
+                SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM regions WHERE id = ?)""",
+                            (region['id'], u['date'], u.get('title', ''), u['body'], u.get('author', ''), region['id']))
+                           for u in updates]
             statements.append(("INSERT OR IGNORE INTO regions VALUES (?, ?)", (region['id'], json.dumps(region))))
     # Real headlines (news_live.json, from scripts/fetch_news.py) replace the news after this batch;
     # the fictional news.json is only the fallback when there is no live snapshot.
@@ -331,7 +400,7 @@ def _create_tables(seed=True):
     )
     statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
         SELECT 1, 'Walking in Faith: Cultivating Joy in Seasons of Change', ?, 'Pastor Marcus Vance', ?, ?, {NOW}, {NOW}
-        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1)""", (post1_content, post1_cats, post1_bullets)))
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 1) AND NOT EXISTS ({BLOG_SEEDED})""", (post1_content, post1_cats, post1_bullets)))
 
     post2_cats = json.dumps(["Local Outreach", "Volunteering", "Compassion Ministry"])
     post2_bullets = json.dumps([
@@ -349,16 +418,38 @@ def _create_tables(seed=True):
     )
     statements.append((f"""INSERT INTO blog_posts (id, title, content, author, categories, bullet_summary, created_at, updated_at)
         SELECT 2, 'The Heart of Service: How Everyday Acts Build Lasting Hope', ?, 'Elena Rostova, Outreach Director', ?, ?, {NOW}, {NOW}
-        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2)""", (post2_content, post2_cats, post2_bullets)))
+        WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE id = 2) AND NOT EXISTS ({BLOG_SEEDED})""", (post2_content, post2_cats, post2_bullets)))
+    # The sample posts are seeded once. Without this marker every container start (deploys, and waking
+    # after sleepAfter) would bring back a sample post that staff had deleted.
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('blog_seeded', 'true')", ()))
+
+    # More News posts: mostly short updates that point somewhere, plus articles with key takeaways.
+    # Seeded once, like the sample posts above (a separate marker, so a church seeded before these existed gets them).
+    for post in json.loads(Path(__file__).with_name('news_posts.json').read_text(encoding='utf-8')):
+        posted = post['date'] + 'T12:00:00Z'
+        categories = post.get('categories') or [post['category']]
+        statements.append((f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?) AND NOT EXISTS ({NEWS_POSTS_SEEDED})""",
+            (post['title'], post['content'], post.get('author', 'Church Staff'), json.dumps(categories),
+             json.dumps(post.get('bullet_summary', [])), post.get('kind', 'update'),
+             post.get('link_url', ''), post.get('link_label', ''), posted, posted, post['title'])))
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('news_posts_seeded', 'true')", ()))
 
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
     run(*(s for s in statements if seed or not s[0].lstrip().upper().startswith('INSERT')))
+    _move_testimonies_to_updates()
     if not seed:
         return
     if live_news:
-        replace_news(live_news)
+        # Only when the snapshot shipped with this build is new to this church: a container start must not
+        # undo a POST /api/news/refresh, and a deploy with a newer snapshot still takes effect.
+        stamp = hashlib.sha256(json.dumps(live_news, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+        applied = one("SELECT data FROM config WHERE key = 'news_snapshot'")
+        if not applied or _data(applied) != stamp:
+            replace_news(live_news, snapshot=stamp)
     # Backfill shift schedules and requirements into existing ministries without overwriting.
     seeds = {m['id']: m for m in ministries}
     updates = []
@@ -376,6 +467,19 @@ def _create_tables(seed=True):
         _existing = _data(_row)
         _merged = {**church['info'], **_existing}
         run(("UPDATE church_content SET data = ? WHERE kind = 'info'", (json.dumps(_merged),)))
+
+
+NEWS_COLUMNS = (("kind", "'article'"), ("link_url", "''"), ("link_label", "''"))
+
+
+def _add_news_columns():
+    """Blog posts became News posts: add the kind and link columns to a table made before them."""
+    row = one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blog_posts'")
+    if not row:
+        return
+    missing = [(name, default) for name, default in NEWS_COLUMNS if name not in row['sql']]
+    if missing:
+        run(*((f"ALTER TABLE blog_posts ADD COLUMN {name} TEXT NOT NULL DEFAULT {default}", ()) for name, default in missing))
 
 
 def backfill_ministry(existing, seed):
@@ -438,11 +542,11 @@ def export_content():
     """Everything a church shows, in the import shape (see replace_content and README.md)."""
     return {'info': get_church_info(), **{kind: list_content(kind) for kind in CONTENT_KINDS},
             'ministries': [_data(row) for row in query("SELECT data FROM ministries ORDER BY id")],
-            'calendar': list_events()}
+            'calendar': list_events(), 'regions': list_regions()}
 
 
 def replace_content(content):
-    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar)
+    """Replace the sections present in `content` (info, faqs, events, groups, ministries, calendar, regions)
     in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
     A ministry that saved connections or requests still point at is kept, so they stay readable."""
     statements = []
@@ -468,6 +572,17 @@ def replace_content(content):
         statements.append(("DELETE FROM events", ()))
         statements += [(f"INSERT INTO events (id, {', '.join(EVENT_COLUMNS)}) VALUES (?, {', '.join('?' * len(EVENT_COLUMNS))})",
                         (e['id'], *(e.get(c) for c in EVENT_COLUMNS))) for e in content['calendar']]
+    if 'regions' in content:
+        keep = [r['id'] for r in content['regions']]
+        statements += [("DELETE FROM field_updates", ()),
+                       (f"DELETE FROM regions WHERE id NOT IN ({', '.join('?' * len(keep)) or 'SELECT NULL WHERE 0'})", tuple(keep))]
+        for region in content['regions']:
+            data = {k: v for k, v in region.items() if k != 'updates'}
+            statements.append(("INSERT INTO regions VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+                               (region['id'], json.dumps(data))))
+            statements += [("INSERT INTO field_updates (id, region_id, date, title, body, author) VALUES (?, ?, ?, ?, ?, ?)",
+                            (u.get('id'), region['id'], u['date'], u['title'], u['body'], u['author']))
+                           for u in region['updates']]
     if statements:
         run(*statements)
     return export_content()
@@ -570,7 +685,7 @@ def update_config(fields):
 
 # --- Pastor Notes ---
 
-NOTE_COLUMNS = "id, title, source_kind, source_url, status, error, duration, word_count, created_at"
+NOTE_COLUMNS = "id, title, source_kind, source_url, status, error, duration, word_count, created_at, highlight_engine"
 
 
 def create_note(note_id, title, source_kind, source_url=None, r2_key=None):
@@ -618,25 +733,43 @@ def fail_note(note_id, error):
     query("UPDATE notes SET status = 'failed', error = ? WHERE id = ?", (error[:300], note_id))
 
 
-def save_transcript(note_id, segments, chunks, duration, annotations=()):
-    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction."""
+def save_transcript(note_id, segments, chunks, duration, annotations=(), highlight_engine=''):
+    """Replace a note's segments, chunks and annotations and mark it ready, in one transaction.
+    highlight_engine names the model(s) that tagged the annotations (for example gloo:gloo-qwen-3.7-flash)."""
     text = ' '.join(s['text'] for s in segments).strip()
     statements = [("DELETE FROM segments WHERE note_id = ?", (note_id,)),
                   ("DELETE FROM chunks WHERE note_id = ?", (note_id,)),
                   ("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
     statements += [('INSERT INTO segments (note_id, idx, start, "end", text) VALUES (?, ?, ?, ?, ?)',
                     (note_id, i, s['start'], s['end'], s['text'])) for i, s in enumerate(segments)]
-    statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'], json.dumps(c['embedding'])))
+    # A chunk without a vector (embeddings were unavailable) is stored with '' for both; the Worker embeds it later.
+    statements += [('INSERT INTO chunks (note_id, idx, start, "end", seg_from, seg_to, text, embedding, embed_model) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (note_id, i, c['start'], c['end'], c['seg_from'], c['seg_to'], c['text'],
+                     *((json.dumps(c['embedding']), c.get('embed_model') or '') if c.get('embedding') else ('', ''))))
                    for i, c in enumerate(chunks)]
     statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
                     'VALUES (?, ?, ?, ?, ?, ?)',
                     (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
                    for a in annotations]
-    statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?
-        WHERE id = ?""", (text, duration, len(text.split()), note_id)))
+    statements.append(("""UPDATE notes SET status = 'ready', error = NULL, transcript = ?, duration = ?, word_count = ?,
+        highlight_engine = ? WHERE id = ?""", (text, duration, len(text.split()), highlight_engine or '', note_id)))
     run(*statements)
+
+
+def replace_annotations(note_id, annotations, highlight_engine):
+    """Replace a note's annotations and record which model tagged them, in one transaction."""
+    statements = [("DELETE FROM annotations WHERE note_id = ?", (note_id,))]
+    statements += [('INSERT INTO annotations (note_id, seg_from, seg_to, category, label, confidence) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (note_id, a['seg_from'], a['seg_to'], a['category'], a['label'], a['confidence']))
+                   for a in annotations]
+    statements.append(("UPDATE notes SET highlight_engine = ? WHERE id = ?", (highlight_engine or '', note_id)))
+    run(*statements)
+
+
+def set_highlight_engine(note_id, highlight_engine):
+    query("UPDATE notes SET highlight_engine = ? WHERE id = ?", (highlight_engine, note_id))
 
 
 def delete_note(note_id):
@@ -673,6 +806,11 @@ def update_event_summary(event_id, ai_summary):
     return one("""UPDATE events SET ai_summary = ? WHERE id = ?
         RETURNING id, title, category, date, time, location, ministry_name, description, ai_summary""",
                (ai_summary, event_id))
+
+
+def delete_event(event_id):
+    """Remove one calendar event. True if it existed."""
+    return one("DELETE FROM events WHERE id = ? RETURNING id", (event_id,)) is not None
 
 
 def create_event(title, category, date, time, location, description, ministry_name=None, ai_summary=None):
@@ -728,16 +866,43 @@ def mark_met(visit_id):
         RETURNING {STAFF_VISIT_COLUMNS}""", (visit_id,))
 
 
-# --- Prayer map: regions, news, and prayer angles ---
+# --- Prayer map: regions, field updates, and news ---
+
+
+def _field_update(row):
+    return {'id': row['id'], 'date': row['date'], 'title': row['title'], 'body': row['body'], 'author': row['author']}
+
+
+def _updates_by_region():
+    """Every region's field updates, newest first."""
+    out = {}
+    for row in query("SELECT id, region_id, date, title, body, author FROM field_updates ORDER BY date DESC, id DESC"):
+        out.setdefault(row['region_id'], []).append(_field_update(row))
+    return out
 
 
 def list_regions():
-    return [_data(row) for row in query("SELECT data FROM regions ORDER BY id")]
+    updates = _updates_by_region()
+    regions = [_data(row) for row in query("SELECT data FROM regions ORDER BY id")]
+    return [{**region, 'updates': updates.get(region['id'], [])} for region in regions]
 
 
 def get_region(region_id):
-    row = one("SELECT data FROM regions WHERE id = ?", (region_id,))
-    return _data(row) if row else None
+    return next((r for r in list_regions() if r['id'] == region_id), None)
+
+
+def _move_testimonies_to_updates():
+    """Older regions kept one `testimony` string; make it the region's first dated update."""
+    old = [(row['id'], _data(row)) for row in query("SELECT id, data FROM regions WHERE data LIKE '%\"testimony\"%'")]
+    statements = []
+    for region_id, region in old:
+        testimony = region.pop('testimony', '')
+        if testimony and not one("SELECT 1 FROM field_updates WHERE region_id = ?", (region_id,)):
+            statements.append(("INSERT INTO field_updates (region_id, date, title, body, author) VALUES (?, ?, '', ?, '')",
+                               (region_id, datetime.date.today().isoformat(), testimony)))
+        statements.append(("UPDATE regions SET data = ? WHERE id = ?", (json.dumps(region), region_id)))
+    if statements:
+        run(*statements)
 
 
 def list_news():
@@ -749,41 +914,21 @@ def _live_news():
     return json.loads(live_file.read_text(encoding='utf-8')) if live_file.exists() else []
 
 
-def replace_news(items):
-    """Replace every news row of the current church with `items`, in one transaction."""
+def replace_news(items, snapshot=None):
+    """Replace every news row of the current church with `items`, in one transaction. `snapshot` records
+    which shipped news_live.json this was, so startup does not apply the same snapshot again."""
+    marker = [("INSERT INTO config VALUES ('news_snapshot', ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+               (json.dumps(snapshot),))] if snapshot else []
     run(("DELETE FROM news_events", ()),
         *[("INSERT INTO news_events VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
-           (item['id'], json.dumps(item))) for item in items])
-
-
-def news_for_country(country_code):
-    return [_data(row) for row in query("SELECT data FROM news_events WHERE json_extract(data, '$.country_code') = ? ORDER BY id", (country_code,))]
-
-
-def seen_angles(region_id):
-    rows = query("SELECT DISTINCT angle FROM prayer_angles WHERE region_id = ?", (region_id,))
-    return [row['angle'] for row in rows]
-
-
-def list_angles(region_id):
-    rows = query("SELECT angle_id, region_id, angle, summary, prayer_points, source_news_ids, created_at FROM prayer_angles WHERE region_id = ? ORDER BY created_at", (region_id,))
-    return [{**r, 'prayer_points': json.loads(r['prayer_points']), 'source_news_ids': json.loads(r['source_news_ids'])} for r in rows]
-
-
-def save_angle(region_id, angle, summary, prayer_points, source_news_ids):
-    row = one(f"""INSERT INTO prayer_angles (region_id, angle, summary, prayer_points, source_news_ids)
-        VALUES (?, ?, ?, ?, ?)
-        RETURNING angle_id, region_id, angle, summary, prayer_points, source_news_ids, created_at""",
-              (region_id, angle, summary, json.dumps(prayer_points), json.dumps(source_news_ids)))
-    if row:
-        row['prayer_points'] = json.loads(row['prayer_points'])
-        row['source_news_ids'] = json.loads(row['source_news_ids'])
-    return row
+           (item['id'], json.dumps(item))) for item in items],
+        *marker)
 
 
 # --- Blog posts ---
 
-BLOG_COLUMNS = "id, title, content, author, categories, bullet_summary, created_at, updated_at"
+BLOG_COLUMNS = "id, title, content, author, categories, bullet_summary, created_at, updated_at, kind, link_url, link_label"
+POST_KINDS = ('update', 'article')
 
 
 def _format_blog_post(row):
@@ -811,21 +956,28 @@ def _format_blog_post(row):
     elif not isinstance(bullet_summary, list):
         bullet_summary = []
 
+    kind = row.get("kind") if row.get("kind") in POST_KINDS else "article"
     return {
         "id": row["id"],
+        "kind": kind,
         "title": row["title"],
         "content": row["content"],
         "author": row.get("author") or "Church Staff",
         "categories": categories,
-        "bullet_summary": bullet_summary,
+        # Updates are short enough to read whole; only articles carry key takeaways.
+        "bullet_summary": bullet_summary if kind == "article" else [],
+        "link_url": row.get("link_url") or "",
+        "link_label": row.get("link_label") or "",
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
 
 
-def list_blog_posts(category: str | None = None):
-    rows = query(f"SELECT {BLOG_COLUMNS} FROM blog_posts ORDER BY id DESC")
+def list_blog_posts(category: str | None = None, kind: str | None = None):
+    rows = query(f"SELECT {BLOG_COLUMNS} FROM blog_posts ORDER BY created_at DESC, id DESC")
     posts = [_format_blog_post(r) for r in rows]
+    if kind in POST_KINDS:
+        posts = [p for p in posts if p["kind"] == kind]
     if category and category.strip():
         cat_lower = category.strip().lower()
         posts = [p for p in posts if any(cat_lower == c.lower() for c in p["categories"])]
@@ -837,12 +989,15 @@ def get_blog_post(post_id: int):
     return _format_blog_post(row)
 
 
-def create_blog_post(title: str, content: str, author: str, categories: list[str], bullet_summary: list[str] | None = None):
+def create_blog_post(title: str, content: str, author: str, categories: list[str], bullet_summary: list[str] | None = None,
+                     kind: str = 'article', link_url: str = '', link_label: str = ''):
+    kind = kind if kind in POST_KINDS else 'article'
     cats_json = json.dumps(categories if isinstance(categories, list) else [])
-    summary_json = json.dumps(bullet_summary if isinstance(bullet_summary, list) else [])
-    row = one(f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, {NOW}, {NOW})
-        RETURNING {BLOG_COLUMNS}""", (title.strip(), content.strip(), author.strip() or "Church Staff", cats_json, summary_json))
+    summary_json = json.dumps(bullet_summary if kind == 'article' and isinstance(bullet_summary, list) else [])
+    row = one(f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, {NOW}, {NOW})
+        RETURNING {BLOG_COLUMNS}""", (title.strip(), content.strip(), author.strip() or "Church Staff", cats_json, summary_json,
+                                      kind, link_url.strip(), link_label.strip()))
     return _format_blog_post(row)
 
 

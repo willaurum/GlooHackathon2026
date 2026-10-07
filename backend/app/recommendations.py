@@ -2,6 +2,8 @@
 
 import json
 import logging
+import os
+import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,24 +40,70 @@ Consider interests, experience, preferred ways of serving, availability, and onb
 The server has filtered the catalog by structured availability, service, frequency, requirements, and shift capacity.
 Only the supplied shifts may be suggested. Never invent additional shifts or recommend an excluded shift.
 Use the supplied serving preferences: availability, preferred_service, frequency, earliest_start_date, and unavailable_requirements.
-Structured availability is authoritative; do not treat an interest paragraph as verified schedule data.
+Structured availability (preferences.availability) is what the server filtered on; it is not a verified schedule either.
+The visitor may type their availability instead, in the description as "General availability: ..." (also sent as stated_availability).
+That is the visitor's stated availability: acknowledge it in your own words (for example "You mentioned twice a month on Sunday mornings"),
+use it to choose teams, and say to confirm exact shifts with the team. Never say their availability is blank, missing or unspecified when
+stated_availability or a "General availability" line is present, and never mention internal names such as structured availability or preferences.
 Always include the supplied confirmations in your considerations; these are not verified qualifications.
-Blank or null preferences mean unspecified, not unlimited availability. Preferred service means the service they want to serve at.
+Blank or null preferences mean unspecified, not unlimited availability, unless the visitor typed their availability.
+Preferred service means the service they want to serve at.
 Do not assume that a dated shift repeats weekly or monthly; ask them to confirm recurring opportunities with the team.
 Respect explicit restrictions; do not recommend a schedule the visitor explicitly cannot attend.
 Do not infer skills, identity, availability, or preferences they did not share.
 In each reason, explain the fit using their description and catalog facts.
 In considerations, explain requirements, uncertainties, and details to confirm with the team.
-If availability is unspecified, say to confirm the schedule; never claim it fits.
+If they gave no availability at all (no structured availability and no typed availability), say to confirm the schedule; never claim it fits.
 The goal is to help the visitor contact a person, not complete a placement application.
 If answers are brief or vague, offer a few teams to explore without claiming a personalized fit or asking them to fill out more questions.
-General availability in the answers is context for your suggestions, not a verified schedule. Leave exact scheduling and onboarding to a conversation with the ministry lead.
+Typed general availability guides your suggestions but is not a verified schedule. Leave exact scheduling and onboarding to a conversation with the ministry lead.
 If no ministry fits, return no matches and explain why in summary. Do not force three results.
 Do not invent ministries, contacts, or facts. Do not include contact details in generated text;
 the application supplies verified catalog contacts separately. Address the visitor as 'you'.
 Return only a JSON object with this shape, without markdown:
 {"summary": "Short introduction", "matches": [{"ministry_id": 1,
 "reason": "Why this fits you", "considerations": "What to confirm"}]}"""
+
+
+# Find a place sends the whole catalog and needs strict JSON. A reasoning model (such as the chat's
+# gloo-qwen-3.7-flash) spends 30+ seconds thinking first, so this job has its own Gloo model.
+MATCH_MODEL = 'gloo-anthropic-claude-haiku-4.5'
+
+
+def match_model(provider, model):
+    """The model to use for recommendations: GLOO_MATCH_MODEL (or the fast default) on Gloo."""
+    return (os.environ.get('GLOO_MATCH_MODEL') or MATCH_MODEL) if provider == 'gloo' else model
+
+
+GENERAL_AVAILABILITY = re.compile(r'^\s*General availability:\s*(.+?)\s*$', re.IGNORECASE | re.MULTILINE)
+
+
+def stated_availability(description):
+    """What the visitor typed under General availability on the Find a place form (Serve.jsx), or ''."""
+    found = GENERAL_AVAILABILITY.search(description or '')
+    return found.group(1)[:500] if found else ''
+
+
+THINKING = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
+
+
+def json_object(content):
+    """The JSON object in a model reply. Reasoning models may add thinking, a code fence or a sentence
+    around it, so take the outermost {...} rather than requiring the reply to be bare JSON."""
+    text = THINKING.sub('', content or '').strip()
+    start, end = text.find('{'), text.rfind('}')
+    return text[start:end + 1] if 0 <= start < end else text
+
+
+def browse_fallback(ministries, preferences=None):
+    """What the visitor sees when no model answers: the teams that fit their structured answers (or all
+    teams), laid out like the no-answers browse view, so Find a place never ends in an error page."""
+    candidates, _ = eligibility.eligible_ministries(ministries, preferences or {})
+    return {'engine': 'browse',
+            'summary': 'Our assistant is busy right now, so here are teams that fit your answers. Reach out to a ministry lead to talk about getting involved.',
+            'matches': [{**m, 'reason': 'Learn more about this team and ask the ministry lead about ways to get involved.',
+                         'considerations': 'You can discuss availability, next steps, and any questions together.'}
+                        for m in (candidates or ministries)]}
 
 
 def recommend(description, ministries, clients=None, preferences=None):
@@ -82,10 +130,12 @@ def recommend(description, ministries, clients=None, preferences=None):
         item['confirmations'] = available[item['id']]['confirmations']
     messages = [
         {'role': 'system', 'content': INSTRUCTIONS},
-        {'role': 'user', 'content': json.dumps({'description': description, 'preferences': preferences or {}, 'ministries': catalog})},
+        {'role': 'user', 'content': json.dumps({'description': description, 'stated_availability': stated_availability(description),
+                                                'preferences': preferences or {}, 'ministries': catalog})},
     ]
     try:
         for provider, model, extra_body, client in clients:
+            model = match_model(provider, model)
             try:
                 options = {}
                 if provider == 'ollama':
@@ -93,12 +143,11 @@ def recommend(description, ministries, clients=None, preferences=None):
                         'name': 'ministry_recommendations', 'schema': RecommendationPlan.model_json_schema()}}
                     if model.startswith('gpt-oss:'):
                         options['reasoning_effort'] = 'low'
-                response = client.with_options(timeout=chat.provider_timeout('ollama') if provider == 'ollama' else 25, max_retries=0).chat.completions.create(
+                # Same per-call limit as the chat: hosted reasoning models (such as Gloo's qwen) can take
+                # well over 25 seconds on this long, structured prompt.
+                response = client.with_options(timeout=chat.provider_timeout(provider), max_retries=0).chat.completions.create(
                     model=model, messages=messages, extra_body=extra_body, **options)
-                content = (response.choices[0].message.content or '').strip()
-                if content.startswith('```') and content.endswith('```'):
-                    content = content.split('\n', 1)[1].rsplit('```', 1)[0].strip()
-                plan = RecommendationPlan.model_validate_json(content)
+                plan = RecommendationPlan.model_validate_json(json_object(response.choices[0].message.content))
                 ids = [item.ministry_id for item in plan.matches]
                 if len(ids) != len(set(ids)) or any(key not in available for key in ids):
                     raise ValueError('The model returned duplicate or unavailable ministry IDs')
@@ -107,7 +156,7 @@ def recommend(description, ministries, clients=None, preferences=None):
                     for item in plan.matches
                 ]}
             except Exception as error:
-                log.warning('Recommendation provider %s failed (%s)', provider, type(error).__name__)
+                log.warning('Recommendation provider %s (%s) failed: %s', provider, model, type(error).__name__)
         raise Unavailable('We could not generate recommendations right now. Please try again, or browse Ministries to contact a team directly.')
     finally:
         if owned_clients:

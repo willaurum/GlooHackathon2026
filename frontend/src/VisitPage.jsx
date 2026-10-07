@@ -115,7 +115,7 @@ export default function VisitPage() {
           <strong>{s.day} {s.time}</strong>
           <p>{s.note}</p>
         </article>)}
-      </div> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Belong or the church office in the meantime.'}</p>}
+      </div> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Tekton or the church office in the meantime.'}</p>}
     </section>
 
     {info.first_visit && <section className="card visit-section" id="visit-what-to-expect">
@@ -209,7 +209,7 @@ export default function VisitPage() {
         {visit.status === 'arrived' && (visit.wants_host ? <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>The welcome team has been notified…</h2>
-          <p>Hang tight — someone will come find you at the main entrance shortly.</p>
+          <p>Hang tight. Someone will come find you at the main entrance shortly.</p>
         </> : <>
           <div className="eyebrow">YOU'RE HERE</div>
           <h2>Thanks for letting us know. Enjoy the service!</h2>

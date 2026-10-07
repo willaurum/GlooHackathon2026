@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, getApiKey } from './api.js';
 import { useChurch } from './ChurchContext.js';
+import { eventsToList, isoDay, listHeading } from './calendarList.js';
 
 const CATEGORIES = [
   'All',
@@ -36,6 +37,8 @@ export default function Calendar({ setError = () => {} }) {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedDate, setSelectedDate] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // 'month': the month the grid shows. 'upcoming': today or later, from any month.
+  const [listView, setListView] = useState('month');
   const [summarizingId, setSummarizingId] = useState(null);
   const [cardErrors, setCardErrors] = useState({});
   const [showAddModal, setShowAddModal] = useState(false);
@@ -51,7 +54,7 @@ export default function Calendar({ setError = () => {} }) {
   const [formData, setFormData] = useState({
     title: '',
     category: 'Worship',
-    date: '2026-09-27',
+    date: isoDay(),
     time: '10:00 AM - 11:30 AM',
     location: 'Main Sanctuary',
     ministry_name: 'Worship collective',
@@ -313,10 +316,12 @@ export default function Calendar({ setError = () => {} }) {
 
   function prevMonth() {
     setCurrentMonthDate(new Date(year, month - 1, 1));
+    setListView('month');
   }
 
   function nextMonth() {
     setCurrentMonthDate(new Date(year, month + 1, 1));
+    setListView('month');
   }
 
   function goToToday() {
@@ -327,26 +332,19 @@ export default function Calendar({ setError = () => {} }) {
     setSelectedDate(`${today.getFullYear()}-${mm}-${dd}`);
   }
 
-  // Filter events list
-  const filteredEvents = events.filter(event => {
-    if (selectedCategory !== 'All' && event.category !== selectedCategory) {
-      return false;
+  // The list beside the grid: the month it shows, or upcoming (today or later), a picked day, or a search.
+  const listOptions = { view: listView, year, month, selectedDate, category: selectedCategory, query: searchQuery };
+  const filteredEvents = eventsToList(events, listOptions);
+
+  async function handleDelete(event) {
+    if (!window.confirm(`Delete "${event.title}" from the calendar?`)) return;
+    try {
+      await api(`/events/${event.id}`, { method: 'DELETE' });
+      setEvents(list => list.filter(e => e.id !== event.id));
+    } catch (err) {
+      setError(`Could not delete "${event.title}": ${err.message || 'please try again.'}`);
     }
-    if (selectedDate && event.date !== selectedDate) {
-      return false;
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const match =
-        event.title.toLowerCase().includes(q) ||
-        event.description.toLowerCase().includes(q) ||
-        (event.location && event.location.toLowerCase().includes(q)) ||
-        (event.ministry_name && event.ministry_name.toLowerCase().includes(q)) ||
-        (event.ai_summary && event.ai_summary.toLowerCase().includes(q));
-      if (!match) return false;
-    }
-    return true;
-  });
+  }
 
   const unsummarizedCount = events.filter(e => !e.ai_summary).length;
 
@@ -533,14 +531,15 @@ export default function Calendar({ setError = () => {} }) {
           {/* Search and context header */}
           <div className="events-toolbar">
             <div className="events-header-info">
-              <h2>
-                {selectedDate
-                  ? `Events on ${selectedDate}`
-                  : selectedCategory !== 'All'
-                  ? `${selectedCategory} Events`
-                  : 'Upcoming Gatherings & Events'}
-              </h2>
+              <h2>{listHeading(listOptions)}</h2>
               <span className="events-count">{filteredEvents.length} event(s) found</span>
+              <div className="events-view-toggle" role="group" aria-label="Which events to list">
+                {[['month', `${monthNames[month]} ${year}`], ['upcoming', 'Upcoming']].map(([value, label]) => (
+                  <button key={value} className={`chip ${listView === value && !selectedDate ? 'active' : ''}`}
+                    aria-pressed={listView === value && !selectedDate}
+                    onClick={() => { setListView(value); setSelectedDate(null); }}>{label}</button>
+                ))}
+              </div>
             </div>
 
             <label className="search events-search">
@@ -560,8 +559,15 @@ export default function Calendar({ setError = () => {} }) {
             <div className="panel empty-events">
               <span className="empty-icon">🗓</span>
               <h3>No events found</h3>
-              <p>There are no church events matching your selected date or filters.</p>
+              <p>{selectedDate || searchQuery.trim() || selectedCategory !== 'All'
+                ? 'There are no church events matching your selected date or filters.'
+                : listView === 'upcoming' ? 'Nothing is on the calendar from today on yet.' : `Nothing is on the calendar in ${monthNames[month]} ${year}.`}</p>
               <div className="empty-actions">
+                {listView === 'month' && !selectedDate && (
+                  <button className="secondary" onClick={() => setListView('upcoming')}>
+                    Show upcoming events
+                  </button>
+                )}
                 {selectedDate && (
                   <button className="secondary" onClick={() => setSelectedDate(null)}>
                     Clear date filter
@@ -608,7 +614,11 @@ export default function Calendar({ setError = () => {} }) {
                       </div>
                     </div>
 
-                    <h3 className="event-title">{event.title}</h3>
+                    <div className="event-title-row">
+                      <h3 className="event-title">{event.title}</h3>
+                      {canEdit && <button className="ghost event-delete" onClick={() => handleDelete(event)}
+                        aria-label={`Delete ${event.title}`}>Delete</button>}
+                    </div>
 
                     <div className="event-location">
                       <span>📍</span> {event.location}

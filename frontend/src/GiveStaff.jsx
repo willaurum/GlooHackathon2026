@@ -64,6 +64,7 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
       {err && <div className="banner error" role="alert">{err}</div>}
       <button className="primary wide" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
       <p className="form-note">Need an account? Ask your church Owner to add you.</p>
+      <p className="form-note">Starting a new church site? <a href="/#/new">Create it from your current website</a>.</p>
     </form>
   </div>;
 }
@@ -96,7 +97,7 @@ function Dashboard({ slug, go, onChanged }) {
     {view === 'overview' && <Overview slug={slug} data={data} update={update} go={go} fail={fail} setView={setView} />}
     {view === 'funds' && <Funds slug={slug} data={data} update={update} fail={fail} />}
     {view === 'applications' && <Applications slug={slug} fail={fail} onChanged={() => staffApi(slug, '').then(update).catch(() => {})} />}
-    {view === 'gifts' && <Gifts slug={slug} fail={fail} />}
+    {view === 'gifts' && <Gifts slug={slug} fail={fail} canAnonymize={!!data.church.demo && data.me?.role === 'owner'} />}
     {view === 'team' && <Team slug={slug} />}
   </div>;
 }
@@ -431,7 +432,8 @@ function donorName(d) {
   return d.status === 'pending' ? 'Waiting for Stripe' : d.status === 'expired' ? 'Checkout not finished' : 'Name not given';
 }
 
-function Gifts({ slug, fail }) {
+// canAnonymize: an owner on the demo church can replace a gift's donor name and email (the Worker checks too).
+function Gifts({ slug, fail, canAnonymize = false }) {
   const [data, setData] = useState(null), [fund, setFund] = useState('all'), [busy, setBusy] = useState(''), [err, setErr] = useState('');
   useEffect(() => { staffApi(slug, '/donations').then(setData).catch(fail); }, [slug]);
   if (!data) return <div className="card give-pad"><p role="status">Loading gifts…</p></div>;
@@ -442,6 +444,13 @@ function Gifts({ slug, fail }) {
     if (!window.confirm(`Cancel ${d.name || 'this donor'}'s ${fmt(d.amount, data.currency)} monthly gift? No more gifts will be made.`)) return;
     setBusy(d.id); setErr('');
     try { setData(await staffApi(slug, '/donations/' + encodeURIComponent(d.id) + '/cancel', { method: 'POST' })); }
+    catch (e) { if (e.status === 401) fail(e); else setErr(friendly(e)); }
+    finally { setBusy(''); }
+  }
+  async function anonymize(d) {
+    if (!window.confirm(`Replace ${d.name || 'this donor'}'s name and email with "Demo donor"? The amount and totals stay the same.`)) return;
+    setBusy(d.id); setErr('');
+    try { setData(await staffApi(slug, '/donations/' + encodeURIComponent(d.id) + '/anonymize', { method: 'POST' })); }
     catch (e) { if (e.status === 401) fail(e); else setErr(friendly(e)); }
     finally { setBusy(''); }
   }
@@ -475,6 +484,7 @@ function Gifts({ slug, fail }) {
             <span className={'tag ' + (d.status === 'completed' ? '' : d.status === 'demo' ? 'done' : 'crisis')}>{d.status === 'demo' ? 'Simulated' : d.status}</span>
             {d.canceled && <span className="tag crisis give-canceled-tag" title={d.canceledAt ? 'Canceled ' + new Date(d.canceledAt).toLocaleString() : undefined}>Monthly gift canceled</span>}
             {d.cancelable && <button className="ghost" disabled={busy === d.id} onClick={() => cancel(d)}>{busy === d.id ? 'Canceling…' : 'Cancel monthly gift'}</button>}
+            {canAnonymize && (d.name !== 'Demo donor' || d.email) && <button className="ghost" disabled={busy === d.id} onClick={() => anonymize(d)}>Anonymize</button>}
           </span></td>
         </tr>)}</tbody>
       </table>}

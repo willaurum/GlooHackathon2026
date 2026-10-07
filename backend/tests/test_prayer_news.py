@@ -8,7 +8,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from backend.app import db, main, newsdata, summarize
+from backend.app import db, main, newsdata
 from backend.tests.test_churches import ChurchTestCase
 
 APP = Path(__file__).resolve().parents[1] / 'app'
@@ -47,21 +47,20 @@ class RefreshTests(ChurchTestCase):
     def test_refresh_replaces_the_news(self):
         item = {'id': 1001, 'country': 'Kenya', 'country_code': 'KEN', 'city': 'Nairobi', 'lat': -1.29,
                 'lng': 36.82, 'headline': 'Kenya headline', 'source': 'Wire', 'date': '2026-10-05',
-                'summary': 'A description long enough to be used as the summary of this story.'}
+                'url': 'https://example.com/kenya-story'}
         with mock.patch.dict(os.environ, {'NEWSDATA_API_KEY': 'test'}), \
-                mock.patch.object(newsdata, 'fetch_news', return_value=[dict(item)]), \
-                mock.patch.object(summarize, '_chain', return_value=[]):
+                mock.patch.object(newsdata, 'fetch_news', return_value=[dict(item)]):
             response = self.client.post('/api/news/refresh')
         self.assertEqual(response.status_code, 200)
         self.assertEqual([n['headline'] for n in db.list_news()], ['Kenya headline'])
 
 
-class SummaryTests(unittest.TestCase):
-    def test_without_a_provider_the_description_is_kept(self):
-        items = [{'country': 'Peru', 'headline': 'Peru headline', 'source': 'Wire', 'summary': 'Own description.'}]
-        with mock.patch.object(summarize, '_chain', return_value=[]):
-            summarize.add_summaries(items)
-        self.assertEqual(items[0]['summary'], 'Own description.')
+class NewsdataTests(unittest.TestCase):
+    def test_items_keep_the_source_url(self):
+        article = {'link': 'https://example.com/story', 'source_name': 'Wire', 'pubDate': '2026-10-05 10:00:00'}
+        item = newsdata._item('NPL', article, 'Floods in Nepal close roads', 'A description.')
+        self.assertEqual(item['url'], 'https://example.com/story')
+        self.assertNotIn('summary', item)
 
     def test_usable_headlines_name_the_country(self):
         description = 'A long enough description of what happened in the country this week, with details.'

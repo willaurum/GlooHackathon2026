@@ -6,6 +6,10 @@ import { churchApi, friendly, givingCapabilities, signOutStaff, staffApi } from 
 import Icon from './Icon.jsx';
 import ChurchLink from './ChurchLink.jsx';
 import { PageHeader } from './Layout.jsx';
+import countryBorders from './data/countryBorders.json';
+
+// Countries the Prayer map can outline, from its border data.
+const COUNTRIES = countryBorders.features.map(f => ({ code: f.properties.country_code, name: f.properties.name })).sort((a, b) => a.name.localeCompare(b.name));
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -29,7 +33,7 @@ export default function ChurchSetup() {
       action={<button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>} />
     {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
     <ChurchLink />
-    {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Give, then Church staff.</p></div>}
+    {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Church staff.</p></div>}
   </>;
 }
 
@@ -49,14 +53,15 @@ export function StaffSignIn() {
     finally { setBusy(false); }
   }
   return <form className="card give-pad staff-signin" onSubmit={submit}>
-    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Give, then Church staff.</p></div></div>
+    <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Church staff.</p></div></div>
     {ready === false && <div className="banner demo" role="status"><Icon name="sparkle" /><span>Staff sign-in opens as soon as the updated service is deployed.</span></div>}
     {church.demo && <p className="form-note">This is the shared demo church, so anything you change here is visible to everyone.</p>}
     <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
     <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
-    <p className="form-note">Need an account? Ask your church Owner to add you in Give → Church staff → Team.</p>
+    <p className="form-note">Need an account? Ask your church Owner to add you in Church staff → Team.</p>
+    <p className="form-note">Starting a new church site? <a href="/#/new">Create it from your current website</a>.</p>
   </form>;
 }
 
@@ -81,6 +86,7 @@ function SetupForms() {
     ['Service times', info.services.length > 0, 'setup-services'],
     ['Questions people ask', content.faqs.length > 0, 'setup-faqs'],
     ['Serving teams', content.ministries.length > 0, 'setup-teams'],
+    ['Prayer map places', content.regions.length > 0, 'setup-places'],
   ];
   const done = steps.filter(s => s[1]).length;
   return <div className="setup">
@@ -90,12 +96,13 @@ function SetupForms() {
       <ul className="give-checklist">{steps.map(([label, ok, id]) => <li key={label} className={ok ? 'done' : ''}>
         <Icon name={ok ? 'check' : 'clock'} size={18} /><a href={'#' + id} onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); }}>{label}</a>
       </li>)}</ul>
-      <p className="form-note">Giving is set up under <button type="button" className="link" onClick={() => church.go('give/staff')}>Give, then Church staff</button>. Add events on the <button type="button" className="link" onClick={() => church.go('calendar')}>Calendar</button>.</p>
+      <p className="form-note">Giving is set up under <button type="button" className="link" onClick={() => church.go('staff')}>Church staff</button>. Add events on the <button type="button" className="link" onClick={() => church.go('calendar')}>Calendar</button>.</p>
     </section>
     <Details info={info} save={save} />
     <Services info={info} save={save} />
     <Faqs faqs={content.faqs} save={save} />
     <Teams ministries={content.ministries} save={save} />
+    <Places regions={content.regions} save={save} />
   </div>;
 }
 
@@ -217,5 +224,65 @@ function Teams({ ministries, save }) {
       <button type="button" className="ghost" onClick={() => setRows(x => x.filter((_, j) => j !== i))}><Icon name="x" size={16} />Remove this team</button>
     </div>)}
     <button type="button" className="secondary" onClick={() => setRows(x => [...x, { ...blank }])}><Icon name="plus" size={18} />Add a team</button>
+  </Part>;
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+function Places({ regions, save }) {
+  const blankPlace = () => ({ country: '', country_code: '', codename: '', field_of_ministry: '', since: '', team_size: '', updates: [] });
+  const [rows, setRows] = useState(() => regions.length
+    ? regions.map(r => ({ ...r, since: String(r.since ?? ''), team_size: String(r.team_size || ''), updates: r.updates.map(u => ({ ...u })) }))
+    : [blankPlace()]);
+  const setPlace = (i, patch) => setRows(r => r.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  const field = (i, k) => e => setPlace(i, { [k]: e.target.value });
+  const setUpdate = (i, n, k) => e => setRows(r => r.map((row, j) => (j === i ? { ...row, updates: row.updates.map((u, m) => (m === n ? { ...u, [k]: e.target.value } : u)) } : row)));
+  function pickCountry(i, code) {
+    const c = COUNTRIES.find(x => x.code === code);
+    setPlace(i, { country_code: code, country: c ? c.name : '' });
+  }
+  async function onSave() {
+    const kept = rows.map(r => ({ ...r, codename: r.codename.trim(), field_of_ministry: r.field_of_ministry.trim(),
+      updates: r.updates.map(u => ({ ...u, title: (u.title || '').trim(), body: u.body.trim(), author: (u.author || '').trim() })).filter(u => u.body) }))
+      .filter(r => r.country_code || r.codename || r.updates.length);
+    if (kept.some(r => !r.country_code)) throw new Error('Choose a country for each place, or remove the place.');
+    if (kept.some(r => !r.codename)) throw new Error('Give each place a team name. Use a codename if the work is sensitive.');
+    if (new Set(kept.map(r => r.country_code)).size !== kept.length) throw new Error('Each country can only be added once. Add more updates under the same place.');
+    if (kept.some(r => r.updates.some(u => !u.date))) throw new Error('Each update needs a date.');
+    const since = r => (r.since === '' ? null : parseInt(r.since, 10));
+    if (kept.some(r => r.since !== '' && !(since(r) >= 1900 && since(r) <= 2100))) throw new Error('"Serving since" should be a year, like 2019.');
+    return save({ regions: kept.map(r => ({ ...r, since: since(r), team_size: Math.max(0, parseInt(r.team_size, 10) || 0) })) });
+  }
+  return <Part id="setup-places" icon="compass" title="Prayer map places" text="The countries your church prays for. The map shows the whole country, never an exact spot, so you can use a codename for a team. Each update is kept with its date, newest first." onSave={onSave}>
+    {rows.map((r, i) => <div key={r.id ?? 'new-' + i} className="setup-item">
+      <div className="form-row">
+        <label className="field">Country<select value={r.country_code} onChange={e => pickCountry(i, e.target.value)}>
+          <option value="">Choose a country</option>
+          {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+        </select></label>
+        <label className="field">Team name<input value={r.codename} maxLength={120} placeholder="e.g. Team Highland" onChange={field(i, 'codename')} /></label>
+      </div>
+      <label className="field">What the team does <small>Optional</small><input value={r.field_of_ministry} maxLength={300} placeholder="e.g. Community health training in mountain villages" onChange={field(i, 'field_of_ministry')} /></label>
+      <div className="form-row">
+        <label className="field">Serving since <small>Optional</small><input inputMode="numeric" value={r.since} maxLength={4} placeholder="e.g. 2019" onChange={field(i, 'since')} /></label>
+        <label className="field">Team size <small>Optional</small><input inputMode="numeric" value={r.team_size} maxLength={4} placeholder="e.g. 4" onChange={field(i, 'team_size')} /></label>
+      </div>
+      <div className="setup-updates">
+        <b>From the field</b>
+        {r.updates.length === 0 && <p className="form-note">No updates yet. Add the first one below.</p>}
+        {r.updates.map((u, n) => <div key={u.id ?? 'u-' + n} className="setup-update">
+          <div className="form-row">
+            <label className="field">Date<input type="date" value={u.date} onChange={setUpdate(i, n, 'date')} /></label>
+            <label className="field">From <small>Optional</small><input value={u.author || ''} maxLength={120} placeholder="e.g. Pat, team lead" onChange={setUpdate(i, n, 'author')} /></label>
+          </div>
+          <label className="field">Title <small>Optional</small><input value={u.title || ''} maxLength={200} placeholder="e.g. The lower trail reopened" onChange={setUpdate(i, n, 'title')} /></label>
+          <label className="field">Update<textarea rows={3} value={u.body} maxLength={4000} placeholder="What is happening, what the team is grateful for, what they need." onChange={setUpdate(i, n, 'body')} /></label>
+          <button type="button" className="ghost" onClick={() => setPlace(i, { updates: r.updates.filter((_, m) => m !== n) })}><Icon name="x" size={16} />Remove this update</button>
+        </div>)}
+        <button type="button" className="secondary" onClick={() => setPlace(i, { updates: [{ date: today(), title: '', body: '', author: '' }, ...r.updates] })}><Icon name="plus" size={18} />Add an update</button>
+      </div>
+      <button type="button" className="ghost" onClick={() => setRows(x => x.filter((_, j) => j !== i))}><Icon name="x" size={16} />Remove this place</button>
+    </div>)}
+    <button type="button" className="secondary" onClick={() => setRows(x => [...x, blankPlace()])}><Icon name="plus" size={18} />Add a place</button>
   </Part>;
 }

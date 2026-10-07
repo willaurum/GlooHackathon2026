@@ -3,9 +3,11 @@ import { MapContainer, TileLayer, GeoJSON, Marker, Popup, Tooltip, useMap } from
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from './api.js';
-import { useChurch } from './ChurchContext.js';
 import { SetUpThis } from './ChurchStates.jsx';
 import countryBorders from './data/countryBorders.json';
+import { compactLabels } from './prayerMapLabels.js';
+
+const dateLabel = iso => new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 
 const newsIcon = L.divIcon({ className: 'news-pin', iconSize: [12, 12], iconAnchor: [6, 6] });
 const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -20,6 +22,18 @@ function beaconIcon(country, selected) {
   });
 }
 
+// Marks the map 'compact-labels' when its country labels would overlap (see prayerMapLabels.js).
+function LabelDensity() {
+  const map = useMap();
+  useEffect(() => {
+    const update = () => map.getContainer().classList.toggle('compact-labels', compactLabels(map.getZoom(), map.getContainer().clientWidth));
+    update();
+    map.on('zoomend resize', update);
+    return () => { map.off('zoomend resize', update); };
+  }, [map]);
+  return null;
+}
+
 function FitToBorders({ features }) {
   const map = useMap();
   useEffect(() => {
@@ -31,14 +45,11 @@ function FitToBorders({ features }) {
 }
 
 export default function PrayerMap() {
-  const { staff } = useChurch();
   const [regions, setRegions] = useState([]);
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -81,39 +92,16 @@ export default function PrayerMap() {
     if (region) selectRegion(region);
   }
 
-  async function selectRegion(region) {
+  function selectRegion(region) {
     setSelected(region);
-    setBusy(true); setError('');
-    try {
-      setHistory(await api(`/regions/${region.id}/prayer-angles`));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
   }
-
-  async function generateAngle() {
-    if (!selected) return;
-    setBusy(true); setError('');
-    try {
-      const angle = await api(`/regions/${selected.id}/prayer-angles`, { method: 'POST' });
-      setHistory(previous => [...previous, angle]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const latest = history[history.length - 1];
 
   return <div className="prayer-map">
     {error && <div className="api-message" role="alert">{error}</div>}
     {loading && <p role="status">Loading prayer map data…</p>}
     {!loading && !error && !regions.length && <SetUpThis icon="compass" title="No prayer map yet."
       text="This church has not added the places it prays for yet."
-      staffText="The prayer map shows the places your missionaries serve. Adding regions from Church setup is coming next." />}
+      staffText="The prayer map shows the places your missionaries serve. Add them, and their updates from the field, in Church setup." />}
     <div className="map-legend">
       <span><span className="legend-dot news-dot" /> Real news: exact city</span>
       <span><span className="legend-dot region-dot" /> Missionary presence: whole country only, never an exact point. Click to open.</span>
@@ -122,10 +110,11 @@ export default function PrayerMap() {
       <MapContainer center={[20, 40]} zoom={2} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
         <TileLayer
           url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-          attribution="Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors"
+          attribution="Tiles &copy; Esri, HERE, Garmin, OpenStreetMap contributors"
           maxNativeZoom={16}
         />
         <FitToBorders features={borderFeatures} />
+        <LabelDensity />
         <GeoJSON
           key={`${borderFeatures.length}-${selectedCode}`}
           data={{ type: 'FeatureCollection', features: borderFeatures }}
@@ -143,7 +132,7 @@ export default function PrayerMap() {
             <Popup>
               <strong>{n.headline}</strong><br />
               {n.city}, {n.country} · {n.source} · {n.date}
-              <p>{n.summary}</p>
+              {n.url && <p><a href={n.url} target="_blank" rel="noopener noreferrer">Read at {n.source} ↗</a></p>}
             </Popup>
           </Marker>
         ))}
@@ -155,32 +144,33 @@ export default function PrayerMap() {
     </div>
     <div id="prayer-detail">
       {selected && <section className="panel prayer-card" aria-live="polite">
-        <button className="close" aria-label="Close region details" onClick={() => { setSelected(null); setHistory([]); }}>×</button>
+        <button className="close" aria-label="Close region details" onClick={() => { setSelected(null); }}>×</button>
         <div className="eyebrow">{selected.country.toUpperCase()} · SOFT PRESENCE, NOT AN EXACT LOCATION</div>
         <h2>{selected.codename}</h2>
-        <p><b>{selected.field_of_ministry}</b> · serving since {selected.since} · team of {selected.team_size}</p>
+        <p><b>{selected.field_of_ministry || 'Missions team'}</b>{selected.since ? ` · serving since ${selected.since}` : ''}{selected.team_size ? ` · team of ${selected.team_size}` : ''}</p>
         <div className="source-columns">
           <div className="source-block">
             <div className="source-label">From the field</div>
-            <p>{selected.testimony}</p>
+            {selected.updates.length > 0
+              ? <ol className="field-updates">{selected.updates.map(u => <li key={u.id}>
+                  <small>{dateLabel(u.date)}{u.author && ` · ${u.author}`}</small>
+                  {u.title && <b>{u.title}</b>}
+                  <p>{u.body}</p>
+                </li>)}</ol>
+              : <p>No updates from {selected.codename} yet.</p>}
           </div>
           <div className="source-block">
             <div className="source-label">In the news</div>
             {regionNews.length > 0
               ? regionNews.map(n => <article key={n.id}>
                   <b>{n.headline}</b>
-                  <small>{n.city} · {n.source} · {n.date}</small>
+                  <small>{n.city} · {n.source} · {n.date}
+                    {n.url && <> · <a href={n.url} target="_blank" rel="noopener noreferrer">Read source ↗</a></>}
+                  </small>
                 </article>)
               : <p>No recent news from {selected.country}.</p>}
           </div>
         </div>
-        {(latest || staff) && <div className="prayer-points">
-          <b>Prayer points{latest && <span className="angle-pill">{latest.angle}</span>}</b>
-          {latest && <ul>{latest.prayer_points.map((point, i) => <li key={i}>{point}</li>)}</ul>}
-          {staff && <button className="primary" disabled={busy} onClick={generateAngle}>
-            {busy ? 'Loading…' : latest ? 'Pray about something else' : 'Show prayer points'}
-          </button>}
-        </div>}
       </section>}
     </div>
   </div>;

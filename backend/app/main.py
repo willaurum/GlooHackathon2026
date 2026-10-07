@@ -1,4 +1,4 @@
-"""Belong prototype API with persistent ministries and connections, plus Pastor Notes."""
+"""Tekton prototype API with persistent ministries and connections, plus Pastor Notes."""
 
 import asyncio
 import logging
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai, ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations, summarize
+from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, recommendations
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -28,11 +28,12 @@ async def lifespan(app: FastAPI):
         db.close()
 
 
-app = FastAPI(title="Belong API", lifespan=lifespan)
+app = FastAPI(title="Tekton API", lifespan=lifespan)
 # Every request runs against one church's database (X-Church); see church_scope.py.
 app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
 app.include_router(church_content.router)
+app.include_router(builder.router)
 
 
 class AvailabilityWindow(BaseModel):
@@ -73,23 +74,24 @@ class ConnectionRequest(BaseModel):
 @app.get('/api/info')
 def church_info():
     # Public church details (address, service times) for the home page.
-    return db.get_church_info()
+    return church_content.public_info({'info': db.get_church_info()})
 
 
 @app.get('/api/ministries')
 def ministries():
-    return db.list_ministries()
+    return church_content.public_ministries({'ministries': db.list_ministries()})
 
 
 @app.post('/api/matches')
 def matches(body: MatchRequest):
+    ministries, preferences = db.list_ministries(), body.preferences.model_dump(mode='json')
     try:
-        return recommendations.recommend(body.description, db.list_ministries(),
-                                         preferences=body.preferences.model_dump(mode='json'))
+        return recommendations.recommend(body.description, ministries, preferences=preferences)
     except recommendations.NotConfigured as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    except recommendations.Unavailable as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+    except recommendations.Unavailable:
+        # Every model failed or timed out: show the fitting teams instead of an error.
+        return recommendations.browse_fallback(ministries, preferences)
 
 
 @app.get('/api/connections')
@@ -229,7 +231,8 @@ class ClaimRequest(BaseModel):
 
 @app.get('/api/church')
 def church():
-    return {'info': db.get_church_info(), 'faqs': db.list_content('faqs'), 'events': db.list_content('events')}
+    return church_content.public_church({'info': db.get_church_info(), 'faqs': db.list_content('faqs'),
+                                        'events': db.list_content('events')})
 
 
 @app.post('/api/visits', status_code=201)
@@ -279,19 +282,26 @@ def met_visit(visit_id: int):
     return visit
 
 
-# --- Prayer map: regions, news, and prayer angles ---
+# --- Prayer map: regions, field updates, and news ---
+
+
+class FieldUpdateOut(BaseModel):
+    id: int
+    date: str
+    title: str
+    body: str
+    author: str
 
 
 class RegionOut(BaseModel):
-    model_config = ConfigDict(extra='forbid')
     id: int
     country: str
     country_code: str
     codename: str
-    field_of_ministry: str
-    testimony: str
-    since: int
-    team_size: int
+    field_of_ministry: str = ''
+    since: int | None = None
+    team_size: int = 0
+    updates: list[FieldUpdateOut]  # newest first
 
 
 class NewsEventOut(BaseModel):
@@ -305,17 +315,7 @@ class NewsEventOut(BaseModel):
     headline: str
     source: str
     date: str
-    summary: str
-
-
-class PrayerAngleOut(BaseModel):
-    angle_id: int
-    region_id: int
-    angle: str
-    summary: str
-    prayer_points: list[str]
-    source_news_ids: list[int]
-    created_at: datetime
+    url: str | None = None
 
 
 @app.get('/api/regions', response_model=list[RegionOut])
@@ -330,34 +330,14 @@ def news():
 
 @app.post('/api/news/refresh')
 def refresh_news():
-    """Pull live headlines from NewsData.io, summarize them, and replace this church's news."""
+    """Pull live headlines from NewsData.io and replace this church's news."""
     if not os.environ.get('NEWSDATA_API_KEY', '').strip():
         raise HTTPException(status_code=503, detail='NEWSDATA_API_KEY is not set; the news is unchanged.')
     items = newsdata.fetch_news()
     if not items:
         raise HTTPException(status_code=502, detail='NewsData returned no articles; the news is unchanged.')
-    providers = summarize.add_summaries(items)
     db.replace_news(items)
-    return {'articles': len(items), 'summaries_by': providers or 'fallback'}
-
-
-@app.get('/api/regions/{region_id}/prayer-angles', response_model=list[PrayerAngleOut])
-def prayer_angle_history(region_id: int):
-    if db.get_region(region_id) is None:
-        raise HTTPException(status_code=404, detail='Region not found')
-    return db.list_angles(region_id)
-
-
-@app.post('/api/regions/{region_id}/prayer-angles', status_code=201, response_model=PrayerAngleOut)
-def generate_prayer_angle(region_id: int):
-    region = db.get_region(region_id)
-    if region is None:
-        raise HTTPException(status_code=404, detail='Region not found')
-    news_items = db.news_for_country(region['country_code'])
-    angle = ai.next_angle(db.seen_angles(region_id))
-    result = ai.synthesize(region, news_items, angle)
-    return db.save_angle(region_id, angle, result['summary'], result['prayer_points'],
-                          [n['id'] for n in news_items])
+    return {'articles': len(items)}
 
 
 # --- Calendar events + AI summaries (ported to the Durable-Object stack) ---
@@ -412,7 +392,7 @@ async def auto_summarize_background():
 
 @app.get("/api/events")
 def get_events():
-    return db.list_events()
+    return church_content.public_events({'calendar': db.list_events()})
 
 
 @app.get("/api/events/{event_id}")
@@ -428,6 +408,13 @@ def post_event(body: EventCreate):
     return db.create_event(title=body.title, category=body.category, date=body.date,
                             time=body.time, location=body.location, description=body.description,
                             ministry_name=body.ministry_name)
+
+
+@app.delete("/api/events/{event_id}", status_code=204)
+def delete_event(event_id: int):
+    # Staff only: the API Worker allows DELETE /api/events/<id> for a staff session (api/churches.ts).
+    if not db.delete_event(event_id):
+        raise HTTPException(status_code=404, detail="Event not found")
 
 
 @app.post("/api/events/{event_id}/summarize")
@@ -488,6 +475,10 @@ def set_ai_model(body: ModelUpdateRequest):
 # --- Blog Endpoints ---
 
 
+# A news link is a page on this site (serve/find, about/connect) or a full http(s) address.
+NEWS_LINK = r"^$|^https?://\S+$|^[a-z0-9][a-z0-9/_-]*$"
+
+
 class BlogPostCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=300)
@@ -496,6 +487,10 @@ class BlogPostCreate(BaseModel):
     categories: list[str] = Field(default_factory=list)
     auto_categorize: bool = False
     auto_summarize: bool = False
+    # 'update': a short post that points somewhere, never summarized. 'article': a longer read with key takeaways.
+    kind: Literal["update", "article"] = "article"
+    link_url: str = Field(default="", max_length=500, pattern=NEWS_LINK)
+    link_label: str = Field(default="", max_length=80)
 
 
 class CategorizeRequest(BaseModel):
@@ -509,8 +504,8 @@ class SummarizePostRequest(BaseModel):
 
 
 @app.get("/api/blog")
-def get_blog_posts(category: str | None = None):
-    return db.list_blog_posts(category=category)
+def get_blog_posts(category: str | None = None, kind: str | None = None):
+    return db.list_blog_posts(category=category, kind=kind)
 
 
 @app.get("/api/blog/categories")
@@ -542,7 +537,7 @@ async def create_new_blog_post(body: BlogPostCreate):
         categories = list(dict.fromkeys(categories + nlp_cats))
 
     bullet_summary = None
-    if body.auto_summarize:
+    if body.auto_summarize and body.kind == "article":
         try:
             bullet_summary = await blog_ai.summarize_blog_bullets(title=body.title, content=body.content)
         except Exception as exc:
@@ -554,6 +549,9 @@ async def create_new_blog_post(body: BlogPostCreate):
         author=body.author or "Church Staff",
         categories=categories,
         bullet_summary=bullet_summary,
+        kind=body.kind,
+        link_url=body.link_url,
+        link_label=body.link_label if body.link_url else "",
     )
     return post
 
@@ -563,6 +561,8 @@ async def summarize_blog_post_endpoint(post_id: int, body: SummarizePostRequest 
     post = db.get_blog_post(post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Blog post not found")
+    if post["kind"] != "article":
+        raise HTTPException(status_code=400, detail="Only articles have key takeaways")
 
     target_model = body.model if body else None
     try:

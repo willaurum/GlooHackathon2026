@@ -7,6 +7,7 @@ The shape is exactly the seed files the demo church starts from:
     {"info": ..., "faqs": [...], "events": [...], "groups": [...]}   backend/app/church.json
     {"ministries": [...]}                                            backend/app/ministries.json
     {"calendar": [...]}                                              backend/app/events.json
+    {"regions": [...]}                                               backend/app/regions.json
 
 so anything that can write those files (the Church setup screens today, a site importer
 later) can set up a church. Every section is optional; one that is sent replaces that
@@ -134,6 +135,32 @@ class CalendarEvent(Loose):
         return _date(value)
 
 
+class FieldUpdate(Loose):
+    """One dated "From the field" entry for a region. Ids are assigned by the database."""
+    id: int | None = Field(default=None, ge=0)
+    date: str
+    title: str = Text(200)
+    body: str = Field(min_length=1, max_length=4000)
+    author: str = Text(120)
+
+    @field_validator('date')
+    @classmethod
+    def _valid_date(cls, value):
+        return _date(value)
+
+
+class Region(Loose):
+    """A country the church prays for and serves in. Only the whole country is ever shown, never a point."""
+    id: int | None = Field(default=None, ge=0)
+    country: str = Field(min_length=1, max_length=80)
+    country_code: str = Field(pattern=r'^[A-Z]{3}$')
+    codename: str = Field(min_length=1, max_length=120)
+    field_of_ministry: str = Text(300)
+    since: int | None = Field(default=None, ge=1900, le=2100)
+    team_size: int = Field(default=0, ge=0, le=10000)
+    updates: list[FieldUpdate] = Field(default_factory=list, max_length=300)
+
+
 class ChurchContent(BaseModel):
     model_config = ConfigDict(extra='forbid')
     info: Info | None = None
@@ -142,10 +169,34 @@ class ChurchContent(BaseModel):
     groups: list[Highlight] | None = Field(default=None, max_length=100)
     ministries: list[Ministry] | None = Field(default=None, max_length=60)
     calendar: list[CalendarEvent] | None = Field(default=None, max_length=500)
+    regions: list[Region] | None = Field(default=None, max_length=60)
 
 
 class ContentError(ValueError):
     pass
+
+
+def public_info(content):
+    return content.get('info', {})
+
+
+def public_church(content):
+    return {'info': public_info(content), 'faqs': content.get('faqs', []), 'events': content.get('events', [])}
+
+
+def public_ministries(content):
+    return [db.with_shift_coverage(m) for m in sorted(content.get('ministries', []), key=lambda m: m['id'])]
+
+
+def public_events(content):
+    return [{key: event.get(key) for key in ('id', *db.EVENT_COLUMNS)}
+            for event in sorted(content.get('calendar', []), key=lambda e: (e.get('date') or '', e.get('time') or ''))]
+
+
+def public_site(content):
+    """The public site responses, without reading or writing a church database."""
+    return {'info': public_info(content), 'church': public_church(content),
+            'ministries': public_ministries(content), 'events': public_events(content)}
 
 
 def with_ids(items, label):
@@ -173,6 +224,12 @@ def normalize(body):
     for kind, label in (('faqs', 'FAQs'), ('events', 'events'), ('groups', 'groups'), ('calendar', 'calendar events')):
         if kind in content:
             content[kind] = with_ids(content[kind], label)
+    if 'regions' in content:
+        regions = with_ids(content['regions'], 'regions')
+        codes = [r['country_code'] for r in regions]
+        if len(codes) != len(set(codes)):
+            raise ContentError('Each country can only be added once. Put all its updates under one entry.')
+        content['regions'] = regions
     if 'ministries' in content:
         ministries = with_ids(content['ministries'], 'ministries')
         for m in ministries:

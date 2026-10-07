@@ -5,10 +5,7 @@ environment or the repo's .env):
 
     python -m scripts.fetch_news
 
-Summaries are written by the team's Ollama server (SSH tunnel on localhost:11434; set
-OLLAMA_BASE_URL / OLLAMA_MODEL to change it). With the tunnel down, or with AI_PROVIDER
-pointed at another provider that has no key, each summary is the article's own description.
-Then restart the backend so the new snapshot is loaded.
+Each story keeps its source `url`. Then restart the backend so the new snapshot is loaded.
 """
 
 import datetime
@@ -17,7 +14,7 @@ import logging
 import os
 from pathlib import Path
 
-from app import newsdata, summarize
+from app import newsdata
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(__file__).resolve().parents[1] / "app" / "news_live.json"
@@ -46,7 +43,7 @@ def keep_recent(items):
     titles = {i["headline"].lower() for i in items}
     for old in json.loads(OUT.read_text(encoding="utf-8")):
         count = sum(1 for i in items if i["country_code"] == old["country_code"])
-        if (count < newsdata.PER_COUNTRY and old["id"] not in have and old["headline"].lower() not in titles
+        if (count < newsdata.PER_COUNTRY and old.get("url") and old["id"] not in have and old["headline"].lower() not in titles
                 and old["date"] >= cutoff
                 and not newsdata.SKIP_TITLE.search(old["headline"])):
             items.append(old)
@@ -59,7 +56,6 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     load_dotenv()
     items = newsdata.fetch_news()
-    print("summaries by:", summarize.add_summaries(items) or "article descriptions (no AI provider)")
     items = keep_recent(items)
     if not items:
         raise SystemExit("NewsData returned nothing; leaving the existing snapshot untouched.")
