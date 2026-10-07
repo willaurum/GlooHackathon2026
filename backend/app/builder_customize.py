@@ -158,7 +158,9 @@ def _faq(content, op):
 
 
 def _remove_item(content, op):
-    names = [op.get('list')] if op.get('list') in LISTS else [n for n in LISTS if content.get(n)]
+    # The list named first, then the others: "the youth ministry" is often a group ("Youth Group").
+    named = [op['list']] if op.get('list') in LISTS else []
+    names = named + [n for n in LISTS if content.get(n) and n not in named]
     for name in names:
         item = _find(content.get(name) or [], op.get('name'))
         if item:
@@ -198,6 +200,31 @@ def _person(content, op):
         op['added'] = True
     person.update(changes)
     op['list'] = 'staff'
+
+
+# Text an operation would put on the site. The church writes it; Tekton only places it.
+WORDING = {'set_detail': 'value', 'edit_page_section': 'text', 'add_faq': 'answer', 'edit_faq': 'answer',
+           'edit_person': 'bio'}
+PROSE_FIELDS = ('about', 'first_visit', 'tagline', 'office_hours')
+NOT_WRITTEN = ('Tekton does not write new wording for your site. Tell it the exact words you want, like '
+               '“Change the about text to: We are a small church that loves our town.”')
+
+
+def _words(text):
+    return re.findall(r"[a-z0-9']{3,}", str(text or '').lower())
+
+
+def written_by_ai(op, request):
+    """Whether an AI-planned operation brings wording the church did not give: most of its words must be in the
+    request. Short details (a name, a phone number, a time) are not prose and are checked elsewhere."""
+    key = WORDING.get(op.get('op'))
+    if not key or (op['op'] == 'set_detail' and op.get('field') not in PROSE_FIELDS):
+        return False
+    words = _words(op.get(key))
+    if len(words) < 4:
+        return False
+    asked = set(_words(request))
+    return sum(w in asked for w in words) < 0.7 * len(words)
 
 
 def _page(content, op):
