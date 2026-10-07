@@ -1315,14 +1315,16 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
         if field not in AI_FIELDS and field != 'faq' or not value:
             builder_run.drop('not a detail Tekton asked for')
             continue
+        reason = ''
         if not grounded(quote, source['text']):
-            builder_run.drop('its quote is not on the page')
-            continue
-        if field == 'name' and _key('name', value) not in re.sub(r'[^a-z0-9]', '', quote.lower()):
-            builder_run.drop('its quote does not name the church')
-            continue
-        if field == 'office_hours' and not (OFFICE_WORDS.search(quote) and OFFICE_TIMES.search(quote)):
-            builder_run.drop('not office hours')  # a service time, or "Church Office" over a phone number
+            reason = 'its quote is not on the page'
+        elif field == 'name' and _key('name', value) not in re.sub(r'[^a-z0-9]', '', quote.lower()):
+            reason = 'its quote does not name the church'
+        elif field == 'office_hours' and not (OFFICE_WORDS.search(quote) and OFFICE_TIMES.search(quote)):
+            reason = 'not office hours'  # a service time, or "Church Office" over a phone number
+        if reason:
+            builder_run.drop(reason)
+            builder_run.removed(reason, field, value, source, quote)  # the church can still add it back
             continue
         if beliefs and field == 'about':
             continue  # a statement of faith is kept word for word for the pastor, never summarized (is_beliefs)
@@ -2086,6 +2088,78 @@ def apply_part(session, part, item_id=None, include=None, rights=None):
     return session
 
 
+ADDED_EVIDENCE = {'title': 'You added this', 'url': '', 'quote': ''}
+
+
+def add_removed(session, removed_id):
+    """The church adds back something the fact check removed. A list item joins its list; a detail fills an empty
+    field, joins an open question as another answer, or (when the field already has a different value, even one the
+    church confirmed) becomes a question with both answers, so nothing is overwritten without the church choosing.
+    Either way it is marked as added by the church, not as read from the page."""
+    entry = next((e for e in session.get('removed') or [] if e.get('id') == removed_id), None)
+    if entry is None:
+        raise LookupError('Not found')
+    field, value = entry['field'], entry['value']
+    if entry['kind'] == 'item':
+        entries = session.setdefault('collections', {}).setdefault(field, [])
+        if field not in ITEM_FIELDS:
+            raise ValueError('Unknown list')
+        same = next((e for e in entries if _item_key(field, e['value']) == _item_key(field, value)), None)
+        if same:
+            same['include'] = True
+        elif len(entries) >= COLLECTION_LIMITS[field]:
+            raise ValueError('That list is full.')
+        else:
+            used = {e['id'] for e in entries}
+            n = len(entries) + 1
+            while f'{field}-{n}' in used:
+                n += 1
+            entries.append({'value': {k: v for k, v in value.items() if k in ITEM_FIELDS[field] and v not in ('', None)},
+                            'evidence': [], 'methods': ['church'], 'include': True, 'id': f'{field}-{n}', 'added': True})
+    elif field == 'faq':
+        if '||' not in str(value):
+            raise ValueError('That question has no answer.')
+        q, a = (part.strip() for part in str(value).split('||', 1))
+        session['claims'].append({'id': f"c{len(session['claims']) + 1}", 'field': 'faq', 'value': {'question': q, 'answer': a},
+                                  'quote': '', 'source_id': '', 'method': 'church'})
+    elif field in FIELD_LABELS:
+        _add_detail(session, field, str(value).strip())
+    else:
+        raise ValueError('Unknown field')
+    session['removed'] = [e for e in session['removed'] if e.get('id') != removed_id]
+    session['status'] = 'clarifying' if session['questions'] else 'review'
+    return session
+
+
+def _add_detail(session, field, value):
+    info = session['fields'].get(field) or {'status': 'missing', 'value': None, 'candidates': []}
+    label = FIELD_LABELS[field]
+    added = {'value': value, 'display': _show(field, value), 'evidence': [ADDED_EVIDENCE]}
+    question = next((q for q in session['questions'] if q['field'] == field), None)
+    if info['status'] == 'missing' or info.get('value') in (None, '') and info['status'] != 'conflict':
+        session['fields'][field] = {**info, 'status': 'confirmed', 'value': value, 'added': True}
+        session['questions'] = [q for q in session['questions'] if q['field'] != field]
+        return
+    if info['status'] == 'conflict':
+        if question and not any(_key(field, c['value']) == _key(field, value) for c in question['candidates']):
+            question['candidates'].append(added)
+        return
+    if _key(field, info['value']) == _key(field, value):
+        return  # already the answer
+    if info['status'] == 'confirmed':
+        current = {'value': info['value'], 'display': _show(field, info['value']),
+                   'evidence': [{'title': 'You confirmed this', 'url': '', 'quote': ''}]}
+    else:
+        by_id = {c['id']: c for c in session.get('claims', [])}
+        src = {s['id']: s for s in session.get('sources', [])}
+        top = (info.get('candidates') or [None])[0]
+        current = {'value': info['value'], 'display': _show(field, info['value']),
+                   'evidence': _evidence(top, by_id, src) if top else []}
+    session['fields'][field] = {**info, 'status': 'conflict', 'value': None}
+    session['questions'].append({'field': field, 'kind': 'conflict', 'candidates': [current, added],
+                                 'prompt': f'You added a different answer for {label.lower()}. Which is right?'})
+
+
 def apply_item(session, collection, item_id=None, include=None, value=None):
     """Include, leave out or edit a list entry (all entries of the list when item_id is None)."""
     entries = session.get('collections', {}).get(collection)
@@ -2289,6 +2363,7 @@ def finish_run(session, pages=0):
     run = builder_run.current()
     if run is None:
         return session
+    session['removed'] = list(run.removed)
     if run.modes:
         names = {'json_schema': 'as schema-checked JSON', 'tools': 'as tool calls',
                  'json_schema_fallback': 'asked again as tool calls'}
@@ -2824,6 +2899,20 @@ def item(draft_id: str, body: ItemBody):
         session = _ready(_load(draft_id))
         try:
             apply_item(session, body.collection, body.id, body.include, body.value)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+@router.post('/api/builder/drafts/{draft_id}/removed/{removed_id}/add')
+def removed_add(draft_id: str, removed_id: str):
+    """Add back something the fact check removed ("Add it anyway"): it is marked as added by the church."""
+    with _draft_lock:
+        session = _ready(_load(draft_id))
+        try:
+            add_removed(session, removed_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail='Not found') from None
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return _public(_save(session))

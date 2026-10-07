@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { beliefsApi, calendarApi, createBlank, createFromDraft, createFromFiles, draftApi, draftFileUrl, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
-import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder, factCheck, feedSteps, fileCheck, runSummary, siteMenuLines, sitePartItem } from './builder.js';
+import { beliefsApi, calendarApi, createBlank, createFromDraft, createFromFiles, draftApi, draftFileUrl, draftPageApi, itemApi, partApi, pollDraft, removedApi } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, calendarLine, canReviewBuilder, factCheck, feedSteps, fileCheck, removedGroups, runSummary, siteMenuLines, sitePartItem } from './builder.js';
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
@@ -161,7 +161,7 @@ export default function Builder() {
         <ImportFeed steps={session.progress?.steps} live />
         {session.progress?.checked > 0 && <p className="tekton-check-live">Checking facts… {session.progress.checked} unsupported {session.progress.checked === 1 ? 'claim' : 'claims'} removed so far</p>}
       </section>}
-      {!loading && session?.run && !importing && !creating && <RunReport run={session.run} />}
+      {!loading && session?.run && !importing && !creating && <RunReport run={session.run} session={session} onChanged={draft => { setSession(draft); setPreview(null); }} disabled={locked} />}
       {!loading && failed && <section className="card give-pad" role="alert">
         <h2>We could not finish reading your website</h2>
         <p>{session.error || 'Please try again.'}</p>
@@ -318,7 +318,7 @@ function FilesCard({ session }) {
   </section>;
 }
 
-function RunReport({ run }) {
+function RunReport({ run, session, onChanged, disabled }) {
   const check = factCheck(run);
   return <details className="card give-pad builder-run" open>
     <summary>
@@ -327,8 +327,37 @@ function RunReport({ run }) {
       {run.ai_calls > 0 && <span className={'badge tekton-check' + (check.total ? ' removed' : '')}>Checking facts… {check.line}</span>}
     </summary>
     {check.reasons.length > 0 && <ul className="builder-notes">{check.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+    <RemovedClaims session={session} onChanged={onChanged} disabled={disabled} />
     <p className="form-note">{run.ai_calls ? `${run.ai_calls} AI ${run.ai_calls === 1 ? 'call' : 'calls'}${run.models?.length ? ' to ' + run.models.join(', ') : ''}, ${(run.tokens_in + run.tokens_out).toLocaleString()} tokens.` : 'No AI was used; plain rules read the pages.'} Nothing Tekton could not find on your pages was added.</p>
     <ImportFeed steps={run.steps} />
+  </details>;
+}
+
+// What the fact check took out, kept so the church can look and decide: "Add it anyway" puts it back, marked as
+// added by the church rather than read from the page.
+function RemovedClaims({ session, onChanged, disabled }) {
+  const [busy, setBusy] = useState(''), [error, setError] = useState('');
+  const groups = removedGroups(session?.removed);
+  const count = groups.reduce((n, group) => n + group.entries.length, 0);
+  if (!count) return null;
+  async function add(id) {
+    setBusy(id); setError('');
+    try { onChanged(await removedApi(session.id, id)); } catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
+  return <details className="builder-removed">
+    <summary>Removed by the fact check ({count})</summary>
+    <p className="form-note">Tekton left these out because it could not match them to your pages. If one is right, add it anyway: it will show as added by you.</p>
+    {groups.map(group => <section key={group.key} aria-label={group.label}>
+      <h3>{group.label}</h3>
+      <ul className="builder-removed-list">{group.entries.map(entry => <li key={entry.id}>
+        <strong>{entry.text}</strong>
+        {entry.reason && <small className="form-note">{entry.reason}</small>}
+        {(entry.evidence.url || entry.evidence.title) && <Evidence items={[entry.evidence]} />}
+        <div className="builder-actions"><button type="button" className="secondary" disabled={disabled || !!busy} onClick={() => add(entry.id)}>{busy === entry.id ? 'Adding…' : 'Add it anyway'}</button></div>
+      </li>)}</ul>
+    </section>)}
+    {error && <div className="banner error" role="alert">{error}</div>}
   </details>;
 }
 

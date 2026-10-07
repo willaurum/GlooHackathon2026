@@ -153,6 +153,27 @@ export function factCheck(run) {
   };
 }
 
+/** What the fact check removed, grouped by detail or list for the review: each with its words, why it was removed
+ * and where Tekton read it. */
+export function removedGroups(removed = []) {
+  const labels = { ...BUILDER_LABELS, faq: 'Questions and answers', ...Object.fromEntries(BUILDER_LISTS.map(list => [list.key, list.label])) };
+  const groups = new Map();
+  for (const entry of removed || []) {
+    const value = entry.value;
+    let text = typeof value === 'string' ? value.replace(/\s*\|\|\s*/, ': ') : '';
+    if (value && typeof value === 'object') {
+      const detail = value.role || value.when || value.date || value.speaker || '';
+      text = [value.name || value.title || '', detail].filter(Boolean).join(', ');
+    }
+    if (!text) continue;
+    const key = entry.field;
+    if (!groups.has(key)) groups.set(key, { key, label: labels[key] || key.replaceAll('_', ' '), entries: [] });
+    groups.get(key).entries.push({ id: entry.id, text, reason: entry.reason ? `Removed because ${entry.reason}.` : '',
+      evidence: { ...(entry.source || {}), quote: entry.quote || '' } });
+  }
+  return [...groups.values()];
+}
+
 /** The file check in words: church.json and site.json against their schemas, and facts traced to their pages. */
 export function fileCheck(check) {
   if (!check) return null;

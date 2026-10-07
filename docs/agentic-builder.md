@@ -37,6 +37,8 @@ We split the work between deterministic rules ("NLP" in the classic sense: regul
 
 Each AI suggestion must come with the **exact quote** from the page it read. `grounded()` checks that quote against the page text. If the quote is not there, the suggestion is dropped. This stops the model from inventing a phone number or "correcting" a service time. Every value shown to the person links back to a real sentence on a real page. That's what the conflict cards show ("HLC - Welcome!!: *Come worship with us Sundays 9 & 11.*").
 
+**Removed by the fact check.** A suggestion the fact check drops (its quote is not on the page, a name quote that does not name the church, a service time offered as office hours, a list item that does not match its page, a ministry offered as a person) is kept on the draft as `removed` (at most 200, each field and value once): the field or list, the value, the reason, and the page's title, address and quote, never the page text. The Review screen lists them, grouped, in a collapsed "Removed by the fact check (N)" panel with a link to each quote. **Add it anyway** (`POST /api/builder/drafts/{id}/removed/{removed_id}/add`) puts one back as the church's own: a list item joins its list (its source is "You added this"); a detail fills an empty field, joins an open question as another answer, or, when the field already has a different value (even one the church confirmed), becomes a question with both answers, so nothing is overwritten without the church choosing.
+
 ### The orchestrator and its specialist readers
 
 `extract_all` is the orchestrator. It is plain code, not an agent loop:
