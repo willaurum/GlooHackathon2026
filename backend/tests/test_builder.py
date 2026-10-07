@@ -528,6 +528,8 @@ class RouteTests(ChurchTestCase):
         self.addCleanup(builder.import_limiter.reset)
         for patcher in (mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1', 'BUILDER_AI': '0'}),
                         mock.patch.object(builder, '_http_fetch', site('harborlight-messy')),
+                        # No robots.txt, sitemap or feeds on this site.
+                        mock.patch.object(builder, '_http_feed', mock.Mock(side_effect=FileNotFoundError)),
                         mock.patch.object(builder, '_ai_complete', None),
                         mock.patch.object(builder, '_ai_describe', None)):
             patcher.start()

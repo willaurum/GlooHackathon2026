@@ -167,6 +167,7 @@ class Person(Loose):
     id: int | None = Field(default=None, ge=0)
     name: str = Field(min_length=1, max_length=120)
     role: str = Text(120)
+    group: str = Text(80)  # "Elders", "Deacons": the list a leader appears under on the church's site
     email: str = Text(200)
     phone: str = Text(60)
     bio: str = Text(2000)

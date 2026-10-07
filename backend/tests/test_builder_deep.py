@@ -427,5 +427,49 @@ class JobRouteTests(ChurchTestCase):
         self.assertEqual([p['name'] for p in church['staff']], ['Owen Pryce', 'Ruth Calloway'])
 
 
+
+class ReadingFixesTests(unittest.TestCase):
+    """Things a real church site (Snappages-style) showed the readers getting wrong."""
+
+    def test_shared_am_pm_and_ordinal_dates(self):
+        self.assertEqual(builder.service_times('Sunday services at 9:00 & 11:00 am.'),
+                         {'Sunday': [('09:00', 'Sunday services at 9:00 & 11:00 am.'),
+                                     ('11:00', 'Sunday services at 9:00 & 11:00 am.')]})
+        self.assertEqual([t for t, _ in builder.service_times('Join us Sundays at 8, 9:30 and 11 AM for worship.')['Sunday']],
+                         ['08:00', '09:30', '11:00'])
+        self.assertEqual([t for t, _ in builder.service_times('Sunday worship 11 & 1 pm.')['Sunday']], ['11:00', '13:00'])
+        for dated in ('Join us Sunday, October 25h at 10am for a worship night.', 'Sunday, Nov 15th worship at 6pm.',
+                      'Sunday the 15th worship at 6pm.', 'Worship Sunday 10/25 at 9am.'):
+            with self.subTest(dated=dated):
+                self.assertEqual(builder.service_times(dated), {})
+
+    def test_church_name_from_titles_and_site_name(self):
+        for title, name in [('Plan a Visit | Cedar Hollow Church', 'Cedar Hollow Church'),
+                            ('Harvest Point Church - Home', 'Harvest Point Church'),
+                            ('Home – Grace Chapel', 'Grace Chapel'), ('HLC - Welcome!!', ''), ('Welcome', '')]:
+            with self.subTest(title=title):
+                self.assertEqual(builder.title_name(title), name)
+        claims = builder.pattern_claims({'id': 's1', 'kind': 'page', 'url': URL, 'title': 'Home',
+                                         'site_name': 'Harvest Point Church', 'text': ''})
+        self.assertEqual([(c['field'], c['value']) for c in claims], [('name', 'Harvest Point Church')])
+        page = builder.parse_html('<meta property="og:site_name" content="Harvest Point Church"><title>Home</title>')
+        self.assertEqual(page['meta']['og:site_name'], 'Harvest Point Church')
+
+    def test_staff_titles_wrapped_roles_and_leadership_lists(self):
+        text = ('Dr. Jane Whitfield\nLead Pastor\njane@harvest.test\nRev. Marcus Hale\nExecutive Director of\n'
+                'Operations\nElders\nTom Baker\nLuis Romero\nGrace Kim\nDeacons\nAnn Lee\nBob Grant\nVisit us')
+        people = [i['value'] for i in builder_structured.staff_cards({'id': 's1', 'text': text})]
+        self.assertEqual(people, [
+            {'name': 'Dr. Jane Whitfield', 'role': 'Lead Pastor', 'email': 'jane@harvest.test'},
+            {'name': 'Rev. Marcus Hale', 'role': 'Executive Director of Operations'},
+            {'name': 'Tom Baker', 'role': 'Elder', 'group': 'Elders'},
+            {'name': 'Luis Romero', 'role': 'Elder', 'group': 'Elders'},
+            {'name': 'Grace Kim', 'role': 'Elder', 'group': 'Elders'},
+            {'name': 'Ann Lee', 'role': 'Deacon', 'group': 'Deacons'},
+            {'name': 'Bob Grant', 'role': 'Deacon', 'group': 'Deacons'}])
+        # One name under a heading is not a list.
+        self.assertEqual(builder_structured.staff_cards({'id': 's1', 'text': 'Elders\nTom Baker\nContact us'}), [])
+
+
 if __name__ == '__main__':
     unittest.main()

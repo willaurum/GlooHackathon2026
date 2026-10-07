@@ -5,9 +5,10 @@ staff, events, ministries, groups, sermons, locations and visit pages, then abou
 a few blog or news posts. Everything here is plain code; nothing is decided by an AI.
 """
 import re
+import threading
+import time
 import xml.etree.ElementTree as ET
-from urllib.parse import urldefrag, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
+from urllib.parse import unquote, urldefrag, urljoin, urlparse
 
 USER_AGENT = 'TektonBuilder'
 MAX_SITEMAPS = 5
@@ -106,20 +107,79 @@ def feed_url(url):
 
 # ---------------------------------------------------------------- robots.txt and sitemaps
 
-class Robots:
-    """robots.txt rules for our user agent. With no robots.txt, everything is allowed."""
+MAX_CRAWL_DELAY = 10.0
 
-    def __init__(self, text=''):
-        self.parser = RobotFileParser()
-        self.parser.parse((text or '').splitlines())
-        self.sitemaps = [line.split(':', 1)[1].strip() for line in (text or '').splitlines()
-                         if line.lower().startswith('sitemap:') and ':' in line]
+
+class Robots:
+    """robots.txt rules for our user agent (RFC 9309). The group naming TektonBuilder applies, else the '*' group;
+    rules use '*' and '$' wildcards, the longest matching rule wins and Allow wins a tie. `Crawl-delay` is read
+    from the same group. With no robots.txt (missing or 4xx), everything is allowed; `Robots.unreachable()`
+    (a 5xx or network error) disallows everything, as RFC 9309 requires."""
+
+    def __init__(self, text='', disallow_all=False):
+        self.rules, self.delay, self.sitemaps, self.disallow_all = [], 0.0, [], disallow_all
+        groups, current, in_agents = [], None, False
+        for raw in (text or '').splitlines()[:5000]:
+            line = raw.split('#', 1)[0].strip()
+            if ':' not in line:
+                continue
+            key, value = (part.strip() for part in line.split(':', 1))
+            key = key.lower()
+            if key == 'sitemap':
+                if value:
+                    self.sitemaps.append(value)
+            elif key == 'user-agent':
+                if not in_agents:
+                    current = {'agents': [], 'rules': [], 'delay': None}
+                    groups.append(current)
+                current['agents'].append(value.lower())
+                in_agents = True
+            elif current is not None:
+                in_agents = False
+                if key in ('allow', 'disallow') and value:
+                    current['rules'].append((key == 'allow', value))
+                elif key == 'crawl-delay':
+                    try:
+                        current['delay'] = float(value)
+                    except ValueError:
+                        pass
+        token = USER_AGENT.lower()
+        mine = [g for g in groups if any(a != '*' and token.startswith(a) for a in g['agents'])]
+        chosen = mine or [g for g in groups if '*' in g['agents']]
+        for group in chosen:
+            self.rules += [(allow, pattern, _pattern(pattern)) for allow, pattern in group['rules']]
+            if group['delay'] is not None:
+                self.delay = max(self.delay, group['delay'])
+        self.delay = max(0.0, min(self.delay, MAX_CRAWL_DELAY))
+
+    @classmethod
+    def unreachable(cls):
+        return cls(disallow_all=True)
 
     def allowed(self, url):
-        try:
-            return self.parser.can_fetch(USER_AGENT, url)
-        except Exception:
+        parsed = urlparse(url)
+        path = unquote(parsed.path or '/') + ('?' + unquote(parsed.query) if parsed.query else '')
+        if path == '/robots.txt':
             return True
+        if self.disallow_all:
+            return False
+        best = None  # (pattern length, allow)
+        for allow, pattern, regex in self.rules:
+            if regex.match(path):
+                key = (len(pattern), allow)
+                if best is None or key > best:
+                    best = key
+        return True if best is None else best[1]
+
+    def crawl_delay(self):
+        return self.delay
+
+
+def _pattern(pattern):
+    """A robots.txt path pattern as a regex: '*' is any run of characters, a final '$' anchors the end."""
+    anchored = pattern.endswith('$')
+    body = unquote(pattern[:-1] if anchored else pattern)
+    return re.compile(''.join('.*' if ch == '*' else re.escape(ch) for ch in body) + ('$' if anchored else ''), re.S)
 
 
 def _xml(text):
@@ -146,26 +206,105 @@ def sitemap_urls(text):
     return pages[:MAX_SITEMAP_URLS], nested[:MAX_SITEMAPS]
 
 
-def discover(start_url, fetch_feed, run):
-    """robots.txt and sitemap pages for a site. `run(urls, fetch) -> results` fetches within the import's budget
-    (None for a skipped or failed fetch). Returns (Robots, [page urls])."""
+def robots_status(error):
+    """The HTTP status a failed robots.txt fetch stands for: 404 when it is missing or not a text file,
+    the status the server answered, or None for a network error or timeout."""
+    status = getattr(getattr(error, 'response', None), 'status_code', None)
+    if status:
+        return status
+    if isinstance(error, FileNotFoundError):
+        return 404
+    message = str(error)
+    answered = re.search(r'answered (\d{3})', message)
+    if answered:
+        return int(answered.group(1))
+    if re.search(r'not a feed|not a web page|private network|could not be found', message, re.I):
+        return 404
+    return None
+
+
+def robots_from(result):
+    """Robots for one robots.txt fetch result: ('ok', (url, type, text)), ('error', exception) or None (no time).
+    A missing file (4xx) allows everything; a server error, network error or timeout allows nothing (RFC 9309)."""
+    if result and result[0] == 'ok':
+        content_type, text = result[1][1] or '', result[1][2]
+        return Robots('' if 'html' in content_type.lower() else text)
+    if result and (robots_status(result[1]) or 500) < 500:
+        return Robots()
+    return Robots.unreachable()
+
+
+def discover(start_url, robots, fetch_feed, run):
+    """Page urls from a site's sitemaps (robots.txt `Sitemap:` lines, else /sitemap.xml). `run(urls, fetch)` fetches
+    within the import's budget and returns one ('ok', value), ('error', exception) or None (out of time) per url."""
     parsed = urlparse(start_url)
     root = f'{parsed.scheme}://{parsed.netloc}'
-    robots_text = run([root + '/robots.txt'], fetch_feed)[0]
-    robots = Robots(robots_text[2] if robots_text and 'html' not in (robots_text[1] or '').lower() else '')
     queue = [s for s in robots.sitemaps if same_site(s, parsed.netloc)] or [root + '/sitemap.xml']
     seen, pages = set(), []
     while queue and len(seen) < MAX_SITEMAPS:
-        batch = [u for u in queue[:MAX_SITEMAPS - len(seen)] if u not in seen]
-        queue = queue[len(batch):]
-        seen.update(batch)
+        take, queue = queue[:MAX_SITEMAPS - len(seen)], queue[MAX_SITEMAPS - len(seen):]
+        batch = [u for u in take if u not in seen and robots.allowed(u)]
+        seen.update(take)
+        if not batch:
+            continue
         for result in run(batch, fetch_feed):
-            if not result:
+            if not result or result[0] != 'ok':
                 continue
             try:
-                found, nested = sitemap_urls(result[2])
+                found, nested = sitemap_urls(result[1][2])
             except (ET.ParseError, ValueError):
                 continue
             pages += [clean(u) for u in found if same_site(u, parsed.netloc)]
             queue += [u for u in nested if same_site(u, parsed.netloc) and u not in seen]
-    return robots, list(dict.fromkeys(pages))[:MAX_SITEMAP_URLS]
+    return list(dict.fromkeys(pages))[:MAX_SITEMAP_URLS]
+
+
+class HostPolicy:
+    """Every fetch the builder makes asks this first: is the address allowed by its host's robots.txt, and when may
+    it be fetched (Crawl-delay, per host)? robots.txt is fetched once per host with `fetch_feed`; without one
+    (tests that inject only a page fetcher) every address is allowed and nothing waits."""
+
+    def __init__(self, fetch_feed=None, run=None, now=None, sleep=None):
+        self.fetch_feed, self.run = fetch_feed, run
+        self.now, self.sleep = now or time.monotonic, sleep or time.sleep
+        self.robots, self.slots, self.lock = {}, {}, threading.Lock()
+
+    @staticmethod
+    def host(url):
+        return urlparse(url).netloc.lower()
+
+    def rules(self, url):
+        host = self.host(url)
+        with self.lock:
+            known = self.robots.get(host)
+        if known is None:
+            if self.fetch_feed is None or self.run is None:
+                known = Robots()
+            else:
+                parsed = urlparse(url)
+                known = robots_from(self.run([f'{parsed.scheme}://{parsed.netloc}/robots.txt'], self.fetch_feed)[0])
+            with self.lock:
+                known = self.robots.setdefault(host, known)
+        return known
+
+    def allowed(self, url):
+        return self.rules(url).allowed(url)
+
+    def delay(self, url):
+        return self.rules(url).crawl_delay()
+
+    def wait(self, url, deadline):
+        """Hold until this host may be fetched again. False (and no wait) when that would pass the deadline."""
+        delay = self.delay(url)
+        if not delay:
+            return True
+        host = self.host(url)
+        with self.lock:
+            now = self.now()
+            slot = max(now, self.slots.get(host, now))
+            if slot > deadline:
+                return False
+            self.slots[host] = slot + delay
+        if slot > now:
+            self.sleep(slot - now)
+        return True

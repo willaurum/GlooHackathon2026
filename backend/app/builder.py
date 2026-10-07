@@ -118,10 +118,23 @@ def _parallel(items, read, deadline, workers=4):
             future.cancel()
 
 
+# Zero-width and text-direction characters: invisible on the page, so they can only hide or reorder words.
+INVISIBLE_RE = re.compile('[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]')
+VOID_TAGS = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'}
+
+
+def _hidden(attrs):
+    """An element the page marks as not shown (hidden, aria-hidden, display:none, visibility:hidden)."""
+    style = re.sub(r'\s+', '', attrs.get('style') or '').lower()
+    return ('hidden' in attrs or (attrs.get('aria-hidden') or '').strip().lower() == 'true'
+            or 'display:none' in style or 'visibility:hidden' in style)
+
+
 class _PageText(HTMLParser):
     """Visible text (with images as [image: alt]), the <title>, and the links of one HTML page. Also kept for the
     structured readers: link text and whether a link is in the navigation, JSON-LD blocks, embedded players,
-    feed links and the canonical address."""
+    feed links and the canonical address. Text the page hides (and comments) is not read: a reader could be told
+    things there that visitors never see. Links inside hidden menus are still followed."""
     # Form dropdowns are choices, not content (a "Which service?" list would read as service times).
     SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'select', 'textarea'}
     BLOCK = {'p', 'div', 'br', 'li', 'tr', 'td', 'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article',
@@ -133,10 +146,16 @@ class _PageText(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts, self.links, self.images, self.title, self._skip, self._in_title = [], [], [], '', 0, False
         self.anchors, self.jsonld, self.embeds, self.feeds, self.canonical = [], [], [], [], ''
-        self._nav, self._anchor, self._script = 0, None, None
+        self.meta = {}
+        self._nav, self._anchor, self._script, self._hide = 0, None, None, None
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if self._hide:
+            if tag == self._hide[0]:
+                self._hide[1] += 1
+        elif tag not in VOID_TAGS and _hidden(attrs):
+            self._hide = [tag, 1]
         if tag in self.SKIP:
             self._skip += 1
             if tag == 'script' and (attrs.get('type') or '').lower() == 'application/ld+json' and len(self.jsonld) < self.MAX_JSONLD:
@@ -146,11 +165,15 @@ class _PageText(HTMLParser):
         elif tag == 'a' and attrs.get('href'):
             self.links.append(attrs['href'])
             self._anchor = [attrs['href'], [], self._nav > 0]
-        elif tag == 'img':
+        elif tag == 'img' and not self._hide and not _hidden(attrs):
             if attrs.get('src'):
                 self.images.append(attrs['src'])
             if attrs.get('alt'):
                 self.parts.append(f" [image: {attrs['alt']}] ")
+        elif tag == 'meta' and attrs.get('content'):
+            key = (attrs.get('property') or attrs.get('name') or '').strip().lower()
+            if key and key not in self.meta and len(self.meta) < 40:
+                self.meta[key] = ' '.join(INVISIBLE_RE.sub('', attrs['content']).split())[:500]
         elif tag == 'iframe' and attrs.get('src'):
             self.embeds.append((attrs['src'], attrs.get('title') or ''))
         elif tag == 'link' and attrs.get('href'):
@@ -165,6 +188,10 @@ class _PageText(HTMLParser):
             self.parts.append('\n')
 
     def handle_endtag(self, tag):
+        if self._hide and tag == self._hide[0]:
+            self._hide[1] -= 1
+            if not self._hide[1]:
+                self._hide = None
         if tag in self.SKIP:
             self._skip = max(0, self._skip - 1)
             if tag == 'script' and self._script is not None:
@@ -186,13 +213,14 @@ class _PageText(HTMLParser):
             self._script.append(data)
         elif self._in_title:
             self.title += data
-        elif not self._skip:
+        elif not self._skip and not self._hide:
             self.parts.append(data)
             if self._anchor:
                 self._anchor[1].append(data)
 
     def text(self):
-        lines = (re.sub(r'[ \t\r\f\v]+', ' ', line).strip() for line in ''.join(self.parts).split('\n'))
+        text = INVISIBLE_RE.sub('', ''.join(self.parts))
+        lines = (re.sub(r'[ \t\r\f\v]+', ' ', line).strip() for line in text.split('\n'))
         return '\n'.join(line for line in lines if line)
 
 
@@ -200,9 +228,9 @@ def parse_html(html):
     page = _PageText()
     page.feed(html)
     page.close()
-    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links, 'images': page.images,
+    return {'title': ' '.join(INVISIBLE_RE.sub('', page.title).split()), 'text': page.text(), 'links': page.links, 'images': page.images,
             'anchors': page.anchors, 'jsonld': page.jsonld, 'embeds': page.embeds, 'feeds': page.feeds,
-            'canonical': page.canonical}
+            'canonical': page.canonical, 'meta': page.meta}
 
 
 class FetchRefused(ValueError):
@@ -243,11 +271,39 @@ def _fetch_each(urls, fetch, deadline, workers):
     return values
 
 
-def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetch_feed=None, feeds=None, progress=None):
+class _Late(Exception):
+    """A fetch that would start after the deadline because the site asked for a pause between requests."""
+
+
+def host_policy(fetch_feed, deadline):
+    """robots.txt rules and Crawl-delay pacing for every host the import touches (builder_crawl.HostPolicy)."""
+    return builder_crawl.HostPolicy(
+        fetch_feed, lambda urls, f: _fetch_each(urls, f, min(deadline, _now() + FETCH_TIMEOUT + 5), 1), now=_now)
+
+
+def polite(fetch, policy, deadline):
+    """`fetch` that skips addresses robots.txt disallows and waits out each host's Crawl-delay."""
+    def go(url, *args):
+        if not policy.allowed(url):
+            raise PermissionError(f'robots.txt disallows {url}')
+        if not policy.wait(url, deadline):
+            raise _Late(url)
+        return fetch(url, *args)
+    return go
+
+
+ROBOTS_UNREACHABLE = ('This website\'s robots.txt could not be read right now, so it cannot be imported safely. '
+                      'Try again later, or upload your church materials instead.')
+ROBOTS_REFUSED = ('This website asks automated tools not to read it (robots.txt), so it cannot be imported. '
+                  'Upload your church materials instead.')
+
+
+def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetch_feed=None, feeds=None, progress=None,
+          policy=None):
     """Same-site HTML pages, most useful first (builder_crawl.score). `fetch(url) -> (final_url, content_type, text)`
-    can be injected. With `fetch_feed` (used for robots.txt and sitemaps), robots.txt is obeyed and the sitemap's
-    pages join the queue. Feed links (iCal, RSS) found on the way are appended to `feeds`. `progress(read, found)`
-    is called after each batch of pages."""
+    can be injected. With `fetch_feed` (used for robots.txt and sitemaps), robots.txt is obeyed for every host, its
+    Crawl-delay paces the reading, and the sitemap's pages join the queue. Feed links (iCal, RSS) found on the way
+    are appended to `feeds`. `progress(read, found)` is called after each batch of pages."""
     max_pages = max_pages or MAX_PAGES
     start_url = urldefrag(start_url.strip())[0]
     deadline = deadline if deadline is not None else _now() + min(CRAWL_BUDGET, IMPORT_BUDGET)
@@ -257,7 +313,9 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
             notes.append('Stopped reading before the first page to stay within the time limit.')
         return []
     origin = urlparse(start_url).netloc
-    fetch = fetch or _http_fetch
+    policy = policy or (host_policy(fetch_feed, deadline) if fetch_feed is not None else builder_crawl.HostPolicy())
+    fetch = polite(fetch or _http_fetch, policy, deadline)
+    workers = CRAWL_WORKERS
     feeds = feeds if feeds is not None else []
     order, queue, seen, sources = 0, [], {start_url}, []
 
@@ -271,15 +329,22 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
         if url not in feeds and urlparse(url).scheme in ('http', 'https'):
             feeds.append(url)
 
-    robots = builder_crawl.Robots()
+    paced = False
     if fetch_feed is not None:
-        # robots.txt and sitemaps get at most a fifth of the reading time.
-        found_by = _now() + max(0.0, deadline - _now()) * 0.2
-        robots, mapped = builder_crawl.discover(start_url, fetch_feed, lambda urls, f: [
-            r[1] if r and r[0] == 'ok' else None for r in _fetch_each(urls, f, found_by, CRAWL_WORKERS)])
+        robots = policy.rules(start_url)
+        if robots.disallow_all:
+            raise ValueError(ROBOTS_UNREACHABLE)
         if not robots.allowed(start_url):
-            raise ValueError('This website asks automated tools not to read it (robots.txt), so it cannot be imported. '
-                             'Upload your church materials instead.')
+            raise ValueError(ROBOTS_REFUSED)
+        delay = robots.crawl_delay()
+        if delay:
+            # One page at a time, with the pause the site asked for; what fits in the time is all that is read.
+            workers, paced = 1, True
+            max_pages = max(1, min(max_pages, int(max(0.0, deadline - _now()) * 0.8 / delay)))
+        # Sitemaps get at most a fifth of the reading time.
+        found_by = _now() + max(0.0, deadline - _now()) * 0.2
+        mapped = builder_crawl.discover(start_url, robots, polite(fetch_feed, policy, found_by),
+                                        lambda urls, f: _fetch_each(urls, f, found_by, workers))
         for url in mapped:
             if url not in seen and not builder_crawl.skippable(url):
                 seen.add(url)
@@ -288,16 +353,16 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
     posts, stopped = 0, False
     while queue and len(sources) < max_pages and _now() < deadline and not stopped:
         wave = []
-        while queue and len(wave) < min(CRAWL_WORKERS, max_pages - len(sources)):
+        while queue and len(wave) < min(workers, max_pages - len(sources)):
             url = heapq.heappop(queue)[2]
-            if url != start_url and (not robots.allowed(url) or builder_crawl.is_post(url) and posts >= builder_crawl.MAX_POSTS):
+            if url != start_url and (not policy.allowed(url) or builder_crawl.is_post(url) and posts >= builder_crawl.MAX_POSTS):
                 continue
             posts += url != start_url and builder_crawl.is_post(url)
             wave.append(url)
         if not wave:
             break
-        for url, result in zip(wave, _fetch_each(wave, fetch, deadline, CRAWL_WORKERS)):
-            if result is None:
+        for url, result in zip(wave, _fetch_each(wave, fetch, deadline, workers)):
+            if result is None or result[0] == 'error' and isinstance(result[1], _Late):
                 push(url, float('inf'))  # read first next time; counted as not read in the note below
                 stopped = True
                 continue
@@ -324,6 +389,7 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                             'page_type': builder_crawl.page_type(final_url, page['title']),
                             'links': list(dict.fromkeys(a[0] for a in anchors)),
                             'anchors': anchors, 'jsonld': page['jsonld'],
+                            'site_name': page['meta'].get('og:site_name') or page['meta'].get('application-name', ''),
                             'embeds': [(urljoin(final_url, src), title) for src, title in page['embeds']]})
             for href in page['feeds']:
                 add_feed(urljoin(final_url, href))
@@ -338,6 +404,9 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
                     add_feed(href)
         if progress:
             progress(len(sources), len(sources) + len(queue))
+    if paced and notes is not None:
+        notes.append(f'This website asks automated tools to pause {delay:g} seconds between pages, so the builder '
+                     'read one page at a time.')
     if queue and notes is not None:
         total = min(max_pages, len(sources) + len(queue))
         if len(sources) < max_pages:
@@ -348,14 +417,17 @@ def crawl(start_url, fetch=None, max_pages=None, deadline=None, notes=None, fetc
     return sources
 
 
-def read_feeds(feeds, fetch_feed, first_id, deadline, notes=None):
-    """Calendar (iCal) and sermon (RSS, podcast) feeds as sources of kind 'feed'. Calendars are read first."""
+def read_feeds(feeds, fetch_feed, first_id, deadline, notes=None, policy=None):
+    """Calendar (iCal) and sermon (RSS, podcast) feeds as sources of kind 'feed'. Calendars are read first. Feeds
+    on any host follow that host's robots.txt."""
     if not feeds or fetch_feed is None or _now() >= deadline:
         return []
+    policy = policy or host_policy(fetch_feed, deadline)
     ranked = sorted(dict.fromkeys(feeds), key=lambda u: (not re.search(r'\.ics|calendar', u, re.I),
-                                                         not re.search(r'sermon|podcast|message', u, re.I)))[:MAX_FEEDS]
+                                                         not re.search(r'sermon|podcast|message', u, re.I)))
+    ranked = [u for u in ranked if policy.allowed(u)][:MAX_FEEDS]
     out = []
-    for url, result in zip(ranked, _fetch_each(ranked, fetch_feed, deadline, CRAWL_WORKERS)):
+    for url, result in zip(ranked, _fetch_each(ranked, polite(fetch_feed, policy, deadline), deadline, CRAWL_WORKERS)):
         if not result or result[0] != 'ok':
             continue
         final_url, _, body = result[1]
@@ -373,7 +445,7 @@ MAX_IMAGES = 5
 MAX_IMAGE_BYTES = 4_000_000
 
 
-def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=None):
+def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=None, policy=None):
     """Image sources: a bulletin or flyer often holds the only copy of a service time. Each same-site image
     (at most MAX_IMAGES) is transcribed by a vision model into text that the same rules then read. With no
     vision model, images are skipped."""
@@ -381,7 +453,7 @@ def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=N
     if not describe:
         return []
     deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
-    fetch_bytes = fetch_bytes or _http_fetch_bytes
+    fetch_bytes = polite(fetch_bytes or _http_fetch_bytes, policy or builder_crawl.HostPolicy(), deadline)
     out, seen, images = [], set(), []
     for page in sources:
         for url in page.get('images', []):
@@ -713,7 +785,13 @@ BARE_TIMES_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+)\s*(\d{1,2})
 WORSHIP_WORDS = re.compile(r'\b(worship|service|services|gathering|mass|traditional|contemporary|join us)\b', re.I)
 NOT_WORSHIP = re.compile(r'\b(sunday school|office|youth|kids|nursery|rehears|breakfast|study|potluck|dinner|lunch|fish fry)\b', re.I)
 # A calendar date ("Sunday, November 1, 2026") is a one-off event, not a weekly service time.
-DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b', re.I)
+# Ordinals and their typos ("October 15th", "Oct 25h"), numeric dates ("10/25") and ISO dates count too.
+DATED = re.compile(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th|h)?\b'
+                   r'|\b\d{1,2}(?:st|nd|rd|th)\s+of\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)'
+                   r'|\bthe\s+\d{1,2}(?:st|nd|rd|th)\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b', re.I)
+# "9:00 & 11:00 am": the am/pm after the last time covers the times listed before it.
+SHARED_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(?:&|and|\+|,)\s*(?=(?:\d{1,2}(?::\d{2})?\s*(?:&|and|\+|,)\s*)*'
+                       r'(\d{1,2})(?::\d{2})?\s*([ap])\.?\s*m\.?\b)', re.I)
 
 
 def _digits(phone):
@@ -735,6 +813,16 @@ def _sentences(text):
         yield from (s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip())
 
 
+def _times(sentence):
+    """Clock times in a sentence, in order, including ones that share a later am/pm."""
+    found = [(m.start(), _clock(*m.groups())) for m in TIME_RE.finditer(sentence)]
+    for m in SHARED_RE.finditer(sentence):
+        hour, minute, last, ampm = m.groups()
+        # "11 & 1 pm" does not make 11 pm: the shared am/pm only applies when the order still makes sense.
+        found.append((m.start(), _clock(hour, minute, ampm if int(hour) % 12 <= int(last) % 12 else None)))
+    return list(dict.fromkeys(clock for _, clock in sorted(found)))
+
+
 def service_times(text):
     """{day: [(clock, quote)]} for sentences that talk about worship and name a day and times."""
     found = {}
@@ -743,7 +831,7 @@ def service_times(text):
         days = [d for d in DAYS if DAY_RE[d].search(sentence)]
         if not days or NOT_WORSHIP.search(sentence) or DATED.search(sentence):
             continue
-        times = [_clock(h, m, ap) for h, m, ap in TIME_RE.findall(sentence)]
+        times = _times(sentence)
         if not times and WORSHIP_WORDS.search(sentence) or re.search(r'\bsundays?\b\s+\d', sentence, re.I):
             for h1, m1, h2, m2 in BARE_TIMES_RE.findall(sentence):
                 times += [_clock(h1, m1, None), _clock(h2, m2, None)]
@@ -768,6 +856,22 @@ def service_times(text):
     return found
 
 
+TITLE_SPLIT = re.compile(r'\s+[|\-–—·:]\s+')
+CHURCH_WORDS = re.compile(r'\b(church|chapel|parish|cathedral|fellowship|assembly|congregation|tabernacle|ministries|'
+                          r'temple|abbey|basilica|mission|community)\b', re.I)
+
+
+def title_name(title):
+    """The church's name from a page title: "Plan a Visit | Cedar Hollow Church", "Grace Chapel - Home". The part
+    that says church (chapel, parish...) wins; otherwise the part after the last " | ", where most sites put it.
+    ("HLC - Welcome!!" names nothing.)"""
+    parts = [p.strip() for p in TITLE_SPLIT.split(title or '') if p.strip()]
+    churchy = [p for p in parts if CHURCH_WORDS.search(p)]
+    if len(parts) > 1 and len(churchy) == 1:
+        return churchy[0]
+    return title.rsplit(' | ', 1)[1].strip() if ' | ' in (title or '') else ''
+
+
 def pattern_claims(source):
     """Claims from plain rules: no AI involved, so they work offline and are easy to explain."""
     text, sid, claims = source['text'], source['id'], []
@@ -777,10 +881,12 @@ def pattern_claims(source):
         claims.append({'field': 'phone', 'value': _digits(match), 'quote': match, 'source_id': sid, 'method': 'pattern'})
     for match in sorted(set(m.group(0).strip(' ,.') for m in STREET_RE.finditer(text.replace('\n', ', ')))):
         claims.append({'field': 'address', 'value': match, 'quote': match, 'source_id': sid, 'method': 'pattern'})
-    title = source.get('title', '')
-    if source.get('kind', 'page') == 'page' and ' | ' in title:  # "Plan a Visit | Cedar Hollow Community Church"
-        name = title.rsplit(' | ', 1)[1].strip()
-        claims.append({'field': 'name', 'value': name, 'quote': title, 'source_id': sid, 'method': 'pattern'})
+    if source.get('kind', 'page') == 'page':
+        name, quote = title_name(source.get('title', '')), source.get('title', '')
+        if source.get('site_name') and CHURCH_WORDS.search(source['site_name']):
+            name, quote = source['site_name'], source['site_name']
+        if name:
+            claims.append({'field': 'name', 'value': name, 'quote': quote, 'source_id': sid, 'method': 'pattern'})
     # Uploads and campus pages list several sets of times; each quote is its own set, so different campuses'
     # times become a question instead of being merged into one list.
     separate = source.get('url') is None or source.get('page_type') == 'locations'
@@ -1270,7 +1376,7 @@ def build_content(session, *, allow_unanswered=False):
 
 ITEM_FIELDS = {
     'events': ('name', 'date', 'time', 'when', 'location', 'description'),
-    'staff': ('name', 'role', 'email', 'phone', 'bio'),
+    'staff': ('name', 'role', 'group', 'email', 'phone', 'bio'),
     'ministries': ('name', 'description', 'when', 'where', 'leader', 'email', 'audience'),
     'groups': ('name', 'description', 'when', 'where', 'leader', 'email', 'audience'),
     'locations': ('name', 'address', 'service_times'),
@@ -1361,13 +1467,14 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None,
     if fetch_feed is None and fetch is None:
         fetch_feed = _http_feed
     report = (lambda read, found: progress('reading', read, found)) if progress else None
+    policy = host_policy(fetch_feed, deadline) if fetch_feed is not None else builder_crawl.HostPolicy()
     sources = crawl(url, fetch, deadline=min(deadline, started + crawl_budget), notes=notes, fetch_feed=fetch_feed,
-                    feeds=feeds, progress=report)
+                    feeds=feeds, progress=report, policy=policy)
     if not sources:
         raise ValueError('No pages could be read from that address.')
     if describe is not None or (_ai_describe is not None and _ai_available()):
-        sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes)
-    sources += read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes)
+        sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes, policy=policy)
+    sources += read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes, policy)
     if progress:
         progress('extracting', len([s for s in sources if s.get('kind') == 'page']), len(sources))
     return session_from_sources(url, sources, complete, deadline=deadline, notes=notes)

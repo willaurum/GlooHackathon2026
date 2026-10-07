@@ -23,7 +23,7 @@ TIME_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\b', re.I)
 ROLE_RE = re.compile(r'\b(pastor|minister|director|coordinator|elder|deacon|administrator|manager|assistant|leader|'
                      r'secretary|bishop|priest|rector|vicar|chaplain|staff|ministry|ministries|worship|youth|children|'
                      r'student|operations|executive|treasurer|accountant|receptionist|custodian|facilities|music)\b', re.I)
-NAME_RE = re.compile(r"^(?:(?:rev|reverend|pastor|dr|mr|mrs|ms|fr|father|elder|deacon|bishop)\.?\s+)?"
+NAME_RE = re.compile(r"^(?:(?i:rev|reverend|pastor|dr|mr|mrs|ms|fr|father|elder|deacon|bishop)\.?\s+)?"
                      r"[A-Z][a-zA-Z'’-]+(?:\s+[A-Z]\.)?(?:\s+[A-Z][a-zA-Z'’.-]+){1,3}$")
 EMAIL_RE = re.compile(r'\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b')
 VIDEO_RE = re.compile(r'^https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|embed/|live/)[\w-]{11}|youtu\.be/[\w-]{11}'
@@ -288,21 +288,66 @@ def video_sermons(source, anchors, embeds):
     return items
 
 
+# A heading over a plain list of names: "Elders", "Our Deacons", "Board of Trustees".
+GROUP_RE = re.compile(r'^(?:our\s+|the\s+|board\s+of\s+)?(elders|deacons|deaconesses|trustees|church\s+council|'
+                      r'council|elder\s+board|deacon\s+board)(?:\s*(?:&|and)\s+[a-z ]{3,20})?:?$', re.I)
+GROUP_ROLES = {'elders': 'Elder', 'deacons': 'Deacon', 'deaconesses': 'Deaconess', 'trustees': 'Trustee',
+               'elder board': 'Elder', 'deacon board': 'Deacon'}
+# A role that goes on to the next line: "Executive Director of" / "Operations".
+WRAPPED_ROLE = re.compile(r'(?:\b(?:of|and|for|the|to)|[&,/–-])$', re.I)
+
+
+def _person(line):
+    return bool(NAME_RE.match(line)) and (not ROLE_RE.search(line)
+                                         or bool(re.match(r'(?i)(rev|pastor|dr|father|elder|deacon|bishop)\b', line)))
+
+
 def staff_cards(source):
-    """Name, role and optional email on consecutive lines: the usual staff card. Menu links are not people."""
+    """Name, role (possibly wrapped onto a second line) and optional email on consecutive lines: the usual staff
+    card. Also plain lists of names under an "Elders" or "Deacons" heading. Menu links are not people."""
     menu = {text for _, text, in_nav in source.get('anchors', []) if in_nav}
     lines = [line.strip() for line in source['text'].split('\n') if line.strip() and line.strip() not in menu]
-    items = []
-    for i, line in enumerate(lines[:-1]):
-        role = lines[i + 1]
-        if not NAME_RE.match(line) or ROLE_RE.search(line) and not re.match(r'(?i)(rev|pastor|dr|father|elder)\b', line):
+
+    def role_at(i):
+        """(role, lines used) for a role starting at line i, or ('', 0)."""
+        if i >= len(lines):
+            return '', 0
+        role = lines[i]
+        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role):
+            return '', 0
+        if WRAPPED_ROLE.search(role) and i + 1 < len(lines) and len(role) + len(lines[i + 1]) <= 90 \
+                and not EMAIL_RE.search(lines[i + 1]) and not _person(lines[i + 1]):
+            return f'{role} {lines[i + 1]}', 2
+        return role, 1
+
+    items, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        heading = GROUP_RE.match(line)
+        if heading:
+            group, j = ' '.join(line.rstrip(':').split()), i + 1
+            role = GROUP_ROLES.get(' '.join(heading.group(1).lower().split()), '')
+            members = []
+            while j < len(lines) and _person(lines[j]) and not role_at(j + 1)[0]:
+                members.append(lines[j])
+                j += 1
+            if len(members) >= 2:
+                quote = ' '.join([line, *members])
+                for name in members:
+                    items.append(_item('staff', {'name': name, 'role': role, 'group': group}, quote, source,
+                                       method='pattern'))
+                i = j
+                continue
+        role, used = role_at(i + 1) if _person(line) else ('', 0)
+        if not role:
+            i += 1
             continue
-        if len(role) > 60 or not ROLE_RE.search(role) or EMAIL_RE.search(role) or NAME_RE.match(role) and not ROLE_RE.search(role):
-            continue
-        email = EMAIL_RE.search(lines[i + 2]) if i + 2 < len(lines) else None
+        nxt = i + 1 + used
+        email = EMAIL_RE.search(lines[nxt]) if nxt < len(lines) else None
         value = {'name': line, 'role': role, 'email': email.group(0).lower() if email else ''}
-        quote = ' '.join(lines[i:i + (3 if email else 2)])
+        quote = ' '.join(lines[i:nxt + (1 if email else 0)])
         items.append(_item('staff', value, quote, source, method='pattern'))
+        i = nxt + (1 if email else 0)
     return items
 
 
