@@ -175,7 +175,8 @@ def import_fixture(fixture_dir, complete=None, today=None):
     with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1'}), \
             mock.patch.object(builder_structured, '_today', lambda: today or date.today()):
         session = builder.new_session('https://church.test/', fetch=fetch, fetch_feed=fetch_feed,
-                                      complete=complete or (lambda m, t: None), describe=False)
+                                      complete=complete or (lambda m, t: None), describe=False,
+                                      fetch_css=lambda url: (url, 'text/css', fetch.asset(url)[2].decode('utf-8')))
         # Build while the date is pinned: dated events are kept or dropped against the same day.
         session['content'] = builder.collection_content(session['collections'])
     return session

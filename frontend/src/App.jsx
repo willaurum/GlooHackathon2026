@@ -24,7 +24,8 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 import SitePage from './SitePages.jsx';
-import { PAGE_ROUTE } from './site.js';
+import { PAGE_ROUTE, safeHref } from './site.js';
+import { applyTheme } from './theme.js';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -276,8 +277,8 @@ function SiteApp({ snapshot }) {
     document.title = name;
     let icon = document.querySelector('link[rel="icon"]');
     if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
-    icon.href = churchIcon(name);
-  }, [name, route]);
+    icon.href = safeHref(website?.site?.theme?.favicon) || churchIcon(name);
+  }, [name, route, website]);
   const ready = !!snapshot || demo || apiReady === true;
   // The church's imported website (menu and page list), when the site builder made one.
   useEffect(() => {
@@ -286,6 +287,8 @@ function SiteApp({ snapshot }) {
     if (ready && !demo) api('/church').then(c => { if (live && c.site) setWebsite({ site: c.site, pages: c.pages || [] }); }).catch(() => {});
     return () => { live = false; };
   }, [slug, ready, demo, listingVersion]);
+  // Its colors and fonts, until another church (or the demo church) is shown.
+  useEffect(() => website?.site?.theme ? applyTheme(website.site.theme) : undefined, [website]);
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,

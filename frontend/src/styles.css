@@ -1260,3 +1260,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .site-menu a.nav-item { text-decoration: none; }
 .site-menu-child { margin-left: 18px; }
 .site-menu-label { display: block; padding: 8px 10px 2px; color: var(--muted); font-size: 13px; font-weight: 700; }
+
+/* Builder: reviewing the imported website */
+.builder-menu { margin: 8px 0 12px; padding-left: 18px; }
+.builder-menu small { color: var(--muted); }
+.builder-swatches { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 8px 0; font-size: 14px; }
+.builder-swatches span { display: inline-flex; align-items: center; gap: 6px; }
+.builder-swatches i { width: 18px; height: 18px; border-radius: 5px; border: 1px solid var(--line-strong); }
+.builder-asset { display: block; max-width: 160px; max-height: 90px; margin: 6px 0; border-radius: 6px; border: 1px solid var(--line); object-fit: contain; background: #fff; }
+.builder-page-preview { margin-top: 8px; padding: 10px 12px; border-left: 3px solid var(--green-100); font-size: 14px; display: grid; gap: 8px; overflow-wrap: anywhere; }
+.builder-page-preview p { margin: 2px 0; }

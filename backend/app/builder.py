@@ -48,7 +48,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import builder_agents, builder_crawl, builder_site, builder_structured, church_content, db
+from . import builder_agents, builder_crawl, builder_site, builder_structured, builder_theme, church_content, db
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -897,11 +897,17 @@ def _http_fetch(url, kind='page'):
         content_type = response.headers.get('content-type', '')
         if kind == 'feed' and not FEED_TYPES.search(content_type):
             raise ValueError('not a feed')
+        if kind == 'css' and not re.match(r'text/css\b', content_type, re.I):
+            raise ValueError('not a stylesheet')
         return str(response.url), content_type, response.text[:MAX_PAGE_BYTES]
 
 
 def _http_feed(url):
     return _http_fetch(url, 'feed')
+
+
+def _http_css(url):
+    return _http_fetch(url, 'css')
 
 
 # ---------------------------------------------------------------- 2. Extract
@@ -1611,14 +1617,15 @@ def apply_item(session, collection, item_id=None, include=None, value=None):
 
 
 def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None, fetch_feed=None, budget=None,
-                crawl_budget=None, progress=None):
-    """Import a website. With no injected `fetch`, robots.txt, sitemaps and feeds are read too (or with `fetch_feed`).
-    `progress(stage, pages_read, pages_found)` reports how far it got."""
+                crawl_budget=None, progress=None, fetch_css=None):
+    """Import a website. With no injected `fetch`, robots.txt, sitemaps, feeds and stylesheets are read too (or
+    with `fetch_feed`, `fetch_css`). `progress(stage, pages_read, pages_found)` reports how far it got."""
     started, notes, feeds = _now(), [], []
     deadline = started + (IMPORT_BUDGET if budget is None else budget)
     crawl_budget = CRAWL_BUDGET if crawl_budget is None else crawl_budget
-    if fetch_feed is None and fetch is None:
-        fetch_feed = _http_feed
+    if fetch is None:
+        fetch_feed = fetch_feed or _http_feed
+        fetch_css = fetch_css or _http_css
     report = (lambda read, found: progress('reading', read, found)) if progress else None
     policy = host_policy(fetch_feed, deadline) if fetch_feed is not None else builder_crawl.HostPolicy()
     sources = crawl(url, fetch, deadline=min(deadline, started + crawl_budget), notes=notes, fetch_feed=fetch_feed,
@@ -1628,9 +1635,16 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None,
     if describe is not None or (_ai_describe is not None and _ai_available()):
         sources += read_images(sources, fetch_bytes, describe, deadline=deadline, notes=notes, policy=policy)
     sources += read_feeds(feeds, fetch_feed, len(sources) + 1, min(deadline, _now() + 20), notes, policy)
+    look = None
+    if fetch_css is not None and _now() < deadline:
+        paced = polite(fetch_css, policy, min(deadline, _now() + 15))
+        look = builder_theme.read(sources[0], lambda u: paced(u)[2], policy.allowed, notes)
     if progress:
         progress('extracting', len([s for s in sources if s.get('kind') == 'page']), len(sources))
-    return session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+    session = session_from_sources(url, sources, complete, deadline=deadline, notes=notes)
+    look = look or builder_theme.read(sources[0])
+    session['site'].update(theme=look[0], assets=look[1])
+    return session
 
 
 def session_from_sources(url, sources, complete=None, deadline=None, notes=None):

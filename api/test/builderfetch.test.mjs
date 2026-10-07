@@ -155,3 +155,17 @@ test('feeds (robots.txt, sitemaps, iCal, RSS) are their own kind; an HTML page i
   const refused = await builderFetchBridge(ask('http://127.0.0.1/robots.txt', 'feed'), net.fetcher);
   assert.equal(refused.status, 403);
 });
+
+test('stylesheets are their own kind: a page or script is not a stylesheet', async () => {
+  const net = internet({ 'cdn.example.org': ['93.184.216.34'] }, {
+    'https://cdn.example.org/theme.css': () => new Response(':root{--brand:#123456}', { headers: { 'Content-Type': 'text/css; charset=utf-8' } }),
+    'https://cdn.example.org/page': html('<p>a page</p>'),
+    'https://cdn.example.org/app.js': () => new Response('alert(1)', { headers: { 'Content-Type': 'text/javascript' } }),
+  });
+  const css = await builderFetchBridge(ask('https://cdn.example.org/theme.css', 'css'), net.fetcher);
+  assert.equal(css.status, 200);
+  assert.equal(await css.text(), ':root{--brand:#123456}');
+  for (const path of ['page', 'app.js'])
+    assert.equal((await builderFetchBridge(ask(`https://cdn.example.org/${path}`, 'css'), net.fetcher)).status, 415, path);
+  assert.equal((await builderFetchBridge(ask('http://10.0.0.1/theme.css', 'css'), net.fetcher)).status, 403);
+});

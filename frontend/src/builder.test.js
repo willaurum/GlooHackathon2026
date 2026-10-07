@@ -95,3 +95,18 @@ test('import progress reads the job stage', () => {
   assert.equal(builderImportProgress({ progress: { stage: 'reading', pages_read: 4, pages_found: 30 } }), 'Reading your website… 4 of 30 pages read so far.');
   assert.match(builderImportProgress({ progress: { stage: 'extracting', pages_read: 12 } }), /^Read 12 pages/);
 });
+
+test('imported website parts read as one line each, and the menu as indented lines', async () => {
+  const { SITE_PARTS, sitePartItem, siteMenuLines } = await import('./builder.js');
+  assert.deepEqual(SITE_PARTS.map(p => p.key), ['pages', 'links', 'forms', 'media', 'assets']);
+  assert.deepEqual(sitePartItem('pages', { title: 'Our Team - Harvest Point Church', path: '/team', section_count: 4, in_menu: true }),
+    { title: 'Our Team - Harvest Point Church', detail: '/team · 4 sections · in the menu' });
+  assert.deepEqual(sitePartItem('links', { text: 'RSVP', kind: 'form', provider: 'Evite', context: 'Fall Festival' }),
+    { title: 'RSVP', detail: 'Sign-up · Evite · under “Fall Festival”' });
+  assert.deepEqual(sitePartItem('forms', { fields: [{ label: 'Your name' }, { label: 'Email' }], submit: 'Send' }),
+    { title: 'Form', detail: 'Your name, Email · button “Send”' });
+  assert.deepEqual(sitePartItem('assets', { role: 'logo', alt: 'Harvest Point' }), { title: 'Logo', detail: 'Harvest Point' });
+  assert.deepEqual(siteMenuLines({ main: [{ label: 'About', url: '', page_id: '', children: [{ label: 'Team', url: 'https://c.test/team', page_id: 's2', children: [] }] },
+    { label: 'Groups', url: 'https://x.churchcenter.com/groups', page_id: '', children: [] }] }),
+  [{ label: 'About', depth: 0, external: false }, { label: 'Team', depth: 1, external: false }, { label: 'Groups', depth: 0, external: true }]);
+});

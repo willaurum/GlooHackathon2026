@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft } from './builderApi.js';
-import { BUILDER_LABELS, BUILDER_LISTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder } from './builder.js';
+import { createBlank, createFromDraft, createFromFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
+import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, siteMenuLines, sitePartItem } from './builder.js';
+import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
 import { PageHeader } from './Layout.jsx';
@@ -71,6 +72,15 @@ export default function Builder() {
     setBusy('item'); setError('');
     try {
       setSession(await itemApi(session.id, body)); setPreview(null);
+      return true;
+    } finally { setBusy(''); }
+  }
+
+  async function updatePart(body) {
+    if (busy || loading) return false;
+    setBusy('part'); setError('');
+    try {
+      setSession(await partApi(session.id, body)); setPreview(null);
       return true;
     } finally { setBusy(''); }
   }
@@ -181,6 +191,7 @@ export default function Builder() {
           {Object.entries(BUILDER_LABELS).map(([field, label]) => <ReviewField key={session.id + ':' + field} field={field} label={label} session={session} editing={editing === field} onEdit={() => { setEditing(field); setPreview(null); }} onCancel={() => setEditing('')} answer={answer} disabled={locked} />)}
         </section>
         {BUILDER_LISTS.filter(list => session.collections?.[list.key]?.length).map(list => <ImportedList key={session.id + ':' + list.key} list={list} entries={session.collections[list.key]} update={updateItem} disabled={locked} />)}
+        {session.site?.pages?.length > 0 && <SiteReview key={session.id + ':site'} session={session} update={updatePart} disabled={locked} />}
         {preview && <section className="card give-pad builder-preview" aria-label="Content preview">
           <div className="eyebrow">Content preview</div><h2>{preview.info?.name || 'Your church'}</h2>
           <dl className="builder-summary">{Object.entries(preview.info || {}).filter(([field, value]) => field !== 'map_query' && value != null && value !== '' && (!Array.isArray(value) || value.length)).map(([field, value]) => <div key={field}><dt>{BUILDER_LABELS[field] || field.replaceAll('_', ' ')}</dt><dd>{builderValue(field, value)}</dd></div>)}</dl>
@@ -359,5 +370,71 @@ function ImportedItem({ list, entry, run, disabled }) {
       </label>)}
       <div className="builder-actions"><button className="primary" disabled={disabled}>Save</button><button type="button" className="secondary" disabled={disabled} onClick={() => setEditing(false)}>Cancel</button></div>
     </form>}
+  </li>;
+}
+
+// The imported website as a whole: its menu and look, then each part the church keeps or leaves out.
+function SiteReview({ session, update, disabled }) {
+  const { site } = session;
+  const menu = siteMenuLines(site.navigation);
+  const theme = site.theme || {};
+  const colors = [['primary', 'Main color'], ['accent', 'Accent'], ['text', 'Text'], ['background', 'Background']].filter(([key]) => theme[key]);
+  return <>
+    <section className="card give-pad builder-list" aria-label="Your website">
+      <div className="eyebrow">Your website</div><h2>Menu and look</h2>
+      {menu.length > 0 ? <ul className="builder-menu">{menu.map((line, i) => <li key={i} style={{ marginLeft: line.depth * 18 }}>{line.label}{line.external && <small> · another site</small>}</li>)}</ul>
+        : <p className="form-note">No menu was found; your pages will be listed instead.</p>}
+      {colors.length > 0 && <div className="builder-swatches">{colors.map(([key, label]) => <span key={key}><i style={{ background: theme[key] }} />{label} {theme[key]}</span>)}</div>}
+      {(theme.heading_font || theme.body_font) && <p className="form-note">Fonts: {[theme.heading_font && `${theme.heading_font} (headings)`, theme.body_font && `${theme.body_font} (text)`].filter(Boolean).join(', ')}</p>}
+    </section>
+    {SITE_PARTS.filter(part => site[part.key]?.length).map(part => <SitePartList key={part.key} part={part} session={session} entries={site[part.key]} update={update} disabled={disabled} />)}
+  </>;
+}
+
+function SitePartList({ part, session, entries, update, disabled }) {
+  const included = entries.filter(entry => entry.include).length;
+  const [error, setError] = useState('');
+  async function run(body) {
+    setError('');
+    try { return await update({ part: part.key, ...body }); } catch (err) { setError(err.message); return false; }
+  }
+  return <section className="card give-pad builder-list" aria-label={part.label}>
+    <div className="builder-field-heading"><h2>{part.label}</h2><span className="badge">{included} of {entries.length} kept</span></div>
+    {part.note && <p className="form-note">{part.note}</p>}
+    <div className="builder-actions">
+      <button type="button" className="link" disabled={disabled || included === entries.length} onClick={() => run({ include: true })}>Keep all</button>
+      <button type="button" className="link" disabled={disabled || !included} onClick={() => run({ include: false })}>Leave all out</button>
+    </div>
+    {error && <div className="banner error" role="alert">{error}</div>}
+    <ul className="builder-items">{entries.map(entry => <SitePartItem key={entry.id} part={part.key} draftId={session.id} entry={entry} run={run} disabled={disabled} />)}</ul>
+  </section>;
+}
+
+function SitePartItem({ part, draftId, entry, run, disabled }) {
+  const { title, detail } = sitePartItem(part, entry);
+  const [page, setPage] = useState(null), [error, setError] = useState('');
+  const href = safeHref(entry.url);
+  async function togglePage() {
+    if (page) { setPage(null); return; }
+    setError('');
+    try { setPage(await draftPageApi(draftId, entry.id)); } catch (err) { setError(err.message); }
+  }
+  return <li className={'builder-item' + (entry.include ? '' : ' excluded')}>
+    <label className="builder-item-check">
+      <input type="checkbox" checked={!!entry.include} disabled={disabled} onChange={e => run({ id: entry.id, include: e.target.checked })} />
+      <span><strong>{title}</strong>{detail && <small>{detail}</small>}</span>
+    </label>
+    {part === 'assets' && href && <img className="builder-asset" src={href} alt={entry.alt || title} referrerPolicy="no-referrer" loading="lazy" />}
+    {part === 'assets' && <label className="builder-item-check"><input type="checkbox" checked={!!entry.rights} disabled={disabled || !entry.include} onChange={e => run({ id: entry.id, rights: e.target.checked })} /><span>We own this image or have permission to use it</span></label>}
+    <div className="builder-actions">
+      {part === 'pages' && <button type="button" className="link" aria-expanded={!!page} onClick={togglePage}>{page ? 'Hide page' : 'Show page'}<span className="builder-sr-only"> {title}</span></button>}
+      {href && part !== 'assets' && <a className="link" href={href} target="_blank" rel="noopener noreferrer">Open<span className="builder-sr-only"> {title}</span></a>}
+    </div>
+    {error && <div className="banner error" role="alert">{error}</div>}
+    {page && <div className="builder-page-preview">{page.sections.map((section, i) => <div key={i}>
+      {section.heading && <strong>{section.heading}</strong>}
+      {paragraphs(section.text).slice(0, 4).map((line, j) => <p key={j}>{line}</p>)}
+      {section.links.length > 0 && <small>Buttons: {section.links.map(l => l.text || l.url).join(', ')}</small>}
+    </div>)}</div>}
   </li>;
 }

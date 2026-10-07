@@ -29,6 +29,7 @@ def harvest():
         def recording(url):
             fetched.append(url)
             return fetch(url)
+        recording.asset = fetch.asset
         with mock.patch.object(builder_score, 'fixture_fetchers', lambda root: (recording, fetch_feed)), \
                 mock.patch.object(builder, '_ai_complete', side_effect=AssertionError('AI forbidden')):
             _SESSION['session'] = builder_score.import_fixture(FIXTURE)

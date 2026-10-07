@@ -231,6 +231,7 @@ def build(sources, start_url):
             'id': page['id'], 'url': page['url'], 'path': urlparse(page['url']).path or '/',
             'title': page.get('title', ''), 'page_type': page.get('page_type', 'other'),
             'in_menu': page['url'] in in_menu or page is pages[0], 'sections': page_sections,
+            'section_count': len(page_sections),
             'include': not post})
         ctas = set(page.get('ctas', []))
         for url, text, in_nav in page.get('anchors', []):
@@ -342,6 +343,10 @@ def content(site, church_name=''):
               'page': next((slugs[p] for p in f['pages'] if p in slugs), '')}
              for f in site.get('forms', []) if f.get('include')]
     navigation = site.get('navigation', {})
+    assets = [a for a in site.get('assets', []) if a.get('include')]
+    # The logo and icon are only used once the church has said it may use them.
+    allowed_images = {role: next((a['url'] for a in assets if a['role'] == role and a.get('rights')), '')
+                      for role in ('logo', 'favicon')}
     return {
         'site': {'navigation': {'main': menu(navigation.get('main', [])),
                                 'footer': menu([{**f, 'children': []} for f in navigation.get('footer', [])])},
@@ -350,7 +355,8 @@ def content(site, church_name=''):
                  'forms': forms,
                  'media': [{k: m[k] for k in ('url', 'title', 'kind', 'provider')}
                            for m in site.get('media', []) if m.get('include')],
-                 'theme': site.get('theme', {}), 'assets': site.get('assets', []),
+                 'theme': {**site.get('theme', {}), **allowed_images},
+                 'assets': [{k: a[k] for k in ('url', 'role', 'alt', 'rights')} for a in assets],
                  'source_url': site.get('source_url', '')},
         'pages': pages,
     }

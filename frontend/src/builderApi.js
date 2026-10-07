@@ -21,6 +21,10 @@ export const createBlank = () => draftApi('/blank', { method: 'POST' });
 
 export const itemApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/items', { method: 'POST', body: JSON.stringify(body) });
 
+export const partApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/parts', { method: 'POST', body: JSON.stringify(body) });
+
+export const draftPageApi = (draftId, pageId) => draftApi('/' + encodeURIComponent(draftId) + '/pages/' + encodeURIComponent(pageId));
+
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const timer = setTimeout(resolve, ms);
   signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); }, { once: true });

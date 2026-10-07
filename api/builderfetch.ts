@@ -5,8 +5,9 @@
 // The URL comes from an anonymous visitor, so every address and every redirect is checked here before it is fetched:
 // http(s) only, the default ports, no credentials, no local or private names, and no private, loopback, link-local,
 // metadata or reserved IP, whether written in the URL or returned by DNS (looked up over DNS-over-HTTPS).
-// Bodies are capped (1 MB per page or feed, 4 MB per image) and each fetch is bounded in time. Feeds are robots.txt,
-// sitemaps and iCal/RSS feeds, which the builder reads to find pages, events and sermons.
+// Bodies are capped (1 MB per page or feed, 4 MB per image, 500 KB per stylesheet) and each fetch is bounded in time.
+// Feeds are robots.txt, sitemaps and iCal/RSS feeds, which the builder reads to find pages, events and sermons;
+// stylesheets give the site's colors and fonts.
 
 export const BUILDER_FETCH_HOST = 'builder-fetch';
 
@@ -15,14 +16,18 @@ export function builderFetchEnvVars(): Record<string, string> {
 	return { BUILDER_FETCH_URL: `http://${BUILDER_FETCH_HOST}` };
 }
 
-type Kind = 'page' | 'image' | 'feed';
-const LIMITS: Record<Kind, number> = { page: 1_000_000, image: 4_000_000, feed: 1_000_000 };
+type Kind = 'page' | 'image' | 'feed' | 'css';
+const KINDS: Kind[] = ['page', 'image', 'feed', 'css'];
+const LIMITS: Record<Kind, number> = { page: 1_000_000, image: 4_000_000, feed: 1_000_000, css: 500_000 };
 const ACCEPT: Record<Kind, string> = {
 	page: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
 	image: 'image/*',
 	feed: 'application/rss+xml,application/atom+xml,application/xml,text/xml,text/calendar,text/plain;q=0.9',
+	css: 'text/css',
 };
-const TYPES: Record<Kind, RegExp> = { page: /html|text\//i, image: /^image\//i, feed: /xml|rss|atom|calendar|text\/plain/i };
+const TYPES: Record<Kind, RegExp> = {
+	page: /html|text\//i, image: /^image\//i, feed: /xml|rss|atom|calendar|text\/plain/i, css: /^text\/css\b/i,
+};
 const MAX_REQUEST_BYTES = 4096;
 const MAX_REDIRECTS = 5;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -176,7 +181,7 @@ export async function builderFetchBridge(request: Request, fetcher: typeof fetch
 	} catch {
 		return refuse(BAD_URL);
 	}
-	const kind: Kind = body.kind === 'image' || body.kind === 'feed' ? body.kind : 'page';
+	const kind: Kind = KINDS.find(k => k === body.kind) ?? 'page';
 	let current = checkUrl(body.url);
 	for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
 		if (typeof current === 'string') return refuse(current, current === PRIVATE ? 403 : 400);
@@ -210,7 +215,7 @@ export async function builderFetchBridge(request: Request, fetcher: typeof fetch
 		const contentType = response.headers.get('content-type') ?? '';
 		if (!TYPES[kind].test(contentType) || (kind === 'feed' && /html/i.test(contentType))) {
 			await response.body?.cancel();
-			return refuse(kind === 'feed' ? 'Not a feed or sitemap.' : 'Not a web page or image.', 415);
+			return refuse(kind === 'feed' ? 'Not a feed or sitemap.' : kind === 'css' ? 'Not a stylesheet.' : 'Not a web page or image.', 415);
 		}
 		const data = await readCapped(response, LIMITS[kind], kind !== 'image');
 		if (!data) return refuse('That image is too large.', 413);
