@@ -7,8 +7,11 @@ groups, locations, sermons) by precision and recall on normalized names; `today`
 dated fixtures are read on. An optional `site` key scores the site model (menu, links by kind, forms, media)
 by recall.
 Prose is compared literally after the builder's whitespace/case normalization, not semantically.
+Every run also reports the file check: church.json and site.json against their schemas, and how many imported
+facts trace to their pages (builder_json). The answer key can live outside the fixture (`--key`).
 
     python -m backend.app.builder_score backend/tests/fixtures/builder/cedar-hollow-static
+    python -m backend.app.builder_score backend/tests/fixtures/builder/cedar-hollow-millbrook --key path/to/expected.json
 """
 import argparse
 import json
@@ -19,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import urlparse
 
-from . import builder, builder_structured
+from . import builder, builder_json, builder_structured
 
 OUTCOMES = ('correct', 'wrong', 'missed', 'correctly_flagged_conflict', 'correctly_flagged_missing',
             'false_conflict')
@@ -164,11 +167,12 @@ def fixture_fetchers(fixture_dir):
     return fetch, fetch_feed
 
 
-def import_fixture(fixture_dir, complete=None, today=None):
+def import_fixture(fixture_dir, complete=None, today=None, key=None):
     """Use the same injected-fetch session as builder tests, with all external readers disabled (or a fake `complete`).
-    robots.txt, sitemaps and feeds in the fixture are read too."""
+    robots.txt, sitemaps and feeds in the fixture are read too. `key` is the answer key (default: the fixture's
+    expected.json), read for its pinned `today`."""
     fetch, fetch_feed = fixture_fetchers(fixture_dir)
-    key = Path(fixture_dir) / 'expected.json'
+    key = Path(key) if key else Path(fixture_dir) / 'expected.json'
     if today is None and key.is_file():
         pinned = json.loads(key.read_text(encoding='utf-8')).get('today')
         today = date.fromisoformat(pinned) if pinned else None
@@ -185,9 +189,18 @@ def import_fixture(fixture_dir, complete=None, today=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('fixture_dir', type=Path)
+    parser.add_argument('--key', type=Path, help='the answer key (default: expected.json in the fixture)')
     args = parser.parse_args()
-    expected = json.loads((args.fixture_dir / 'expected.json').read_text(encoding='utf-8'))
-    draft = import_fixture(args.fixture_dir)
+    key = args.key or args.fixture_dir / 'expected.json'
+    draft = import_fixture(args.fixture_dir, key=key)
+    check = draft.get('file_check') or {}
+    print(builder_json.summary(check) if check else 'No file check ran.')
+    for error in check.get('errors', []):
+        print('  ' + error)
+    if not key.is_file():
+        print(f'No answer key at {key}; only the file check ran.')
+        return
+    expected = json.loads(key.read_text(encoding='utf-8'))
     result = score(draft, expected)
     print(f"{'Field':<16} Outcome")
     for field, outcome in result['fields'].items():

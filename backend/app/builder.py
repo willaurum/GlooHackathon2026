@@ -44,12 +44,13 @@ from urllib.parse import urljoin, urldefrag, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import (builder_agents, builder_crawl, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
+from . import (builder_agents, builder_crawl, builder_json, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
                church_content, db)
 from .builder_edit import clean_layout, default_layout
 
@@ -1059,13 +1060,14 @@ def service_times(text, strict=False):
         day = next((d for d in DAYS if re.fullmatch(rf'{d}s?( services?| worship)?', line.strip(), re.I)), None)
         if not day:
             continue
-        for nxt in lines[i + 1:i + 4]:
+        for k, nxt in enumerate(lines[i + 1:i + 4], i + 1):
             if NOT_WORSHIP.search(nxt) or DATED.search(nxt) or NOT_WEEKLY.search(nxt) or any(re.match(rf'{d}\b', nxt) for d in DAYS):
                 break
             for clock in _times(nxt):
                 found.setdefault(day, [])
                 if clock not in [x for x, _ in found[day]]:
-                    found[day].append((clock, f'{line} {nxt}'.strip()))
+                    # The quote is the page's own words, from the heading down to this time.
+                    found[day].append((clock, ' '.join(l.strip() for l in lines[i:k + 1] if l.strip())))
     return found
 
 
@@ -1251,8 +1253,119 @@ def _tool_arguments(text):
         return json.loads(text[start:end + 1]) if 0 <= start < end else None
 
 
+# Structured output: Tekton's readers (READER_TOOLS) ask for JSON constrained to their tool's schema, the
+# OpenAI-compatible `response_format` json_schema that Gemini, OpenAI and Qwen models honor, instead of a forced tool
+# call. Gloo's guarded endpoint does not document response_format (it may drop it silently), so these calls go to its
+# direct chat completions endpoint (BUILDER_STRUCTURED_ENDPOINT), with the same key.
+# BUILDER_STRUCTURED_OUTPUT: auto (by model family, see output_mode), json_schema, or tools. Any refusal (400, 401,
+# 403, 404, 422), an answer that is not JSON, cut short or filtered, or one missing the schema's top-level fields
+# falls back to the forced tool call on the usual endpoint, and that model is not asked for json_schema again by
+# this process. Other AI calls (plain-word edits) keep their tool call.
+READER_TOOLS = {'record_church_facts', 'record_events', 'record_staff', 'record_ministries', 'record_sermons',
+                'record_locations'}
+DIRECT_ENDPOINT = 'https://platform.ai.gloo.com/ai/v2/direct'
+# Model families whose OpenAI-compatible answers follow a json_schema; Anthropic's compatibility layer ignores it.
+JSON_SCHEMA_MODELS = re.compile(r'^gloo-(openai-|google-gemini-|qwen-3\.[78]-(flash|plus|max))', re.I)
+# Keywords the portable subset leaves out (lengths and patterns stay enforced by Pydantic after parsing).
+UNPORTABLE = ('minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', 'exclusiveMinimum',
+              'exclusiveMaximum', 'maxItems', 'default', '$ref', '$defs', 'title')
+_no_json_schema = set()
+
+
+def output_mode(provider, model, tool_name=None):
+    """'json_schema' or 'tools' for one call."""
+    if tool_name is not None and tool_name not in READER_TOOLS:
+        return 'tools'
+    mode = (os.environ.get('BUILDER_STRUCTURED_OUTPUT') or 'auto').strip().lower()
+    if mode == 'tools' or model in _no_json_schema:
+        return 'tools'
+    if mode == 'json_schema':
+        return 'json_schema'
+    if provider == 'openai':
+        return 'json_schema'
+    return 'json_schema' if provider == 'gloo' and JSON_SCHEMA_MODELS.match(model or '') else 'tools'
+
+
+def strict_schema(schema):
+    """The tool's JSON Schema in the strict, portable subset structured output needs: every object lists all its
+    properties as required (an optional one may be null instead) and allows no others; string enums only; no
+    $ref, lengths or patterns."""
+    schema = {k: v for k, v in schema.items() if k not in UNPORTABLE}
+    if schema.get('type') == 'object':
+        required = set(schema.get('required', []))
+        props = {}
+        for key, value in schema.get('properties', {}).items():
+            value = strict_schema(value)
+            props[key] = value if key in required else _nullable(value)
+        schema.update(properties=props, required=list(props), additionalProperties=False)
+    elif schema.get('type') == 'array' and isinstance(schema.get('items'), dict):
+        schema['items'] = strict_schema(schema['items'])
+        if schema.get('minItems', 0) > 1:
+            schema['minItems'] = 1
+    return schema
+
+
+def _nullable(schema):
+    schema = dict(schema)
+    kind = schema.get('type')
+    if isinstance(kind, str) and kind != 'null':
+        schema['type'] = [kind, 'null']
+    if 'enum' in schema and None not in schema['enum']:
+        schema['enum'] = [*schema['enum'], None]
+    return schema
+
+
+def without_nulls(value):
+    """A structured answer in the shape a tool call gives: an optional field left null is simply absent."""
+    if isinstance(value, dict):
+        return {k: without_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [without_nulls(v) for v in value if v is not None]
+    return value
+
+
+def response_format(tool):
+    function = tool['function']
+    return {'type': 'json_schema', 'json_schema': {'name': function['name'], 'strict': True,
+                                                   'schema': strict_schema(function['parameters'])}}
+
+
+def _json_messages(messages):
+    """The same request, saying plainly that the answer is JSON (Qwen's JSON mode needs the word in the prompt)."""
+    if messages and messages[0].get('role') == 'system':
+        return [{**messages[0], 'content': messages[0]['content'] + ' Answer with JSON that matches the given schema.'},
+                *messages[1:]]
+    return [{'role': 'system', 'content': 'Answer with JSON that matches the given schema.'}, *messages]
+
+
+def _structured_client(provider, client):
+    if provider != 'gloo':
+        return client, ''
+    endpoint = (os.environ.get('BUILDER_STRUCTURED_ENDPOINT') or DIRECT_ENDPOINT).rstrip('/')
+    return client.with_options(base_url=endpoint), endpoint
+
+
+def _structured_answer(response, tool):
+    """The answer as a dict, or None when it is not usable JSON for this tool (so the tool call is asked instead)."""
+    choice = response.choices[0]
+    if getattr(choice, 'finish_reason', None) in ('length', 'content_filter'):
+        return None
+    content = choice.message.content
+    if not isinstance(content, str) or not content.strip():
+        return None
+    try:
+        answer = _tool_arguments(content.strip())
+    except ValueError:
+        return None
+    if not isinstance(answer, dict):
+        return None
+    required = tool['function']['parameters'].get('required', [])
+    return without_nulls(answer) if all(key in answer for key in required) else None
+
+
 def _ai_complete_impl(messages, tools, timeout=None):
-    """Force the first tool. If the first configured provider fails, the next one (AI_FALLBACK) gets one try."""
+    """Structured output when the model takes it (output_mode), else force the first tool. If the first configured
+    provider fails, the next one (AI_FALLBACK) gets one try."""
     import openai
     from . import chat
     clients = chat.make_clients()
@@ -1265,6 +1378,30 @@ def _ai_complete_impl(messages, tools, timeout=None):
         if timeout is not None:  # never outlive the import that asked
             client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
         extra = {'extra_body': extra_body} if extra_body else {}
+        if output_mode(name, model, tools[0]['function']['name']) == 'json_schema':
+            structured, endpoint = _structured_client(name, client)
+            started = _now()
+            try:
+                response = structured.chat.completions.create(model=model, messages=_json_messages(messages), temperature=0,
+                                                              response_format=response_format(tools[0]), **extra)
+                answer = _structured_answer(response, tools[0])
+            except (openai.BadRequestError, openai.AuthenticationError, openai.PermissionDeniedError,
+                    openai.NotFoundError, openai.UnprocessableEntityError) as refused:
+                log.info('builder: %s did not take response_format json_schema (%s); using a tool call', model, refused)
+                response, answer = None, None
+            except Exception as failure:
+                log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
+                builder_run.ai(model, failed=True, mode='json_schema', endpoint=endpoint, seconds=_now() - started)
+                error = failure
+                continue
+            if answer is not None:
+                builder_run.ai(model, getattr(response, 'usage', None), mode='json_schema', endpoint=endpoint,
+                               seconds=_now() - started)
+                return answer
+            _no_json_schema.add(model)
+            builder_run.ai(model, getattr(response, 'usage', None) if response is not None else None,
+                           mode='json_schema_fallback', endpoint=endpoint, seconds=_now() - started)
+        started = _now()
         try:
             try:
                 response = client.chat.completions.create(model=model, messages=messages, tools=tools,
@@ -1275,10 +1412,10 @@ def _ai_complete_impl(messages, tools, timeout=None):
                                                           tool_choice='auto', temperature=0, **extra)
         except Exception as failure:
             log.info('builder: %s failed (%s); trying the fallback provider if there is one', name, failure)
-            builder_run.ai(model, failed=True)
+            builder_run.ai(model, failed=True, mode='tools', seconds=_now() - started)
             error = failure
             continue
-        builder_run.ai(model, getattr(response, 'usage', None))
+        builder_run.ai(model, getattr(response, 'usage', None), mode='tools', seconds=_now() - started)
         calls = response.choices[0].message.tool_calls or []
         return _tool_arguments(calls[0].function.arguments) if calls else None
     raise error
@@ -1896,10 +2033,18 @@ def builds_in_browser(sources):
 
 
 def finish_run(session, pages=0):
-    """The run's last step and summary (time, fact check, cost), saved on the draft for the review screen."""
+    """The run's last steps and summary (the file check, time, fact check, cost), saved on the draft for the review
+    screen. The file check runs here, while the page texts are still at hand."""
+    session['file_check'] = builder_json.check(session)
+    builder_run.step(builder_json.summary(session['file_check']),
+                     'done' if session['file_check']['valid'] and not session['file_check']['unsupported_count'] else 'warn')
     run = builder_run.current()
     if run is None:
         return session
+    if run.modes:
+        names = {'json_schema': 'as schema-checked JSON', 'tools': 'as tool calls',
+                 'json_schema_fallback': 'asked again as tool calls'}
+        run.step('AI answers: ' + ', '.join(f'{n} {names.get(m, m)}' for m, n in sorted(run.modes.items())))
     cost = builder_run.money(run.cost())
     run.step(f'Done: read {pages} ' + ('page' if pages == 1 else 'pages') + f' in {run.seconds():g}s'
              + (f', about {cost}' if cost and cost != 'no AI cost' else ''), 'done')
@@ -2430,6 +2575,24 @@ def site(draft_id: str):
     with _draft_lock:
         draft = _with_pages(_ready(_load(draft_id)))
         return {**church_content.public_site(build_content(draft, allow_unanswered=True)), 'provenance': provenance(draft)}
+
+
+def _file(draft_id, name):
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        document = builder_json.files(draft)[name]
+    # Served as a download: the church (or the team) can keep the files Tekton wrote.
+    return JSONResponse(document, headers={'Content-Disposition': f'attachment; filename="{name}.json"'})
+
+
+@router.get('/api/builder/drafts/{draft_id}/church.json')
+def church_file(draft_id: str):
+    return _file(draft_id, 'church')
+
+
+@router.get('/api/builder/drafts/{draft_id}/site.json')
+def site_file(draft_id: str):
+    return _file(draft_id, 'site')
 
 
 class BeliefsBody(BaseModel):

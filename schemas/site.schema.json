@@ -1,0 +1,576 @@
+{
+  "$defs": {
+    "Asset": {
+      "description": "An image on the old site, referenced by its address (not copied). `rights` is the church confirming it may\nuse it; only confirmed images are shown.",
+      "properties": {
+        "alt": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Alt",
+          "type": "string"
+        },
+        "rights": {
+          "default": false,
+          "title": "Rights",
+          "type": "boolean"
+        },
+        "role": {
+          "default": "",
+          "maxLength": 20,
+          "title": "Role",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "Asset",
+      "type": "object"
+    },
+    "FormField": {
+      "properties": {
+        "label": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Label",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "type": {
+          "default": "",
+          "maxLength": 20,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "FormField",
+      "type": "object"
+    },
+    "Layout": {
+      "description": "The order of the Home and Plan your visit sections, and the ones hidden ('page:section'), set by a request\nto Tekton (\"Put service times above ministries\"). The keys are builder_edit.PAGES.",
+      "properties": {
+        "hidden": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Hidden",
+          "type": "array"
+        },
+        "home": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Home",
+          "type": "array"
+        },
+        "visit": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Visit",
+          "type": "array"
+        }
+      },
+      "title": "Layout",
+      "type": "object"
+    },
+    "MenuItem": {
+      "description": "A menu entry: one of the church's pages (`page`, a slug), an address, or a label over a submenu.",
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/MenuItem"
+          },
+          "maxItems": 30,
+          "title": "Children",
+          "type": "array"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "page": {
+          "default": "",
+          "pattern": "^([a-z0-9][a-z0-9-]{0,79})?$",
+          "title": "Page",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "MenuItem",
+      "type": "object"
+    },
+    "Navigation": {
+      "properties": {
+        "footer": {
+          "items": {
+            "$ref": "#/$defs/MenuItem"
+          },
+          "maxItems": 60,
+          "title": "Footer",
+          "type": "array"
+        },
+        "main": {
+          "items": {
+            "$ref": "#/$defs/MenuItem"
+          },
+          "maxItems": 60,
+          "title": "Main",
+          "type": "array"
+        }
+      },
+      "title": "Navigation",
+      "type": "object"
+    },
+    "PageLink": {
+      "properties": {
+        "text": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Text",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "PageLink",
+      "type": "object"
+    },
+    "PageSection": {
+      "properties": {
+        "embeds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Embeds",
+          "type": "array"
+        },
+        "heading": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Heading",
+          "type": "string"
+        },
+        "level": {
+          "default": 2,
+          "maximum": 6,
+          "minimum": 0,
+          "title": "Level",
+          "type": "integer"
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/PageLink"
+          },
+          "maxItems": 20,
+          "title": "Links",
+          "type": "array"
+        },
+        "text": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "title": "PageSection",
+      "type": "object"
+    },
+    "Site": {
+      "properties": {
+        "assets": {
+          "items": {
+            "$ref": "#/$defs/Asset"
+          },
+          "maxItems": 40,
+          "title": "Assets",
+          "type": "array"
+        },
+        "forms": {
+          "items": {
+            "$ref": "#/$defs/SiteForm"
+          },
+          "maxItems": 20,
+          "title": "Forms",
+          "type": "array"
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Layout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/SiteLink"
+          },
+          "maxItems": 150,
+          "title": "Links",
+          "type": "array"
+        },
+        "media": {
+          "items": {
+            "$ref": "#/$defs/SiteMedia"
+          },
+          "maxItems": 40,
+          "title": "Media",
+          "type": "array"
+        },
+        "navigation": {
+          "$ref": "#/$defs/Navigation"
+        },
+        "source_url": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "theme": {
+          "$ref": "#/$defs/Theme"
+        }
+      },
+      "title": "Site",
+      "type": "object"
+    },
+    "SiteForm": {
+      "description": "A form on the old site: where it sent answers and what it asked. Recreated as a link, never re-posted.",
+      "properties": {
+        "action": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Action",
+          "type": "string"
+        },
+        "embedded": {
+          "default": false,
+          "title": "Embedded",
+          "type": "boolean"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FormField"
+          },
+          "maxItems": 30,
+          "title": "Fields",
+          "type": "array"
+        },
+        "name": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Name",
+          "type": "string"
+        },
+        "page": {
+          "default": "",
+          "pattern": "^([a-z0-9][a-z0-9-]{0,79})?$",
+          "title": "Page",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Provider",
+          "type": "string"
+        },
+        "submit": {
+          "default": "",
+          "maxLength": 60,
+          "title": "Submit",
+          "type": "string"
+        }
+      },
+      "title": "SiteForm",
+      "type": "object"
+    },
+    "SiteLink": {
+      "properties": {
+        "context": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Context",
+          "type": "string"
+        },
+        "cta": {
+          "default": false,
+          "title": "Cta",
+          "type": "boolean"
+        },
+        "kind": {
+          "default": "",
+          "maxLength": 20,
+          "title": "Kind",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Provider",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Text",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "SiteLink",
+      "type": "object"
+    },
+    "SiteMedia": {
+      "properties": {
+        "kind": {
+          "default": "",
+          "maxLength": 20,
+          "title": "Kind",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Provider",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "SiteMedia",
+      "type": "object"
+    },
+    "SitePage": {
+      "description": "A page of the church's own website, recreated as headed sections of text, buttons and players.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "page_type": {
+          "default": "",
+          "maxLength": 30,
+          "title": "Page Type",
+          "type": "string"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/PageSection"
+          },
+          "maxItems": 40,
+          "title": "Sections",
+          "type": "array"
+        },
+        "slug": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,79}$",
+          "title": "Slug",
+          "type": "string"
+        },
+        "source_url": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug",
+        "title"
+      ],
+      "title": "SitePage",
+      "type": "object"
+    },
+    "Theme": {
+      "description": "Colors and fonts read from the site's public styles; the church's pages use them over the defaults.",
+      "properties": {
+        "accent": {
+          "default": "",
+          "pattern": "^(#[0-9a-fA-F]{6})?$",
+          "title": "Accent",
+          "type": "string"
+        },
+        "background": {
+          "default": "",
+          "pattern": "^(#[0-9a-fA-F]{6})?$",
+          "title": "Background",
+          "type": "string"
+        },
+        "body_font": {
+          "default": "",
+          "maxLength": 60,
+          "pattern": "^[A-Za-z0-9 '\\-]*$",
+          "title": "Body Font",
+          "type": "string"
+        },
+        "favicon": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Favicon",
+          "type": "string"
+        },
+        "heading_font": {
+          "default": "",
+          "maxLength": 60,
+          "pattern": "^[A-Za-z0-9 '\\-]*$",
+          "title": "Heading Font",
+          "type": "string"
+        },
+        "logo": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
+          "title": "Logo",
+          "type": "string"
+        },
+        "primary": {
+          "default": "",
+          "pattern": "^(#[0-9a-fA-F]{6})?$",
+          "title": "Primary",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "pattern": "^(#[0-9a-fA-F]{6})?$",
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "title": "Theme",
+      "type": "object"
+    }
+  },
+  "$id": "https://tekton.church/schemas/site.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "site.json",
+  "properties": {
+    "generated_at": {
+      "default": "",
+      "maxLength": 40,
+      "title": "Generated At",
+      "type": "string"
+    },
+    "generated_by": {
+      "const": "tekton",
+      "default": "tekton",
+      "title": "Generated By",
+      "type": "string"
+    },
+    "kind": {
+      "const": "site",
+      "default": "site",
+      "title": "Kind",
+      "type": "string"
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/SitePage"
+      },
+      "maxItems": 60,
+      "title": "Pages",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "site": {
+      "$ref": "#/$defs/Site"
+    },
+    "source_url": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Source Url",
+      "type": "string"
+    }
+  },
+  "title": "SiteFile",
+  "type": "object"
+}

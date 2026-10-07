@@ -165,3 +165,157 @@ cd frontend && npm test
 - **Repeating events from page text** are only found by the AI reader; without it, only dated listings, iCal and JSON-LD events are found.
 - **Transcribing sermons on import.** Imported YouTube sermons can be transcribed from Sermon Notes in one step, but nothing is transcribed automatically.
 - **Provisioning:** how a builder draft becomes a real church now that public sign-up is off. For example, a platform key or an invite code.
+
+## church.json and site.json
+
+Tekton's output is two JSON files per church, written from the reviewed draft (`backend/app/builder_json.py`). Loading them into a church is a separate step (Create your church) and is not part of extraction.
+
+| File | Holds |
+|---|---|
+| `church.json` | the church: `info` (name, address, phone, email, office hours, service times, about, first visit), `faqs`, `events` and `groups` (short listings), `ministries`, `calendar` (dated events), `staff`, `locations`, `sermons`, and `sources` (where each imported fact came from) |
+| `site.json` | its site: `site.theme` (colors, fonts, logo, icon), `site.navigation` (menu), `site.layout` (section order and hidden sections), `site.links`, `site.forms`, `site.media`, `site.assets` (images, shown only once the church confirms it may use them), and `pages` (the old site's pages as headed sections) |
+
+**Schemas.** `schemas/church.schema.json` and `schemas/site.schema.json` (JSON Schema 2020-12) are generated from the Pydantic models in `builder_json.py`, which reuse `church_content.py`'s models, so the files and what a church stores have one definition. `backend/tests/test_builder_json.py` fails when a committed schema is stale; `python -m backend.app.builder_json` rewrites both.
+
+**Required vs optional.** Both files require `schema_version`, `generated_by` (`"tekton"`) and `kind` (`"church"` or `"site"`). `church.json` requires `info.name`; every list and every other `info` field may be empty. In `site.json` everything may be empty. Field limits (lengths, `#rrggbb` colors, page slugs, `http(s)` addresses) are in the schemas. `church.json` items keep unknown fields (a newer Tekton may add some); `site.json` drops them.
+
+**Provenance.** `church.json`'s `sources` maps each imported fact to its evidence, a list of `{title, url, quote, prefix, suffix}`: `sources.info.<field>` for an `info` field, and `sources.items.<section>.<name key>` for a list entry, where the name key is the entry's name lowercased with punctuation turned into spaces (`"Dan Whitfield"` is `dan whitfield`). `prefix` and `suffix` are a few words on either side of the quote, for a link that opens the page at that spot (a URL text fragment). A value the church typed has one entry titled "You confirmed this" with an empty `url`.
+
+**Versioning.** `schema_version` is `"1.0"`. A change that only adds optional fields keeps the major version; one that renames, removes or requires a field bumps it (`"2.0"`), and the loader should refuse a major version it does not know.
+
+**The file check.** At the end of an import Tekton validates both files against their schemas and checks that every imported fact's quote is on the page it cites (its text, title or structured data, ignoring case, spacing and punctuation). The progress feed and the Review screen show the result: "Checking church.json and site.json against the schema… valid; all 4 imported facts trace to their pages", or each problem. `python -m backend.app.builder_score <fixture>` prints the same check for a test fixture.
+
+**Downloads.** `GET /api/builder/drafts/{id}/church.json` and `/site.json` return the files as they are now (answers and edits included), under the same rules as the draft itself (an unguessable id, 409 while importing, 404 once expired). The Review screen links to both.
+
+### Example: Cedar Hollow (Millbrook)
+
+From `backend/tests/fixtures/builder/cedar-hollow-millbrook` after answering the service-time question, shortened:
+
+```json
+{
+  "schema_version": "1.0",
+  "generated_by": "tekton",
+  "generated_at": "2026-10-07T17:30:00+00:00",
+  "source_url": "https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site/cedar-hollow-millbrook/",
+  "kind": "church",
+  "info": {
+    "name": "Cedar Hollow Community Church",
+    "city": "",
+    "address": "412 Orchard Lane, Millbrook, VA",
+    "phone": "(434) 555-0142",
+    "email": "office@cedarhollow.example",
+    "office_hours": "",
+    "services": [
+      {
+        "day": "Sunday",
+        "time": "9:00 AM",
+        "note": ""
+      }
+    ],
+    "about": "",
+    "first_visit": "",
+    "care_team": "",
+    "map_query": "412 Orchard Lane, Millbrook, VA"
+  },
+  "faqs": [],
+  "events": [],
+  "groups": [],
+  "ministries": [],
+  "calendar": [],
+  "staff": [],
+  "locations": [],
+  "sermons": [],
+  "sources": {
+    "info": {
+      "phone": [
+        {
+          "title": "Cedar Hollow Community Church | Millbrook, VA",
+          "url": "https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site/cedar-hollow-millbrook/",
+          "quote": "(434) 555-0142",
+          "prefix": "Phone:",
+          "suffix": "Email: office@cedarhollow.example"
+        }
+      ],
+      "services": [
+        {
+          "title": "You confirmed this",
+          "url": "",
+          "quote": "",
+          "prefix": "",
+          "suffix": ""
+        }
+      ]
+    },
+    "items": {}
+  }
+}
+```
+
+```json
+{
+  "schema_version": "1.0",
+  "generated_by": "tekton",
+  "generated_at": "2026-10-07T17:30:00+00:00",
+  "source_url": "https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site/cedar-hollow-millbrook/",
+  "kind": "site",
+  "site": {
+    "navigation": {
+      "main": [],
+      "footer": []
+    },
+    "layout": null,
+    "links": [
+      {
+        "url": "https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site/cedar-hollow-millbrook/#give",
+        "text": "Give",
+        "kind": "page",
+        "provider": "",
+        "cta": true,
+        "context": "Cedar Hollow Community Church"
+      }
+    ],
+    "forms": [],
+    "media": [],
+    "theme": {
+      "primary": "#3e5631",
+      "accent": "#a98821",
+      "background": "#ffffff",
+      "text": "#333333",
+      "heading_font": "",
+      "body_font": "Trebuchet MS",
+      "logo": "",
+      "favicon": ""
+    },
+    "assets": [],
+    "source_url": "https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site/cedar-hollow-millbrook/"
+  },
+  "pages": [
+    {
+      "id": 0,
+      "slug": "home",
+      "title": "Millbrook, VA",
+      "page_type": "home",
+      "source_url": "https://gloo-hackathon-synthetic-church-sites.ebellis1.chatgpt.site/cedar-hollow-millbrook/",
+      "sections": [
+        {
+          "heading": "Welcome Home!",
+          "level": 2,
+          "text": "Join us every Sunday for worship at 9:00 AM…",
+          "links": [],
+          "embeds": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Structured output
+
+Tekton's readers (the info reader and the events, staff, ministries, sermons and locations readers) can ask for JSON constrained to their schema instead of a forced tool call: OpenAI-compatible `response_format: {"type": "json_schema", "json_schema": {"strict": true, ...}}`, the same idea as Gemini's structured output. The schema is the reader's tool schema in the strict, portable subset (every property required, optional ones nullable, no other properties, no `$ref`, lengths or patterns); Pydantic and the quote checks still run on every answer.
+
+- `BUILDER_STRUCTURED_OUTPUT`: `auto` (default), `json_schema` or `tools`. In `auto`, Gloo's OpenAI, Gemini and Qwen 3.7/3.8 models use `json_schema`; Anthropic models (the default builder model, Claude Haiku 4.5) keep the forced tool call, because Anthropic's compatibility layer ignores `response_format`. So the default is unchanged until `GLOO_BUILDER_MODEL` names another family, e.g. `gloo-openai-gpt-4.1-mini` or `gloo-google-gemini-2.5-flash`.
+- Gloo's guarded endpoint does not document `response_format`, so `json_schema` calls go to its direct chat completions endpoint, `BUILDER_STRUCTURED_ENDPOINT` (default `https://platform.ai.gloo.com/ai/v2/direct`), with the same key.
+- A refusal (HTTP 400, 401, 403, 404 or 422), an answer that is not JSON, one cut short or filtered, or one missing the schema's top-level fields is asked again as the forced tool call on the usual endpoint, and that model is not asked for `json_schema` again until the container restarts.
+- The run summary records each call's mode, endpoint, model, time and tokens (`run.output_modes`, `run.ai_log`), and the progress feed says how the answers came back.
+- Try a model before switching: `GLOO_API_KEY=... python -m backend.app.structured_smoke gloo-openai-gpt-4.1-mini gloo-google-gemini-2.5-flash` sends one staff page each way and prints the status, time, ignored parameters and whether the JSON matched (the key is never printed).
