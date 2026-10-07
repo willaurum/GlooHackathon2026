@@ -1,0 +1,42 @@
+# Optional overlay: run Ollama inside Docker instead of using
+# a host Ollama, HPC tunnel, or cloud provider (Gloo/OpenAI/Anthropic).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: gloo-ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: gloo-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${LOCAL_OLLAMA_MODEL:-llama3.2:3b}"]
+    restart: "no"
+
+  backend:
+    environment:
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      AI_BASE_URL: http://ollama:11434/v1
+      AI_MODEL: ${LOCAL_OLLAMA_MODEL:-llama3.2:3b}
+      OLLAMA_MODEL: ${LOCAL_OLLAMA_MODEL:-llama3.2:3b}
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+
+volumes:
+  ollama_models:
