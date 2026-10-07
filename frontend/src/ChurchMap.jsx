@@ -25,7 +25,19 @@ function FocusOn({ spot, campus }) {
   return null;
 }
 
-export default function ChurchMap({ building, spots, activeId, onSelect, maskIds = [] }) {
+export default function ChurchMap(props) {
+  if (props.center) return <div className="church-map">
+    <MapContainer key={props.center.join(',')} center={props.center} zoom={props.approximate ? 12 : 16} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
+      <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' />
+      <CircleMarker center={props.center} radius={8} pathOptions={pointStyle('#2b6248', false)}>
+        <Tooltip>{props.name}</Tooltip>
+      </CircleMarker>
+    </MapContainer>
+  </div>;
+  return <CampusMap {...props} />;
+}
+
+function CampusMap({ building, spots, activeId, onSelect, maskIds = [] }) {
   const campus = useMemo(() => spots.reduce((b, s) => b.extend(boundsOf(s)), L.latLngBounds(building)), [building, spots]);
   const active = spots.find(s => s.id === activeId);
   const allowed = useMemo(() => spots.filter(s => s.kind === 'area' && maskIds.includes(s.id)).map(s => s.shape), [spots, maskIds]);

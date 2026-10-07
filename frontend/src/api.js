@@ -21,8 +21,9 @@ let church = DEMO_CHURCH;
 export const setApiChurch = slug => { church = slug; };
 
 let preview;
-export const startApiPreview = snapshot => { preview = structuredClone(snapshot); };
-export const stopApiPreview = () => { preview = null; };
+let previewDraft;
+export const startApiPreview = (snapshot, draftId) => { preview = structuredClone(snapshot); previewDraft = draftId; };
+export const stopApiPreview = () => { preview = null; previewDraft = null; };
 const PREVIEW_ERROR = 'This is a preview. Create your church to use this.';
 
 function previewResponse(path, options) {
@@ -78,7 +79,18 @@ export async function apiHeaders(slug = church, extra = {}) {
 }
 
 export async function api(path, options = {}) {
-  if (preview) return previewResponse(path, options);
+  if (preview) {
+    const method = (options.method || 'GET').toUpperCase();
+    if (path === '/chat' && method === 'POST' && previewDraft) {
+      const response = await fetch(API_BASE + '/api/builder/drafts/' + encodeURIComponent(previewDraft) + '/chat', {
+        ...options, headers: { 'Content-Type': 'application/json' }, credentials: 'omit',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw Object.assign(new Error(typeof body.detail === 'string' ? body.detail : 'The assistant is unavailable right now. Please try again.'), { status: response.status });
+      return body;
+    }
+    return previewResponse(path, options);
+  }
   const slug = church;
   const capabilities = slug === DEMO_CHURCH ? null : await churchCapabilities();
   if (capabilities && !capabilities.churches) {

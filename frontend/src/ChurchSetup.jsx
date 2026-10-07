@@ -103,6 +103,7 @@ function SetupForms() {
     <Faqs faqs={content.faqs} save={save} />
     <Teams ministries={content.ministries} save={save} />
     {LISTS.map(list => <ListPart key={list.kind} list={list} items={content[list.kind] || []} save={save} />)}
+    {content.pages?.length > 0 && <PagesPart pages={content.pages} save={save} />}
     <Places regions={content.regions} save={save} />
   </div>;
 }
@@ -328,5 +329,31 @@ function Places({ regions, save }) {
       <button type="button" className="ghost" onClick={() => setRows(x => x.filter((_, j) => j !== i))}><Icon name="x" size={16} />Remove this place</button>
     </div>)}
     <button type="button" className="secondary" onClick={() => setRows(x => [...x, blankPlace()])}><Icon name="plus" size={18} />Add a place</button>
+  </Part>;
+}
+
+
+function PagesPart({ pages, save }) {
+  const church = useChurch();
+  const [rows, setRows] = useState(() => structuredClone(pages));
+  const [selected, setSelected] = useState(0);
+  const page = rows[selected];
+  const update = patch => setRows(previous => previous.map((item, i) => i === selected ? { ...item, ...patch } : item));
+  const section = (index, patch) => update({ sections: page.sections.map((item, i) => i === index ? { ...item, ...patch } : item) });
+  return <Part id="setup-pages" icon="book" title="Website pages" text="Edit the pages imported from your website. Links, media and page addresses stay with each page."
+    onSave={async () => {
+      if (rows.some(item => !item.title.trim())) throw new Error('Give every page a title before saving.');
+      await save({ pages: rows }); church.refresh();
+    }}>
+    <label className="field">Page to edit<select value={selected} onChange={e => setSelected(Number(e.target.value))}>
+      {rows.map((item, i) => <option key={item.slug} value={i}>{item.title}</option>)}
+    </select></label>
+    <label className="field">Page title<input required maxLength={200} value={page.title} onChange={e => update({ title: e.target.value })} /></label>
+    {page.sections.map((item, i) => <fieldset className="setup-page-section" key={i}>
+      <legend>Section {i + 1}</legend>
+      <label className="field">Heading<input maxLength={200} value={item.heading} onChange={e => section(i, { heading: e.target.value })} /></label>
+      <label className="field">Text<textarea className="field-textarea" rows={5} maxLength={4000} value={item.text} onChange={e => section(i, { text: e.target.value })} /></label>
+    </fieldset>)}
+    <button type="button" className="secondary" disabled={page.sections.length >= 40} onClick={() => update({ sections: [...page.sections, { heading: '', level: 2, text: '', links: [], embeds: [] }] })}>Add section</button>
   </Part>;
 }

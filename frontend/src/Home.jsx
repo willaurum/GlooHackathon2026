@@ -2,11 +2,12 @@ import { Fragment, useEffect, useState } from 'react';
 import { api, fmt } from './api.js';
 import { hashFor } from './church.js';
 import { useChurch } from './ChurchContext.js';
-import { livestreamLink, orderedSections, pageOfType } from './churchSite.js';
+import { livestreamLink, orderedSections, pageOfType, siteImage } from './churchSite.js';
 import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
 import { safeHref } from './site.js';
 import Sourced from './Sourced.jsx';
+import SiteImage from './SiteImage.jsx';
 
 // The Home sections in their usual order; a church can reorder or hide them by asking Tekton (site.layout, the keys
 // of backend builder_edit.PAGES['home']).
@@ -30,6 +31,7 @@ export default function Home({ go, onAsk }) {
     if (!church.demo) api('/church').then(c => setSermons((c.sermons || []).filter(s => safeHref(s.url)))).catch(() => {});
   }, []);
   const live = livestreamLink(church.site);
+  const hero = siteImage(church.site, 'hero');
   const recent = [...sermons].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3);
   // The first fund with a goal gets the progress bar on the Give card.
   const goal = giving && [...giving.funds, ...giving.trips].find(f => f.goal > 0);
@@ -38,7 +40,8 @@ export default function Home({ go, onAsk }) {
   const shownMinistries = church.demo ? [] : ministries.slice(0, 6);
 
   return <div className="page home">
-    <section className="home-hero">
+    <section className={'home-hero' + (hero ? ' has-image' : '')}>
+      <div className="home-hero-copy">
       <div className="eyebrow">{info?.name || church.name}</div>
       <h1>A place to belong,<br />grow and give.</h1>
       <p>{info?.about ? <Sourced field="about">{info.about}</Sourced> : 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.'}</p>
@@ -48,7 +51,8 @@ export default function Home({ go, onAsk }) {
         <button className="secondary" onClick={onAsk}><Icon name="chat" size={18} />Ask Tekton</button>
         {live && <a className="btn secondary" href={live.url} target="_blank" rel="noopener noreferrer"><Icon name="play" size={18} />Watch live</a>}
       </div>
-      <div className="hero-art" aria-hidden="true"><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /></div>
+      </div>
+      <div className="hero-art" aria-hidden={hero ? undefined : true}><div className="orbit" /><div className="orbit outer" /><Icon name="sparkle" size={96} /><SiteImage asset={hero} loading="eager" /></div>
     </section>
 
     {newChurch && <section className="card church-state home-setup">

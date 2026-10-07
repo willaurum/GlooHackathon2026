@@ -31,7 +31,7 @@ export default function Directory() {
   const needle = q.trim().toLowerCase();
   const match = (...parts) => !needle || parts.some(p => (p || '').toLowerCase().includes(needle));
   const staff = useMemo(() => (people || []).filter(s => match(s.name, s.role, s.note)), [people, needle]);
-  const leads = useMemo(() => ministries.filter(m => match(m.name, m.head, m.category, m.description)), [ministries, needle]);
+  const leads = useMemo(() => ministries.filter(m => m.head && match(m.name, m.head, m.category, m.description)), [ministries, needle]);
 
   return <div className="directory">
     {info && <section className="card about-block">
@@ -45,9 +45,9 @@ export default function Directory() {
       </div>
     </section>}
 
-    <label className="field dir-search">Search the directory
+    {((people || []).length > 0 || ministries.some(m => m.head)) && <label className="field dir-search">Search the directory
       <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Name, role or ministry" />
-    </label>
+    </label>}
     {error && <div className="api-message" role="alert">{error}</div>}
 
     {staff.length > 0 && <section>
@@ -60,7 +60,7 @@ export default function Directory() {
       <div className="people">{leads.map(m => <Person key={m.id} name={m.head} role={'Leads ' + m.name} email={m.email} note={m.description} />)}</div>
     </section>}
 
-    {staff.length === 0 && leads.length === 0 && !error && people && <div className="card empty"><p>{needle ? <>No one matches “{q}”. Try a ministry name or a first name.</> : 'No staff are listed yet. The church office can point you to the right person.'}</p></div>}
+    {staff.length === 0 && leads.length === 0 && !error && people && <p className="muted">{needle ? <>No one matches “{q}”. Try a ministry name or a first name.</> : 'No staff are listed yet. The church office can point you to the right person.'}</p>}
     {people === STAFF && <small>Demo directory. All names and addresses are fictional.</small>}
   </div>;
 }

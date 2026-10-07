@@ -16,6 +16,8 @@ The team agreed on five steps:
 | **Confirm** | The person picks a candidate, types their own, or edits on the review screen; list items are included, left out or edited | `apply_answer`, `apply_item` |
 | **Build preview** | Confirmed values fill the existing church template, with the old site's pages, menu and look | `build_content`, `builder_site.content`, `#/new/preview` |
 
+Build preview also exports seed-shaped files: `church.json` (`info`, `faqs`, `events`, `groups`), `ministries.json` (`ministries`), `events.json` (`calendar`) and `builder.json` (any `staff`, `locations`, `sermons`, `site`, `pages`); `regions.json` is included when present. `GET /api/builder/drafts/{id}/files` returns them, and Review's **Download site files (JSON)** saves one church-named JSON containing the files. `builder_export.load()` merges and validates them, including the demo's bare-array seeds. Run `python -m backend.app.builder_export <fixture-dir-or-url> <out-dir> [--answers answers.json]` to write individual files; fixtures run offline without AI. Answers are `{field: value}`; open questions may remain as in the site preview.
+
 The rule underneath: **the AI may suggest; only the person confirms.** Real disagreements (below) are asked about, never quietly chosen, and everything is shown for review before anything is built.
 
 ## Rules and AI: who does what
@@ -189,6 +191,22 @@ cd frontend && npm test
 - **Repeating events from page text** are only found by the AI reader; without it, only dated listings, iCal and JSON-LD events are found.
 - **Transcribing sermons on import.** Imported YouTube sermons can be transcribed from Sermon Notes in one step, but nothing is transcribed automatically.
 - **Provisioning:** how a builder draft becomes a real church now that public sign-up is off. For example, a platform key or an invite code.
+
+### Start from site JSON files
+
+On `#/new`, choose **Start from JSON files**. Upload the versioned `church.json` and `site.json` from PR #102, or legacy `church.json` (with `info`) and the optional `ministries.json`, `events.json`, `builder.json` or `regions.json`, or the combined JSON from **Download site files (JSON)**. Uploads may total at most 10 MB; the compact site data sent to the API must fit within 2 MB. The public `POST /api/builder/drafts/json` uses the usual import limits and validates through `builder_export.load()`; it does not crawl or call AI. Version 1.0 headers and evidence are validated; newer unsupported versions and overlapping sections are rejected. Versioned source evidence remains available in the preview.
+
+The loaded draft goes straight to Review, preserves all supplied content in the site preview, and creates a church through the existing invite-code and Owner-account flow. Use Ask Tekton in the preview, or change the files and import again, to edit before launch; Church setup remains available after launch. Plain-word extraction edits (`/edits`) are unavailable for JSON drafts. Draft expiry and retrying a failed apply work as usual.
+
+Offline verification: `python -m unittest backend.tests.test_builder_json_import` runs the local giving adapter (Node 24 and `api-giving` dependencies required) on an ephemeral port with a generated, test-only invite code. The test checks the real Worker registry lookup and Owner-token gate before applying with its church headers. It skips the integration case if Node or adapter dependencies are missing.
+
+### Imported site display and page editing
+
+Approved assets (`rights: true`) supply the church logo and Home hero image, with the existing illustration or initials as a fallback when an image fails. Imported background, accent and text colors apply alongside the primary color and fonts. Registration links include the imported forms' action URLs. Links to imported pages open their new Tekton routes rather than sending visitors back to the old website.
+
+After launch, authorized staff can edit imported page titles, section headings and text under **Church setup → Website pages**, and add sections. Saving preserves each page's address, links and embeds and refreshes the menu. Visitors need no account; the creation flow registers the church's Owner account with an invite code.
+
+**Ask Tekton in the preview.** The bar at the top of `#/new/preview` customizes what the church sees, for every kind of draft (imported, questionnaire or JSON files): "Make the main color navy and the buttons gold", "Put service times at the top" (on the page being viewed), "Hide the map", "Change the phone number to …", "Add a question about parking". `POST /api/builder/drafts/{id}/customize` turns the request into operations (`backend/app/builder_customize.py`): plain rules read the common ones, anything else is one AI tool call (`customize_site`), and the AI may ask a short question back instead. Each operation is checked, and the content must still validate as `ChurchContent`. Colors stay readable: buttons are darkened for white text, the page background stays light, text keeps 4.5:1 contrast. The operations are stored on the draft (`draft['custom']`) and applied on top of its content, so `/site`, `/files`, the preview chat and creating the church all see them, and answering a question later keeps them. `/customize/undo` takes back the last request. Review keeps **Ask Tekton to change something** (`/edits`) for the extracted fields shown there. The public Home **Ask Tekton** button answers questions; it is separate from both.
 
 ## church.json and site.json
 

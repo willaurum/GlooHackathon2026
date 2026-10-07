@@ -50,9 +50,10 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
-from . import (builder_agents, builder_calendar, builder_crawl, builder_json, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
-               church_content, db)
+from . import (builder_agents, builder_calendar, builder_crawl, builder_customize, builder_edit, builder_json, builder_run,
+               builder_site, builder_structured, builder_theme, chat, church_content, db)
 from .builder_edit import clean_layout, default_layout
+from .builder_export import files as content_files, load as load_content_files, sources as content_sources, calendars as content_calendars
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -2670,6 +2671,9 @@ def _public(session):
            # The copies kept for undo stay on the server; the page only needs to know there is something to undo.
            'undo_count': len(session.get('undo') or [])}
     out.pop('undo', None)
+    out.pop('json_content', None)
+    out.pop('json_sources', None)
+    out.pop('json_calendars', None)
     if session.get('site'):
         out['site'] = _without_sections(session['site'])
     return out
@@ -2811,6 +2815,61 @@ def import_blank(request: Request):
             return _public(_save(session_from_sources(None, [])))
 
 
+MAX_JSON_BYTES = 2 * 1024 * 1024
+
+
+@router.post('/api/builder/drafts/json', status_code=201)
+async def import_json(request: Request):
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with import_limiter.importing(ip):
+        if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'application/json':
+            raise HTTPException(status_code=400, detail='Upload site files as JSON.')
+        data = bytearray()
+        try:
+            async with asyncio.timeout(30):
+                async for chunk in request.stream():
+                    data.extend(chunk)
+                    if len(data) > MAX_JSON_BYTES:
+                        raise ValueError('Site files must be 2 MB or smaller in total.')
+            return await run_in_threadpool(_save_json, data)
+        except (ValueError, UnicodeError, RecursionError, TimeoutError) as error:
+            raise HTTPException(status_code=400, detail=str(error) or 'The JSON upload took too long.') from error
+
+
+def _json_constant(value):
+    raise ValueError('Site files cannot contain ' + value + '.')
+
+
+def _save_json(data):
+    files = json.loads(data, parse_constant=_json_constant)
+    content = load_content_files(files)
+    json.dumps(content, allow_nan=False)  # Also rejects numbers such as 1e400 that overflow to infinity.
+    if not content.get('info'):
+        raise ValueError('church.json must include church info.')
+    draft = _importing_draft(None)
+    draft.update(status='review', import_kind='json', json_content=content, json_sources=content_sources(files),
+                 json_versioned='schema_version' in files['church.json'], json_calendars=content_calendars(files),
+                 fields={key: {'value': value, 'status': 'confirmed', 'evidence': []}
+                         for key, value in content['info'].items()})
+    with _draft_lock:
+        return _public(_save(draft))
+
+
+def _draft_content(draft, allow_unanswered=False):
+    if draft.get('import_kind') == 'json':
+        content = draft['json_content']
+    else:
+        content = build_content(_with_pages(draft), allow_unanswered=allow_unanswered)
+    # Changes asked in the preview (builder_customize) sit on top of what was imported or loaded.
+    return builder_customize.apply(content, draft.get('custom'))
+
+
+def _editable(draft):
+    if draft.get('import_kind') == 'json':
+        raise HTTPException(status_code=409, detail='Edit the JSON files and import them again, or edit in Church setup after creating your church.')
+    return draft
+
+
 async def _uploaded_files(request, deadline):
     if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'multipart/form-data':
         raise HTTPException(status_code=400, detail='Upload files using multipart/form-data with the field name files.')
@@ -2885,6 +2944,19 @@ def get_draft(draft_id: str):
 def answer(draft_id: str, body: AnswerBody):
     with _draft_lock:
         session = _ready(_load(draft_id))
+        if session.get('import_kind') == 'json':
+            if body.field != 'name':
+                _editable(session)
+            try:
+                content = session['json_content']
+                content = church_content.normalize(church_content.ChurchContent(**{**content, 'info': {**content['info'], 'name': body.value}}))
+            except (ValueError, church_content.ContentError) as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            session['json_content'] = content
+            session['fields']['name']['value'] = content['info']['name']
+            if session.get('json_sources'):
+                session['json_sources']['info']['name'] = [{'title': 'You confirmed this', 'quote': content['info']['name'], 'url': '', 'prefix': '', 'suffix': ''}]
+            return _public(_save(session))
         try:
             apply_answer(session, body.field, body.value)
         except ValueError as error:
@@ -2896,7 +2968,7 @@ def answer(draft_id: str, body: AnswerBody):
 def item(draft_id: str, body: ItemBody):
     """Include, leave out or edit an imported list entry (events, staff, ministries, groups, locations, sermons)."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             apply_item(session, body.collection, body.id, body.include, body.value)
         except ValueError as error:
@@ -2922,7 +2994,7 @@ def removed_add(draft_id: str, removed_id: str):
 def part(draft_id: str, body: PartBody):
     """Keep or leave out part of the imported site: a page, link, form, player, or (with permission) an image."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             apply_part(session, body.part, body.id, body.include, body.rights)
         except ValueError as error:
@@ -2943,7 +3015,7 @@ def draft_page(draft_id: str, page_id: str):
 
 def _content(draft_id):
     try:
-        return build_content(_with_pages(_ready(_load(draft_id))))
+        return _draft_content(_ready(_load(draft_id)))
     except (ValueError, church_content.ContentError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -2958,13 +3030,110 @@ def preview(draft_id: str):
 def site(draft_id: str):
     with _draft_lock:
         draft = _with_pages(_ready(_load(draft_id)))
-        return {**church_content.public_site(build_content(draft, allow_unanswered=True)), 'provenance': provenance(draft)}
+        return {**church_content.public_site(_draft_content(draft, allow_unanswered=True)),
+                **({'provenance': draft['json_sources']} if draft.get('json_sources') else
+                   {'provenance': provenance(draft)} if draft.get('import_kind') != 'json' else {})}
+
+
+draft_chat_limiter = ImportLimiter()
+
+
+customize_limiter = ImportLimiter()
+
+
+class CustomizeBody(BaseModel):
+    request: str = Field(min_length=3, max_length=300)
+    viewing: str = Field(default='', max_length=80)
+
+
+@router.post('/api/builder/drafts/{draft_id}/customize')
+def customize(draft_id: str, body: CustomizeBody, request: Request):
+    """A change asked in plain words while looking at the preview ("Make the main color navy"), made as checked
+    operations on the draft's content (builder_customize)."""
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        if len(draft.get('custom') or []) >= builder_customize.MAX_CUSTOM:
+            raise HTTPException(status_code=429, detail='This draft has had many changes. Create your church to keep editing.')
+        content = _draft_content(draft, allow_unanswered=True)
+        history = list(draft.get('custom_log') or [])
+    ops, reply, method, asking = builder_customize.rule_ops(body.request, body.viewing), '', 'rules', False
+    if ops is None:
+        complete = _completer(None, _now() + 25)
+        if (not complete or not _ai_available()) and builder_customize.VAGUE_COLOR_RE.fullmatch(body.request.strip()):
+            return {'draft': _public(draft), 'reply': builder_customize.VAGUE_COLOR_REPLY, 'changes': [], 'refused': [],
+                    'asking': True, 'method': 'rules'}
+        if not complete or not _ai_available():
+            raise HTTPException(status_code=400, detail='Tekton did not understand that. Try “Make the main color navy”, '
+                                                        '“Put service times above ministries” or “Hide the map”.')
+        ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+        try:
+            with customize_limiter.importing(ip):
+                ops, reply, asking = builder_customize.ai_ops(content, body.request, history, body.viewing, complete)
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception('builder: customize AI call failed')
+            raise HTTPException(status_code=502, detail='Tekton is unavailable right now. Please try again in a moment.')
+        method = 'ai'
+    stored, changes, refused = [], [], []
+    for op in ops:
+        try:
+            op, content = builder_customize.check(content, op)
+        except builder_customize.Refused as why:
+            refused.append(str(why))
+            continue
+        stored.append(op)
+        changes.append(builder_customize.describe(op))
+    if not stored and not asking:
+        raise HTTPException(status_code=400, detail=refused[0] if refused else (reply or 'Tekton could not match that to your site.'))
+    with _draft_lock:
+        draft = _ready(_load(draft_id))
+        draft['custom'] = [*(draft.get('custom') or []), *stored]
+        draft.setdefault('custom_steps', []).append(len(stored))
+        reply = reply or ('. '.join(changes) + '.')
+        draft['custom_log'] = [*(draft.get('custom_log') or []), {'request': body.request, 'reply': reply}][-10:]
+        return {'draft': _public(_save(draft)), 'reply': reply, 'changes': changes, 'refused': refused,
+                'asking': asking and not stored, 'method': method}
+
+
+@router.post('/api/builder/drafts/{draft_id}/customize/undo')
+def customize_undo(draft_id: str):
+    with _draft_lock:
+        draft = _ready(_load(draft_id))
+        steps = draft.get('custom_steps') or []
+        if not steps:
+            raise HTTPException(status_code=400, detail='There is nothing to undo.')
+        count = steps.pop()
+        draft['custom'] = (draft.get('custom') or [])[:len(draft.get('custom') or []) - count]
+        draft['custom_steps'] = steps
+        return {'draft': _public(_save(draft)), 'reply': 'Undid the last change.', 'changes': []}
+
+
+@router.post('/api/builder/drafts/{draft_id}/chat')
+def draft_chat(draft_id: str, body: chat.ChatRequest, request: Request):
+    messages = chat.recent_messages(body)
+    with _draft_lock:
+        draft = _with_pages(_ready(_load(draft_id)))
+        content = _draft_content(draft, allow_unanswered=True)
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with draft_chat_limiter.importing(ip):
+        try:
+            return chat.run(messages, body.session_id, source=chat.DraftContent(content))
+        except Exception:
+            log.exception('draft chat turn failed')
+            raise HTTPException(status_code=502, detail='The assistant is unavailable right now. Please try again in a moment.')
 
 
 def _file(draft_id, name):
     with _draft_lock:
         draft = _with_pages(_ready(_load(draft_id)))
-        document = builder_json.files(draft)[name]
+        # The content the preview shows: loaded JSON files and Ask Tekton changes included.
+        content = _draft_content(draft, allow_unanswered=True)
+        if draft.get('import_kind') == 'json':
+            draft = {**draft, 'site': {'calendars': draft.get('json_calendars') or []}}
+            document = builder_json.files(draft, content=content, sources=draft.get('json_sources') or [])[name]
+        else:
+            document = builder_json.files(draft, content=content)[name]
     # Served as a download: the church (or the team) can keep the files Tekton wrote.
     return JSONResponse(document, headers={'Content-Disposition': f'attachment; filename="{name}.json"'})
 
@@ -3030,7 +3199,7 @@ class BeliefsBody(BaseModel):
 def beliefs(draft_id: str, body: BeliefsBody):
     """The pastor confirms the imported statement of faith (it stays off the new site until then)."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             confirm_beliefs(session, body.confirmed)
         except ValueError as error:
@@ -3047,13 +3216,13 @@ class EditBody(BaseModel):
 def edit(draft_id: str, body: EditBody):
     """A change asked in plain words ("Put service times above ministries"), made as checked operations."""
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         if len(session.get('edit_log', [])) >= MAX_EDITS:
             raise HTTPException(status_code=429, detail='This draft has had many changes. Edit the details below instead.')
     # The AI call (if the rules do not understand the request) runs outside the lock; the draft is read again after.
     ops, reply, method = plan_edit(session, body.request)
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             changes = apply_edit(session, ops)
         except ValueError as error:
@@ -3065,12 +3234,21 @@ def edit(draft_id: str, body: EditBody):
 @router.post('/api/builder/drafts/{draft_id}/edits/undo')
 def undo(draft_id: str):
     with _draft_lock:
-        session = _ready(_load(draft_id))
+        session = _editable(_ready(_load(draft_id)))
         try:
             change = undo_edit(session)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {'draft': _public(_save(session)), 'reply': f'Undid: {change}'}
+
+
+@router.get('/api/builder/drafts/{draft_id}/files')
+def draft_files(draft_id: str):
+    with _draft_lock:
+        draft = _ready(_load(draft_id))
+        return {'files': content_files(_draft_content(draft, allow_unanswered=True),
+                                       versioned=draft.get('json_versioned', False), sources=draft.get('json_sources'),
+                                       calendars=draft.get('json_calendars'))}
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')

@@ -51,6 +51,8 @@ export function siteMenu(site, pages) {
   const walk = items => (items || []).flatMap(item => {
     const children = walk(item.children);
     if (item.page && slugs.has(item.page)) return [{ label: item.label, route: pageRoute(item.page), children }];
+    const imported = importedRoute(item.url, pages);
+    if (imported) return [{ label: item.label, route: imported, children }];
     const href = safeHref(item.url);
     if (href) return [{ label: item.label, href, children }];
     return children.length ? [{ label: item.label, children }] : [];
@@ -60,3 +62,15 @@ export function siteMenu(site, pages) {
 
 /** A section's text as paragraphs (one per line). */
 export const paragraphs = text => String(text || '').split('\n').map(line => line.trim()).filter(Boolean);
+
+/** A link back to a page that was imported now opens that page on this church's new site. */
+export function importedRoute(url, pages) {
+  const href = safeHref(url);
+  if (!href) return '';
+  const key = value => {
+    const parsed = new URL(value);
+    return parsed.origin + parsed.pathname.replace(/\/(?:index\.html?)?$/i, '') + parsed.search;
+  };
+  const page = (pages || []).find(page => safeHref(page.source_url) && key(page.source_url) === key(href));
+  return page ? pageRoute(page.slug) : '';
+}

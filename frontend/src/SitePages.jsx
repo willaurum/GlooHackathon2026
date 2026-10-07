@@ -3,7 +3,8 @@ import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import { PageHeader } from './Layout.jsx';
-import { embedSrc, paragraphs, safeHref } from './site.js';
+import { hashFor } from './church.js';
+import { embedSrc, importedRoute, paragraphs, safeHref } from './site.js';
 
 // One imported page, loaded by its slug: { page, error }.
 function usePage(slug) {
@@ -69,8 +70,12 @@ function Embed({ url }) {
   </div>;
 }
 
-// Links to other sites open in a new tab; links back to the old site stay there too.
+// Imported pages stay on this site; other addresses open in a new tab.
 export function SiteLink({ href, className, children }) {
+  const church = useChurch();
+  const route = importedRoute(href, church?.pages);
+  if (route) return <a className={className} href={church.source === 'preview' ? '#/new/preview/' + route : hashFor(church.slug, route, church.source)}
+    onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); church.go(route); } }}>{children}<Icon name="arrow" size={14} /></a>;
   const safe = safeHref(href);
   if (!safe) return <span className={className}>{children}</span>;
   return <a className={className} href={safe} target="_blank" rel="noopener noreferrer">{children}<Icon name="link" size={14} /></a>;

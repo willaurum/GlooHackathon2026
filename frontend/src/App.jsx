@@ -27,7 +27,7 @@ import SitePage from './SitePages.jsx';
 import { footerLinks } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
-import TektonEdit from './TektonEdit.jsx';
+import TektonAgent from './TektonAgent.jsx';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -50,6 +50,17 @@ const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'staff', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
+// The page on screen in words, for Tekton's preview bar ("put service times at the top" means this page).
+function viewingName(route) {
+  if (!route) return 'Home';
+  for (const s of SECTIONS) {
+    const child = (s.children || []).find(([r]) => r === route);
+    if (child) return child[1];
+    if (s.route === route) return s.label;
+  }
+  return route.startsWith('p/') ? 'an imported page' : '';
+}
+
 function withDefault(route, demo = true) {
   const s = SECTIONS.find(x => x.route === route);
   return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
@@ -114,7 +125,7 @@ export default function App() {
 
 function BuilderPreview() {
   const [snapshot, setSnapshot] = useState(null), [error, setError] = useState(''), [version, setVersion] = useState(0);
-  const [draft, setDraft] = useState(null), [loaded, setLoaded] = useState(0), [lastEdit, setLastEdit] = useState(null);
+  const [draft, setDraft] = useState(null), [loaded, setLoaded] = useState(0), [lastAsk, setLastAsk] = useState(null);
   useEffect(() => {
     document.title = 'Site preview · Tekton';
     let live = true;
@@ -133,10 +144,10 @@ function BuilderPreview() {
     <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to Tekton</a></main>
   </div>;
   // A change asked in the banner reloads the preview with the changed draft (same page, new content).
-  return <SiteApp key={loaded} snapshot={snapshot} draft={draft} lastEdit={lastEdit} onEdited={done => { setLastEdit(done); setVersion(v => v + 1); }} />;
+  return <SiteApp key={loaded} snapshot={snapshot} draft={draft} lastAsk={lastAsk} onEdited={result => { setLastAsk(result); setVersion(v => v + 1); }} />;
 }
 
-function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
+function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   const previewBanner = useRef(null);
   // On a Tekton preview, each imported fact can show where it came from (Sourced.jsx); on by default.
   const [showSources, setShowSources] = useState(true);
@@ -152,7 +163,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
     [website, setWebsite] = useState(null);
   const { slug, source, route } = where;
   const demo = !snapshot && slug === DEMO_CHURCH;
-  if (snapshot) startApiPreview(snapshot);
+  if (snapshot) startApiPreview(snapshot, draft?.id);
   // Every api() call from here down is for this church.
   setApiChurch(slug);
   const params = new URLSearchParams(window.location.search);
@@ -275,28 +286,36 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
     return () => clearInterval(timer);
   }, [scrollTarget]);
 
-  const name = listing?.name || (demo ? DEMO_INFO.name : '');
+  const currentListing = snapshot ? listing : listing?.slug === slug ? listing : null;
+  const name = currentListing?.name || (demo ? DEMO_INFO.name : '');
   useEffect(() => {
     if (route === 'new') { document.title = 'Create your church site · Tekton'; return; }
-    if (!name) return;
-    document.title = name;
+    document.title = name || 'Tekton';
     let icon = document.querySelector('link[rel="icon"]');
     if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
-    icon.href = safeHref(website?.site?.theme?.favicon) || churchIcon(name);
+    icon.href = safeHref(website?.site?.theme?.favicon) || churchIcon(name || 'Tekton');
   }, [name, route, website]);
   const ready = !!snapshot || demo || apiReady === true;
   // The church's imported website (menu and page list), when the site builder made one.
   useEffect(() => {
-    let live = true;
+    let live = true, retry;
     setWebsite(null);
-    if (ready && !demo) api('/church').then(c => { if (live && c.site) setWebsite({ site: c.site, pages: c.pages || [] }); }).catch(() => {});
-    return () => { live = false; };
+    async function load() {
+      try {
+        const content = await api('/church');
+        if (live) setWebsite(content.site ? { site: content.site, pages: content.pages || [] } : null);
+      } catch {
+        if (live) retry = setTimeout(load, 2000);
+      }
+    }
+    if (ready && !demo) load();
+    return () => { live = false; clearTimeout(retry); };
   }, [slug, ready, demo, listingVersion]);
   // Its colors and fonts, until another church (or the demo church) is shown.
   useEffect(() => website?.site?.theme ? applyTheme(website.site.theme) : undefined, [website]);
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
-    slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
+    slug, source, demo, preview: !!snapshot, name, city: currentListing?.city || '', missing: !!currentListing?.missing, ready, staff, choose, go,
     site: website?.site || null, pages: website?.pages || [],
     provenance: snapshot?.provenance || null, showSources: !!snapshot && showSources,
     // After staff rename the church in Church setup.
@@ -313,7 +332,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
   // A new church on an older church API: everything but giving waits for the deploy.
   const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
   let page;
-  if (listing?.missing && section !== 'platform') page = <ChurchMissing />;
+  if (currentListing?.missing && section !== 'platform') page = <ChurchMissing />;
   else if (blocked) page = <ChurchNotReady section={section} />;
   else page = <>
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
@@ -360,7 +379,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
       {snapshot && <div className="site-preview-banner" ref={previewBanner}>
         <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
         {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
-        {draft && <TektonEdit draftId={draft.id} undoCount={draft.undo_count || 0} compact lastResult={lastEdit} onChanged={(_, done) => onEdited?.(done)} />}
+        {draft && <TektonAgent draftId={draft.id} steps={draft.custom_steps?.length || 0} viewing={viewingName(route)} lastResult={lastAsk} onChanged={(_, result) => onEdited?.(result)} />}
         <a href="#/new">Back to Tekton</a>
       </div>}
       <SiteNav route={route} go={go} savedCount={savedCount} />
