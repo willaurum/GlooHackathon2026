@@ -94,6 +94,8 @@ export class ChurchAPI extends Container<AppEnv> {
 			GLOO_EMBED_MODEL: env.GLOO_EMBED_MODEL ?? '',
 			// Optional. The Gloo model that tags sermon highlights; GLOO_MODEL (then gloo-qwen-3.7-flash) when it is empty.
 			GLOO_NOTES_MODEL: env.GLOO_NOTES_MODEL ?? '',
+			// Optional. Find a place's model; the backend uses a fast non-reasoning default when empty.
+			GLOO_MATCH_MODEL: env.GLOO_MATCH_MODEL ?? '',
 			OPENAI_API_KEY: env.OPENAI_API_KEY ?? '',
 			ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? '',
 			// Optional. Without it the news refresh answers 503 and the Prayer Map keeps the shipped snapshot.
