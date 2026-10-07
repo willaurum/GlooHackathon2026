@@ -95,7 +95,7 @@ export function createFromFiles(files) {
 export async function createFromDraft(draftId, account, created, onCreated) {
   let church = created;
   if (!church) {
-    // Creating a church needs an invite code (TEKTON_INVITE_CODES on the giving API); a wrong one is inviteRequired.
+    // A 403 here means this site does not allow creating churches.
     try { church = await gapi('/api/churches', { method: 'POST', body: JSON.stringify(account) }); }
     catch (err) {
       if (err.status === 403) {
