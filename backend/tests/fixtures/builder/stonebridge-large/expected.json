@@ -1,0 +1,49 @@
+{
+  "label": "Stonebridge (large)",
+  "name": "Stonebridge Church",
+  "address": "77 Juniper Road, Ashgrove, OR",
+  "phone": "5550182200",
+  "email": "hello@stonebridge.example.org",
+  "conflicts": [
+    "services"
+  ],
+  "lists": {
+    "events": [
+      "Winter Coat Drive",
+      "Marriage Dinner",
+      "Easter Egg Hunt",
+      "Men's Breakfast",
+      "Wednesday Night Bible Study"
+    ],
+    "staff": [
+      "Ruth Calloway",
+      "Owen Pryce",
+      "Maya Lindqvist",
+      "Jonah Abernathy",
+      "Priya Castellan"
+    ],
+    "ministries": [
+      "Kids Ministry",
+      "Student Ministry",
+      "Food Pantry",
+      "Worship Team",
+      "Care Ministry"
+    ],
+    "groups": [
+      "Tuesday Morning Women's Group",
+      "Young Adults",
+      "Men's Bible Study",
+      "Grief Share"
+    ],
+    "locations": [
+      "Juniper Road Campus",
+      "Riverside Campus"
+    ],
+    "sermons": [
+      "Hope That Holds | Psalm 46",
+      "Neighbors | Luke 10",
+      "Bread for the Journey | John 6"
+    ]
+  },
+  "today": "2030-01-06"
+}

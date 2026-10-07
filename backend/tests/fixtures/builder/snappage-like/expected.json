@@ -1,0 +1,37 @@
+{
+  "label": "Harvest Point (Snappages-like)",
+  "name": "Harvest Point Church",
+  "address": "4410 Orchard Hill Road, Brambleton, TN",
+  "phone": "5550147720",
+  "email": "hello@harvestpoint.example.org",
+  "services": [{"day": "Sunday", "time": "09:00"}, {"day": "Sunday", "time": "11:00"}],
+  "lists": {
+    "events": ["Fall Festival", "Women's Retreat"],
+    "staff": ["Dr. Jane Whitfield", "Rev. Marcus Hale", "Sam Ortiz", "Nina Patel", "Tom Baker", "Luis Romero",
+              "Grace Kim", "Ann Lee", "Bob Grant"],
+    "sermons": ["Rooted | Week 3"]
+  },
+  "site": {
+    "menu": ["Home", "About", "About/Who We Are", "About/Our Team", "About/Beliefs", "Next Steps",
+             "Next Steps/Plan a Visit", "Next Steps/Groups", "Next Steps/Serve", "Next Steps/Connect Card", "Media",
+             "Media/Sermons", "Media/Watch Live", "Events", "This Week", "Give"],
+    "links": {
+      "giving": ["https://church.test/give"],
+      "form": ["https://harvestpoint.churchcenter.com/people/forms/100001",
+               "https://harvestpoint.churchcenter.com/people/forms/100003",
+               "https://harvestpoint.churchcenter.com/people/forms/100004",
+               "https://harvestpoint.churchcenter.com/registrations/events/200002",
+               "https://www.evite.com/event/harvestpoint-fall-fest"],
+      "groups": ["https://harvestpoint.churchcenter.com/groups"],
+      "app": ["https://apps.apple.com/us/app/harvest-point-example/id0000000001",
+              "https://play.google.com/store/apps/details?id=org.example.harvestpoint"],
+      "social": ["https://www.facebook.com/harvestpointexample", "https://www.instagram.com/harvestpointexample"],
+      "podcast": ["https://podcasts.apple.com/us/podcast/harvest-point-example/id0000000002"],
+      "map": ["https://www.google.com/maps/search/?api=1&query=4410+Orchard+Hill+Road"]
+    },
+    "forms": ["https://church.test/connect/submit"],
+    "media": ["https://www.youtube.com/watch?v=HPmsg000001", "https://player.castr.com/live_hpexample0001",
+              "https://subsplash.com/u/-HPEXMPL/give?embed=true"]
+  },
+  "today": "2030-09-01"
+}

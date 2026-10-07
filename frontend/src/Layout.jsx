@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
 import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
+import { pageOfType } from './churchSite.js';
+import { siteMenu } from './site.js';
 
 // One navigation for every screen size: a sidebar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
@@ -19,13 +21,14 @@ export const SECTIONS = [
 ];
 // The sections this visitor can see: staff-only ones are hidden until staff sign in.
 export const visibleSections = staff => SECTIONS.filter(s => staff || !s.staffOnly);
-const childrenFor = (s, demo) => (s.children || []).filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r));
+const childrenFor = (s, demo, pages) => (s.children || []).filter(([r]) => showAbout(r, demo, pages));
 
-// The About pages other than News hold Grace Community's own text, so only the demo church
-// shows them. Other churches see their own News until they have About content of their own.
-export const ABOUT_DEMO_ONLY = new Set(['about', 'about/beliefs', 'about/directory', 'about/connect']);
+// Beliefs holds Grace Community's own statement, so other churches see it only when Tekton imported a
+// statement of belief from their website. Our story, News, Directory and Connect use each church's own content.
+export const ABOUT_DEMO_ONLY = new Set(['about/beliefs']);
+const showAbout = (route, demo, pages) => demo || !ABOUT_DEMO_ONLY.has(route) || !!pageOfType(pages, 'beliefs');
 export const ABOUT_TABS = [['about', 'Our story', 'info'], ['about/beliefs', 'Beliefs', 'book'], ['about/news', 'News', 'news'], ['about/directory', 'Directory', 'phone'], ['about/connect', 'Connect', 'mail']];
-export const aboutTabsFor = demo => ABOUT_TABS.filter(([r]) => demo || !ABOUT_DEMO_ONLY.has(r));
+export const aboutTabsFor = (demo, pages) => ABOUT_TABS.filter(([r]) => showAbout(r, demo, pages));
 
 const sectionOf = route => route.split('/')[0];
 
@@ -45,7 +48,7 @@ export function Brand() {
 }
 
 export function Sidebar({ route, go, savedCount }) {
-  const { demo, staff } = useChurch();
+  const { demo, staff, pages } = useChurch();
   const user = identity(staff);
   return <aside className="sidebar">
     <ChurchName />
@@ -56,12 +59,13 @@ export function Sidebar({ route, go, savedCount }) {
           <Icon name={s.icon} />{s.label}
         </button>
         {s.children && sectionOf(route) === s.route && <div className="nav-children">
-          {childrenFor(s, demo).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
+          {childrenFor(s, demo, pages).map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={() => go(r)}>
             {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
           </button>)}
         </div>}
       </div>)}
     </nav>
+    <SiteMenu route={route} go={go} />
     <div className="profile">
       <Avatar />
       <div><strong>{user.name}</strong><small>{user.role}</small></div>
@@ -88,7 +92,7 @@ export function WorkspaceBar() {
 }
 
 export function TabBar({ route, go, chatOpen, savedCount }) {
-  const { demo, staff } = useChurch();
+  const { demo, staff, pages } = useChurch();
   const [menuOpen, setMenuOpen] = useState(false);
   const tabs = SECTIONS.filter(s => s.tab);
   const more = visibleSections(staff).filter(s => !s.tab);
@@ -108,7 +112,7 @@ export function TabBar({ route, go, chatOpen, savedCount }) {
     {menuOpen && <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />}
     {menuOpen && <div className="menu-sheet" id="more-menu" role="dialog" aria-label="More pages">
       {more.map(s => {
-        const kids = childrenFor(s, demo);
+        const kids = childrenFor(s, demo, pages);
         return <div key={s.route} className="menu-group">
           <button className={'nav-item' + (current === s.route ? ' active' : '')} onClick={() => open(s.route)}><Icon name={s.icon} />{s.label}</button>
           {kids.length > 1 && <div className="nav-children">
@@ -116,6 +120,7 @@ export function TabBar({ route, go, chatOpen, savedCount }) {
           </div>}
         </div>;
       })}
+      <SiteMenu route={route} go={go} onNavigate={() => setMenuOpen(false)} />
     </div>}
     <nav className="tabbar" aria-label="Main">
       {tabs.map(s => <button key={s.route} className={!chatOpen && !menuOpen && current === s.route ? 'active' : ''} onClick={() => open(s.route)}>
@@ -141,4 +146,23 @@ export function SubNav({ tabs, route, go, counts = {} }) {
       <Icon name={icon} size={18} />{label}{counts[r] > 0 && <b className="count">{counts[r]}</b>}
     </button>)}
   </div>;
+}
+
+// The imported menu, under the app's own sections: the church's pages and its links elsewhere.
+export function SiteMenu({ route, go, onNavigate }) {
+  const church = useChurch();
+  const items = siteMenu(church?.site, church?.pages);
+  if (!items.length) return null;
+  const open = next => { onNavigate?.(); go(next); };
+  const entry = (item, depth) => <div key={item.label + (item.route || item.href || '')} className={depth ? 'site-menu-child' : ''}>
+    {item.route ? <button className={'nav-item' + (route === item.route ? ' active' : '')} aria-current={route === item.route ? 'page' : undefined}
+      onClick={() => open(item.route)}>{item.label}</button>
+      : item.href ? <a className="nav-item" href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a>
+        : <span className="site-menu-label">{item.label}</span>}
+    {item.children.map(child => entry(child, depth + 1))}
+  </div>;
+  return <nav className="site-menu" aria-label="Church website">
+    <div className="eyebrow">Our website</div>
+    {items.map(item => entry(item, 0))}
+  </nav>;
 }

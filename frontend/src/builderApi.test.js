@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setApiChurch } from './api.js';
-import { createBlank, createFromDraft, createFromFiles, draftApi } from './builderApi.js';
+import { createBlank, createFromDraft, createFromFiles, draftApi, itemApi, pollDraft } from './builderApi.js';
 import { getVerifiedStaffToken } from './church.js';
 
 const storage = new Map();
@@ -111,5 +111,44 @@ test('only a signup 403 is marked as closed registration', async () => {
       : Response.json({ detail: 'Apply was refused.' }, { status: 403 });
     await assert.rejects(createFromDraft('draft-id', null, { slug: 'harborlight', token: 'test-token' }, () => {}),
       error => error.status === 403 && !error.registrationClosed && error.message === 'Apply was refused.');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('a background import is polled until it is ready, retrying a dropped connection', async () => {
+  const originalFetch = globalThis.fetch;
+  const answers = [{ status: 'importing', progress: { pages_read: 1 } }, 'drop', { status: 'importing', progress: { pages_read: 5 } }, { status: 'review', id: 'd' }];
+  const seen = [];
+  try {
+    globalThis.fetch = async url => {
+      assert.equal(url, '/api/builder/drafts/draft-id');
+      const next = answers.shift();
+      if (next === 'drop') return Response.json({ detail: 'Bad gateway' }, { status: 502 });
+      return Response.json(next);
+    };
+    const done = await pollDraft('draft-id', draft => seen.push(draft.status), { interval: 1 });
+    assert.equal(done.status, 'review');
+    assert.deepEqual(seen, ['importing', 'importing', 'review']);
+    globalThis.fetch = async () => Response.json({ detail: 'Builder draft not found' }, { status: 404 });
+    await assert.rejects(pollDraft('draft-id', () => {}, { interval: 1 }), error => error.status === 404);
+    globalThis.fetch = async () => Response.json({ detail: 'down' }, { status: 502 });
+    await assert.rejects(pollDraft('draft-id', () => {}, { interval: 1, retries: 1 }), error => error.status === 502);
+    const controller = new AbortController();
+    const stopped = pollDraft('draft-id', () => {}, { interval: 50, signal: controller.signal });
+    controller.abort();
+    await assert.rejects(stopped, error => error.name === 'AbortError');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('list edits go to the public items route', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, '/api/builder/drafts/draft-id/items');
+      assert.equal(options.method, 'POST');
+      assert.deepEqual(JSON.parse(options.body), { collection: 'staff', id: 'staff-1', include: true });
+      assert.equal(options.headers.Authorization, undefined);
+      return Response.json({ id: 'draft-id', collections: {} });
+    };
+    assert.equal((await itemApi('draft-id', { collection: 'staff', id: 'staff-1', include: true })).id, 'draft-id');
   } finally { globalThis.fetch = originalFetch; }
 });

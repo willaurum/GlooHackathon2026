@@ -215,16 +215,32 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
     for (const id of ['abc123def', '+1', '01', '1_0', ' 1', 'odd.id']) {
       for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
         ['GET', `/api/builder/drafts/${id}/site`],
-        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/preview`]])
+        ['GET', `/api/builder/drafts/${id}/pages/s1`],
+        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/items`],
+        ['POST', `/api/builder/drafts/${id}/parts`], ['POST', `/api/builder/drafts/${id}/preview`]])
         assert.equal(access(m, p, demo), 'public', m + ' ' + p);
       assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
         assert.equal(access(method, `/api/builder/drafts/${id}/site`, demo), 'staff');
     }
     for (const p of ['/api/builder', '/api/builder/sessions', '/api/builder/unknown',
-      '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra', '/api/builder/drafts/x/site/extra'])
+      '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra', '/api/builder/drafts/x/site/extra',
+      '/api/builder/drafts/x/pages', '/api/builder/drafts/x/pages/s1/extra', '/api/builder/drafts/x/parts/extra'])
       for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
         if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
+  }
+});
+
+test('recreated pages are public to read; site content stays staff only', () => {
+  for (const demo of [true, false]) {
+    for (const slug of ['home', 'team', 'blog-2030-08-01'])
+      assert.equal(access('GET', `/api/church/pages/${slug}`, demo), 'public');
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+      assert.equal(access(method, '/api/church/pages/team', demo), 'key-or-staff');
+    for (const p of ['/api/church/pages', '/api/church/pages/', '/api/church/pages/Team', '/api/church/pages/../content',
+      '/api/church/pages/-x', '/api/church/pages/a/b'])
+      assert.notEqual(access('GET', p, demo), 'public', p);
+    assert.equal(access('GET', '/api/church/content', demo), 'staff');
   }
 });
 

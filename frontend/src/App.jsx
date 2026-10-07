@@ -10,7 +10,7 @@ import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { ABOUT_DEMO_ONLY, Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import { Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -18,11 +18,15 @@ import Calendar from './Calendar.jsx';
 import VisitPage from './VisitPage.jsx';
 import WelcomeTeam from './WelcomeTeam.jsx';
 import PrayerMap from './PrayerMap.jsx';
-import About from './About.jsx';
+import About, { ChurchBeliefs, ChurchStory } from './About.jsx';
 import Beliefs from './Beliefs.jsx';
 import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
+import SitePage from './SitePages.jsx';
+import { footerLinks } from './churchSite.js';
+import { PAGE_ROUTE, safeHref } from './site.js';
+import { applyTheme } from './theme.js';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -32,7 +36,7 @@ const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
 
 // [eyebrow, title, intro] for each About page.
 const ABOUT_PAGES = {
-  about: ['About', 'Who we are.', 'The story, the people and the heart behind Grace Community Church.'],
+  about: ['About', 'Who we are.', 'The story, the people and the heart behind {name}.'],
   'about/beliefs': ['About', 'What we believe.', 'The convictions that shape our teaching and our life together.'],
   'about/news': ['News', 'What’s happening.', 'Quick updates on what’s coming up, and longer articles from our pastors and ministry leaders.'],
   'about/directory': ['About', 'Who to contact.', 'Pastors, staff and ministry leaders, and how to reach them.'],
@@ -45,9 +49,7 @@ const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'staff', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
-// Other churches have no Our story, Beliefs, Directory or Connect content yet, so About opens News.
 function withDefault(route, demo = true) {
-  if (!demo && ABOUT_DEMO_ONLY.has(route)) return 'about/news';
   const s = SECTIONS.find(x => x.route === route);
   return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
 }
@@ -61,7 +63,7 @@ function readLocation() {
   if (preview) {
     const route = preview[1] || '';
     return { slug: 'builder-preview', source: 'preview',
-      route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) ? route : '', false) };
+      route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) || PAGE_ROUTE.test(route) ? route : '', false) };
   }
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   const back = new URLSearchParams(window.location.search).get('church');
@@ -70,7 +72,7 @@ function readLocation() {
   // keep the old links (#/blog, #/about/blog, #/give/staff, #/start, #/prayer/map) working.
   let route = ['start', 'give/start', 'give/staff'].includes(where.route) ? 'staff'
     : ['blog', 'about/blog'].includes(where.route) ? 'about/news' : where.route === 'prayer/map' ? 'prayer' : where.route;
-  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
+  if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route) || PAGE_ROUTE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
   if (where.source === 'link') saveChurch(where.slug);
@@ -117,15 +119,15 @@ function BuilderPreview() {
     const controller = new AbortController();
     let id;
     try { id = sessionStorage.getItem('tekton-new-draft'); } catch { /* Storage may be unavailable. */ }
-    if (!id) setError('Open the builder and import your website to preview your site.');
+    if (!id) setError('Open Tekton and import your website to preview your site.');
     else draftApi('/' + encodeURIComponent(id) + '/site', { signal: controller.signal })
       .then(data => { if (live) setSnapshot(data); })
-      .catch(err => { if (live) setError(err.status === 404 ? 'This draft has expired or could not be found. Start a new import in the builder.' : err.message); });
+      .catch(err => { if (live) setError(err.status === 404 ? 'This draft has expired or could not be found. Start a new import in Tekton.' : err.message); });
     return () => { live = false; controller.abort(); stopApiPreview(); };
   }, []);
   if (!snapshot) return <div className="standalone-builder">
     <header><Brand /></header>
-    <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to the builder</a></main>
+    <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to Tekton</a></main>
   </div>;
   return <SiteApp snapshot={snapshot} />;
 }
@@ -140,7 +142,8 @@ function SiteApp({ snapshot }) {
     [apiReady, setApiReady] = useState(null),
     [listing, setListing] = useState(snapshot?.info || null),
     [listingVersion, setListingVersion] = useState(0),
-    [staffVersion, setStaffVersion] = useState(0);
+    [staffVersion, setStaffVersion] = useState(0),
+    [website, setWebsite] = useState(null);
   const { slug, source, route } = where;
   const demo = !snapshot && slug === DEMO_CHURCH;
   if (snapshot) startApiPreview(snapshot);
@@ -273,15 +276,25 @@ function SiteApp({ snapshot }) {
     document.title = name;
     let icon = document.querySelector('link[rel="icon"]');
     if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
-    icon.href = churchIcon(name);
-  }, [name, route]);
+    icon.href = safeHref(website?.site?.theme?.favicon) || churchIcon(name);
+  }, [name, route, website]);
   const ready = !!snapshot || demo || apiReady === true;
+  // The church's imported website (menu and page list), when the site builder made one.
+  useEffect(() => {
+    let live = true;
+    setWebsite(null);
+    if (ready && !demo) api('/church').then(c => { if (live && c.site) setWebsite({ site: c.site, pages: c.pages || [] }); }).catch(() => {});
+    return () => { live = false; };
+  }, [slug, ready, demo, listingVersion]);
+  // Its colors and fonts, until another church (or the demo church) is shown.
+  useEffect(() => website?.site?.theme ? applyTheme(website.site.theme) : undefined, [website]);
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
     slug, source, demo, name, city: listing?.city || '', missing: !!listing?.missing, ready, staff, choose, go,
+    site: website?.site || null, pages: website?.pages || [],
     // After staff rename the church in Church setup.
     refresh: () => setListingVersion(v => v + 1),
-  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion]);
+  }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion, website]);
 
   const section = route.split('/')[0];
   if (section === 'new') return <ChurchContext.Provider value={church}>
@@ -300,13 +313,14 @@ function SiteApp({ snapshot }) {
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
     {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
     {section === 'about' && <div className="page">
-      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]} text={ABOUT_PAGES[route]?.[2]} />
-      {demo && <SubNav tabs={aboutTabsFor(demo)} route={route} go={go} />}
+      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]}
+        text={ABOUT_PAGES[route]?.[2]?.replace('{name}', demo ? 'Grace Community Church' : name || 'our church')} />
+      <SubNav tabs={aboutTabsFor(demo, church.pages)} route={route} go={go} />
       {route === 'about/news' && <News go={go} />}
-      {demo && route === 'about' && <About go={go} />}
-      {demo && route === 'about/beliefs' && <Beliefs />}
-      {demo && route === 'about/directory' && <Directory />}
-      {demo && route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
+      {route === 'about' && (demo ? <About go={go} /> : <ChurchStory go={go} />)}
+      {route === 'about/beliefs' && (demo ? <Beliefs /> : <ChurchBeliefs go={go} />)}
+      {route === 'about/directory' && <Directory />}
+      {route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
     </div>}
     {section === 'notes' && <div className="page">
       <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
@@ -329,13 +343,14 @@ function SiteApp({ snapshot }) {
       <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
       <PrayerMap />
     </div>}
+    {section === 'p' && PAGE_ROUTE.test(route) && <SitePage slug={route.slice(2)} />}
     {section === 'setup' && <div className="page"><ChurchSetup /></div>}
     {section === 'platform' && <div className="page"><Platform /></div>}
   </>;
 
   return <ChurchContext.Provider value={church}>
     <div className={'app' + (snapshot ? ' site-preview' : '')}>
-      {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to the builder</a></div>}
+      {snapshot && <div className="site-preview-banner" ref={previewBanner}><span>Preview of {name || 'Your church'}. Nothing here is live yet.</span><a href="#/new">Back to Tekton</a></div>}
       <Sidebar route={route} go={go} savedCount={savedCount} />
       <TopBar go={go} onAsk={() => setChatOpen(true)} />
       <div className="content">
@@ -345,6 +360,10 @@ function SiteApp({ snapshot }) {
           {page}
           <footer className="site-footer">
             <span>{name || 'Your church'} · Helping people find their people.</span>
+            {/* The church's social accounts and app, from its imported website. */}
+            {footerLinks(website?.site).length > 0 && <nav className="footer-links" aria-label="Follow us">
+              {footerLinks(website?.site).map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}
+            </nav>}
             {demo && <small>Demo site. Church details, people and contacts are fictional.</small>}
             <small className="powered-by">Powered by Tekton</small>
           </footer>

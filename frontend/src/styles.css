@@ -1212,6 +1212,18 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .builder-evidence blockquote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--green-200); color: var(--text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .builder-review-field { padding: 18px 0; border-bottom: 1px solid var(--line); }
 .builder-review-field:last-child { border-bottom: 0; padding-bottom: 0; }
+.builder-importing .give-progress { margin-top: 4px; }
+.builder-list .builder-actions { margin: 4px 0 8px; }
+.builder-items { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.builder-item { padding: 12px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.builder-item:last-child { border-bottom: 0; }
+.builder-item.excluded strong { color: var(--muted); text-decoration: line-through; }
+.builder-item-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.builder-item-check input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+.builder-item-check span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.builder-item-check small { color: var(--muted); font-size: 13px; }
+.builder-item .builder-actions { margin: 4px 0 0 28px; }
+.builder-item form { margin: 8px 0 0 28px; }
 .builder-field-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .builder-value { color: var(--text); white-space: pre-wrap; margin: 8px 0; }
 .builder-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -1229,3 +1241,45 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .builder .primary, .builder .secondary { max-width: 100%; white-space: normal; padding-top: 10px; padding-bottom: 10px; }
   .builder-build .builder-actions > button, .builder-create .builder-actions > button { width: 100%; }
 }
+
+/* Sermon Notes: sermons listed on the church's website */
+.pn-published { margin-top: 16px; }
+.pn-published ul { display: grid; gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
+.pn-published li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; overflow-wrap: anywhere; }
+.pn-published small { color: var(--muted); }
+
+/* The church's own website, recreated by the site builder (#/p/<slug>) */
+.site-page { max-width: 760px; }
+.site-section { margin-bottom: 28px; overflow-wrap: anywhere; }
+.site-section h2 { font-size: 22px; margin-bottom: 10px; }
+.site-section h3 { font-size: 18px; margin-bottom: 8px; }
+.site-section p { margin: 0 0 10px; line-height: 1.6; }
+.site-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.site-actions a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.site-embed { position: relative; aspect-ratio: 16 / 9; margin: 12px 0; border-radius: 12px; overflow: hidden; background: var(--green-50); }
+.site-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.site-menu { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.site-menu .eyebrow { margin: 0 0 4px 10px; }
+.site-menu a.nav-item { text-decoration: none; }
+.site-menu-child { margin-left: 18px; }
+.site-menu-label { display: block; padding: 8px 10px 2px; color: var(--muted); font-size: 13px; font-weight: 700; }
+
+/* Builder: reviewing the imported website */
+.builder-menu { margin: 8px 0 12px; padding-left: 18px; }
+.builder-menu small { color: var(--muted); }
+.builder-swatches { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 8px 0; font-size: 14px; }
+.builder-swatches span { display: inline-flex; align-items: center; gap: 6px; }
+.builder-swatches i { width: 18px; height: 18px; border-radius: 5px; border: 1px solid var(--line-strong); }
+.builder-asset { display: block; max-width: 160px; max-height: 90px; margin: 6px 0; border-radius: 6px; border: 1px solid var(--line); object-fit: contain; background: #fff; }
+.builder-page-preview { margin-top: 8px; padding: 10px 12px; border-left: 3px solid var(--green-100); font-size: 14px; display: grid; gap: 8px; overflow-wrap: anywhere; }
+.builder-page-preview p { margin: 2px 0; }
+/* What Tekton imported: a church's campuses and common questions on Plan your visit, its sermons and sign-ups. */
+.campus-card .link { display: inline-block; margin-top: 8px; font-size: 12px; }
+.faq-list { display: grid; gap: 8px; margin-top: 14px; }
+.faq { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 14px; background: var(--card); }
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq p { margin-top: 8px; }
+.home-sermons ul, .connect-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.home-sermons li, .connect-list li { display: grid; gap: 2px; }
+.home-sermons small, .connect-list small { color: var(--muted); }
+.give-elsewhere { margin-bottom: 16px; }

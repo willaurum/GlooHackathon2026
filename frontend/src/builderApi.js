@@ -19,6 +19,35 @@ export const draftApi = (path = '', options = {}) => request(apiUrl('/builder/dr
 
 export const createBlank = () => draftApi('/blank', { method: 'POST' });
 
+export const itemApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/items', { method: 'POST', body: JSON.stringify(body) });
+
+export const partApi = (draftId, body) => draftApi('/' + encodeURIComponent(draftId) + '/parts', { method: 'POST', body: JSON.stringify(body) });
+
+export const draftPageApi = (draftId, pageId) => draftApi('/' + encodeURIComponent(draftId) + '/pages/' + encodeURIComponent(pageId));
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); }, { once: true });
+});
+
+/** A website import runs in the background: poll its draft until it is no longer 'importing'. Each poll is
+ * passed to onUpdate. A few failed polls in a row (a dropped connection) are retried with a longer wait. */
+export async function pollDraft(draftId, onUpdate, { signal, interval = 2000, retries = 3 } = {}) {
+  let failures = 0;
+  for (;;) {
+    await sleep(failures ? interval * 2 ** failures : interval, signal);
+    let draft;
+    try { draft = await draftApi('/' + encodeURIComponent(draftId), { signal }); }
+    catch (err) {
+      if (err.name === 'AbortError' || err.status === 404 || ++failures > retries) throw err;
+      continue;
+    }
+    failures = 0;
+    onUpdate(draft);
+    if (draft.status !== 'importing') return draft;
+  }
+}
+
 export function createFromFiles(files) {
   const body = new FormData();
   for (const file of files) body.append('files', file);
