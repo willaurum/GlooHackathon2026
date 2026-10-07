@@ -17,6 +17,7 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 120
+MAX_LOG = 80
 _current = contextvars.ContextVar('tekton_run', default=None)
 
 # USD per million tokens (input, output), from https://platform.ai.gloo.com/platform/v2/models on 2026-10-07.
@@ -64,8 +65,11 @@ class Run:
         self.started = time.monotonic()
         self.steps = []
         self.dropped = {}
+        self.removed = []  # what the fact check took out, so the church can add it back (keep)
         self.calls, self.failed = 0, 0
         self.tokens = {}  # model -> [input, output]
+        self.modes = {}  # how answers came back: 'json_schema', 'tools', 'json_schema_fallback' -> calls
+        self.log = []  # one entry per AI call: mode, endpoint, model, seconds, tokens (the newest MAX_LOG)
         self.version = 0  # bumped on every change, so a saver knows when to write
 
     def _changed(self):
@@ -85,10 +89,27 @@ class Run:
             self.dropped[reason] = self.dropped.get(reason, 0) + count
             self._changed()
 
-    def ai(self, model, usage=None, failed=False):
+    def keep(self, entry):
+        """Remember one claim the fact check removed (at most MAX_REMOVED, each field and value once)."""
+        key = (entry['field'], json.dumps(entry['value'], sort_keys=True).lower())
+        with self.lock:
+            if len(self.removed) >= MAX_REMOVED or any(
+                    (e['field'], json.dumps(e['value'], sort_keys=True).lower()) == key for e in self.removed):
+                return
+            self.removed.append({**entry, 'id': f'r{len(self.removed) + 1}'})
+            self._changed()
+
+    def ai(self, model, usage=None, failed=False, mode=None, endpoint='', seconds=None):
         with self.lock:
             self.calls += 1
             self.failed += bool(failed)
+            if mode:
+                self.modes[mode] = self.modes.get(mode, 0) + 1
+                self.log.append({'mode': mode, 'endpoint': endpoint, 'model': model or '', 'failed': bool(failed),
+                                 'seconds': round(seconds, 2) if seconds is not None else None,
+                                 'tokens_in': int(getattr(usage, 'prompt_tokens', 0) or 0),
+                                 'tokens_out': int(getattr(usage, 'completion_tokens', 0) or 0)})
+                del self.log[:-MAX_LOG]
             if usage is not None:
                 counts = self.tokens.setdefault(model or '', [0, 0])
                 counts[0] += int(getattr(usage, 'prompt_tokens', 0) or 0)
@@ -120,10 +141,11 @@ class Run:
             tokens_in = sum(t[0] for t in self.tokens.values())
             tokens_out = sum(t[1] for t in self.tokens.values())
             models = sorted(m for m in self.tokens if m)
-            calls, failed = self.calls, self.failed
+            calls, failed, modes, log_ = self.calls, self.failed, dict(self.modes), list(self.log)
         return {'steps': steps, 'seconds': self.seconds(), 'pages': pages, 'sources': sources,
                 'dropped': dropped, 'dropped_total': sum(dropped.values()), 'ai_calls': calls, 'ai_failed': failed,
-                'tokens_in': tokens_in, 'tokens_out': tokens_out, 'models': models, 'cost_usd': self.cost()}
+                'tokens_in': tokens_in, 'tokens_out': tokens_out, 'models': models, 'cost_usd': self.cost(),
+                'output_modes': modes, 'ai_log': log_}
 
 
 def start():
@@ -152,10 +174,25 @@ def drop(reason, count=1):
         run.drop(reason, count)
 
 
-def ai(model, usage=None, failed=False):
+MAX_REMOVED = 200
+
+
+def removed(reason, field, value, source, quote, kind='field'):
+    """Keep a claim the fact check removed on the run: the field (or list), the value, why, and where it was read
+    (the page's title and address and the quote, never the page text). `kind` is 'field' or 'item'."""
+    run = _current.get()
+    if run is None or value in ('', None, {}):
+        return
+    if isinstance(value, str):
+        value = value[:1000]
+    run.keep({'kind': kind, 'field': field, 'value': value, 'reason': reason, 'quote': str(quote or '')[:600],
+              'source': {'title': str(source.get('title') or '')[:300], 'url': str(source.get('url') or '')[:500]}})
+
+
+def ai(model, usage=None, failed=False, mode=None, endpoint='', seconds=None):
     run = _current.get()
     if run is not None:
-        run.ai(model, usage, failed)
+        run.ai(model, usage, failed, mode, endpoint, seconds)
 
 
 def money(usd):
