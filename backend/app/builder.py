@@ -52,6 +52,7 @@ from starlette.formparsers import MultiPartException
 from . import (builder_agents, builder_crawl, builder_edit, builder_run, builder_site, builder_structured, builder_theme,
                church_content, db)
 from .builder_edit import clean_layout, default_layout
+from .builder_export import files as content_files
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -2481,6 +2482,12 @@ def undo(draft_id: str):
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {'draft': _public(_save(session)), 'reply': f'Undid: {change}'}
+
+
+@router.get('/api/builder/drafts/{draft_id}/files')
+def draft_files(draft_id: str):
+    with _draft_lock:
+        return {'files': content_files(build_content(_with_pages(_ready(_load(draft_id))), allow_unanswered=True))}
 
 
 @router.post('/api/builder/drafts/{draft_id}/apply')

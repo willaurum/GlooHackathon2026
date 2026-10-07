@@ -215,6 +215,7 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
     for (const id of ['abc123def', '+1', '01', '1_0', ' 1', 'odd.id']) {
       for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
         ['GET', `/api/builder/drafts/${id}/site`],
+        ['GET', `/api/builder/drafts/${id}/files`],
         ['GET', `/api/builder/drafts/${id}/pages/s1`],
         ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/items`],
         ['POST', `/api/builder/drafts/${id}/parts`], ['POST', `/api/builder/drafts/${id}/preview`],
@@ -224,10 +225,12 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
       assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
         assert.equal(access(method, `/api/builder/drafts/${id}/site`, demo), 'staff');
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+        assert.equal(access(method, `/api/builder/drafts/${id}/files`, demo), 'staff');
     }
     for (const p of ['/api/builder', '/api/builder/sessions', '/api/builder/unknown',
       '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra', '/api/builder/drafts/x/site/extra',
-      '/api/builder/drafts/x/pages', '/api/builder/drafts/x/pages/s1/extra', '/api/builder/drafts/x/parts/extra',
+      '/api/builder/drafts/x/files/extra', '/api/builder/drafts/x/pages', '/api/builder/drafts/x/pages/s1/extra', '/api/builder/drafts/x/parts/extra',
       '/api/builder/drafts/x/edits/undo/extra', '/api/builder/drafts/x/edits/redo'])
       for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
         if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);

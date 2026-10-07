@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { beliefsApi, createBlank, createFromDraft, createFromFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
+import { beliefsApi, createBlank, createFromDraft, createFromFiles, downloadSiteFiles, draftApi, draftPageApi, itemApi, partApi, pollDraft } from './builderApi.js';
 import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImportProgress, builderItem, builderListCounts, builderPage, builderValue, canReviewBuilder, factCheck, feedSteps, runSummary, siteMenuLines, sitePartItem } from './builder.js';
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
@@ -126,6 +126,14 @@ export default function Builder() {
     finally { setBusy(''); }
   }
 
+  async function downloadFiles() {
+    if (busy || loading || editing || !canReviewBuilder(session)) return;
+    setBusy('download'); setError('');
+    try { await downloadSiteFiles(session.id); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
+
   function startOver() {
     rememberDraft(''); rememberCreated(null); setSessionId(''); setSession(null); setUrl('');
     setFiles([]); setImportMode('website');
@@ -210,7 +218,7 @@ export default function Builder() {
         <section className="card give-pad builder-build">
           <p>Ready? Create your church and a staff account to manage its new site.</p>
           {editing && <p className="form-note">Save or cancel your edit before continuing.</p>}
-          <div className="builder-actions"><button type="button" className="primary" disabled={locked || !!editing} onClick={() => { window.location.hash = '#/new/preview'; }}>Preview your site</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
+          <div className="builder-actions"><button type="button" className="primary" disabled={locked || !!editing} onClick={() => { window.location.hash = '#/new/preview'; }}>Preview your site</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="secondary" disabled={locked || !!editing} onClick={downloadFiles}>Download site files (JSON)</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
         </section>
       </>}
       {!loading && creating && (review || created) && <CreateAccount session={session} draftId={sessionId} created={created} onCreated={onCreated} onSuccess={onSuccess} onBack={() => setCreating(false)} answer={answer} disabled={locked} setBusy={setBusy} />}
