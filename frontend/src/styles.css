@@ -329,7 +329,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-picker-list small { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
 .pn-picker-check { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--green-700); }
 .pn-add { flex: none; min-height: 56px; border-radius: var(--r); }
-.pn-controls { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; padding: 4px; background: #edf1ec; border-radius: 12px; }
+.pn-controls { display: flex; align-items: center; gap: 2px; padding: 4px; background: #edf1ec; border-radius: 12px; }
+.pn-ctl-ts { margin-left: auto; }
 .pn-ctl { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 9px; color: var(--green-800); font-size: 15px; font-weight: 700; }
 .pn-ctl-big { font-size: 20px; }
 .pn-ctl-sign { font-size: .75em; margin-left: 1px; }
@@ -402,6 +403,55 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-new .filters { align-self: flex-start; }
 @keyframes pn-slide { from { opacity: 0; transform: translateX(28px); } }
 @keyframes pn-rise { from { opacity: 0; transform: translateY(28px); } }
+/* Sermon Notes reader: Ask folds open from a slim bar above the transcript. */
+.pn-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pn-tools { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+.pn-tools-bar { display: flex; gap: 6px; padding: 6px; }
+.pn-tool { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 10px; color: var(--green-800); font-size: 15px; font-weight: 600; }
+.pn-tool:hover { background: var(--green-50); }
+.pn-tool:focus-visible { outline: 3px solid #cfe3d4; }
+.pn-tool[aria-expanded=true] { background: var(--green-100); }
+.pn-tool .pn-chevron { width: 7px; height: 7px; margin: 0 0 0 2px; }
+.pn-tool-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sand-700); }
+.pn-aa { font-family: var(--display); font-weight: 800; font-size: 15px; letter-spacing: -.02em; }
+.pn-tools-panel { padding: 14px 16px 16px; border-top: 1px solid var(--line); animation: pop .15s ease; }
+.pn-tools-ask .pn-ask-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Highlights and the Reading controls: a sticky panel beside the transcript on wide screens,
+   a sheet opened from the Ask bar on narrower ones. */
+.pn-side-block { display: flex; flex-direction: column; gap: 10px; }
+.pn-side-block h2 { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--font); }
+.pn-side-block > p { font-size: 13px; color: var(--muted); }
+.pn-side-highlights { padding-top: 18px; border-top: 1px solid var(--line); }
+.pn-side .pn-cats { flex-direction: column; flex-wrap: nowrap; margin: 0; padding: 0; overflow: visible; }
+.pn-side .pn-cats button { justify-content: flex-start; min-height: 40px; }
+.pn-side .pn-cats small { margin-left: auto; }
+@media (min-width: 1180px) {
+  .pn-split { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 20px; align-items: start; }
+  .pn-side-open, .pn-side-head, .pn-side-backdrop { display: none; }
+  /* Under the pinned header, and ending above the site's Ask Tekton button. */
+  .pn-side { position: sticky; top: 136px; display: flex; flex-direction: column; gap: 18px; max-height: calc(100vh - 232px); overflow-y: auto; padding: 18px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+}
+@media (max-width: 1179px) {
+  .pn-side-open { margin-left: auto; }
+  .pn-side { display: none; }
+  .pn-split.sheet-open .pn-side { position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; display: flex; flex-direction: column; gap: 18px; width: min(380px, 100%); overflow-y: auto; padding: 0 20px 24px; background: var(--card); box-shadow: var(--shadow-lg); animation: pn-slide .2s ease; overscroll-behavior: contain; }
+  .pn-side-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin: 0 -20px; padding: 10px 10px 10px 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .pn-side-head strong { font-family: var(--display); font-size: 18px; color: var(--ink); }
+  .pn-side-backdrop { position: fixed; inset: 0; z-index: 60; background: #172a2052; animation: fade .2s ease; }
+}
+@media (max-width: 860px) {
+  .pn-tool { flex: 1 1 0; justify-content: center; min-width: 0; padding: 0 10px; font-size: 14px; }
+  .pn-tool-more { display: none; }
+  .pn-side-open { margin-left: 0; }
+  .pn-tools-ask .pn-ask { flex-direction: row; align-items: stretch; }
+  .pn-tools-ask .pn-ask .primary { width: auto; flex: none; }
+  .pn-tools-panel { padding: 12px; }
+  .pn-split.sheet-open .pn-side { top: auto; left: 0; width: 100%; max-height: 85dvh; border-radius: var(--r-xl) var(--r-xl) 0 0; padding-bottom: calc(24px + var(--safe-bottom)); animation: pn-rise .2s ease; }
+  .pn-side-head { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+  .pn-side .pn-cats { flex-direction: row; flex-wrap: wrap; }
+  .pn-side .pn-cats button { min-height: 38px; }
+  .pn-side .pn-cats small { margin-left: 0; }
+}
 
 /* ---------- Give ---------- */
 .give { display: flex; flex-direction: column; gap: 16px; }
@@ -682,8 +732,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .pn-picker-inline-date { display: inline; }
   .pn-add { width: 56px; padding: 0; }
   .pn-add span { display: none; }
-  .pn-controls { grid-column: 1 / -1; margin-left: 0; }
-  .pn-ctl-ts { margin-left: auto; }
   .pn-transcript { margin: 0 -16px; padding: 24px 18px 36px; border-left: 0; border-right: 0; border-radius: 0; box-shadow: none; }
   .pn-segments li.hl { margin: 0 -10px; padding: .35em 10px .35em 7px; }
   /* One swipeable row of category chips instead of several stacked rows above the transcript. */

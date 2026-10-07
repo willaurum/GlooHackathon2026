@@ -286,16 +286,59 @@ function Transcript({ segments, bySegment, activeCats, prefs }) {
   </article>;
 }
 
-// Where Ask and the highlight chips sit around the transcript.
-function ReaderBody({ asker, toggles, transcript }) {
-  return <div className="pn-body">
-    <AskBox asker={asker} />
-    {toggles}
-    {transcript}
+// Ask is a slim bar above the transcript that folds open. Highlights and the reading controls sit in a
+// side panel on wide screens; on narrower ones a button in the Ask bar opens that panel as a sheet.
+function ReaderBody({ asker, toggles, transcript, controls }) {
+  const [askOpen, setAskOpen] = useState(false), [sheet, setSheet] = useState(false);
+  const askId = useId(), sideId = useId(), askRef = useRef(null), side = useRef(null), opener = useRef(null);
+  useEffect(() => { if (askOpen) askRef.current?.querySelector('input')?.focus(); }, [askOpen]);
+  useEffect(() => {
+    if (!sheet) return;
+    side.current.querySelector('.pn-side-head button')?.focus();
+    const onKey = e => { if (e.key === 'Escape') setSheet(false); };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); opener.current?.focus(); };
+  }, [sheet]);
+  const answered = Boolean(asker.answer) && !askOpen;
+  return <div className={'pn-body pn-split' + (sheet ? ' sheet-open' : '')}>
+    <div className="pn-main">
+      <div className="pn-tools">
+        <div className="pn-tools-bar">
+          <button type="button" className="pn-tool" data-ask-open aria-expanded={askOpen} aria-controls={askId} onClick={() => setAskOpen(o => !o)}
+            aria-label={'Ask about this sermon' + (answered ? ', has an answer' : '')}>
+            <Icon name="sparkle" size={16} /><span>Ask<span className="pn-tool-more"> about this sermon</span></span>
+            {answered && <span className="pn-tool-dot" aria-hidden="true" />}
+            <span className="pn-chevron" aria-hidden="true" />
+          </button>
+          <button type="button" className="pn-tool pn-side-open" data-panel-open aria-expanded={sheet} aria-controls={sideId}
+            aria-label="Highlights and text size" onClick={e => { opener.current = e.currentTarget; setSheet(true); }}>
+            <span className="pn-aa" aria-hidden="true">Aa</span><span>Highlights<span className="pn-tool-more"> &amp; text size</span></span>
+          </button>
+        </div>
+        {askOpen && <div id={askId} ref={askRef} className="pn-tools-panel pn-tools-ask"><AskBox asker={asker} /></div>}
+      </div>
+      {transcript}
+    </div>
+    {sheet && <div className="pn-side-backdrop" onClick={() => setSheet(false)} />}
+    <aside id={sideId} ref={side} className="pn-side" aria-label="Highlights and reading options">
+      <div className="pn-side-head">
+        <strong>Highlights &amp; text size</strong>
+        <button type="button" className="icon-btn" aria-label="Close" onClick={() => setSheet(false)}><Icon name="x" /></button>
+      </div>
+      <section className="pn-side-block pn-side-reading">
+        <h2>Reading</h2>
+        {controls}
+      </section>
+      {toggles && <section className="pn-side-block pn-side-highlights">
+        <h2>Highlights</h2>
+        <p>Color passages in the transcript by kind.</p>
+        {toggles}
+      </section>}
+    </aside>
   </div>;
 }
 
-function NoteView({ note, onChange, prefs }) {
+function NoteView({ note, onChange, prefs, setPrefs }) {
   const [segments, setSegments] = useState([]), [error, setError] = useState(''), [loading, setLoading] = useState(true),
     [annotations, setAnnotations] = useState([]), [activeCats, setActiveCats] = useState(() => new Set(CATS.filter(c => c.on).map(c => c.key)));
   const asker = useAsk(note.id);
@@ -333,7 +376,7 @@ function NoteView({ note, onChange, prefs }) {
     : loading && !segments.length ? <p className="muted pn-transcript-msg">Loading transcript…</p>
     : <Transcript segments={segments} bySegment={bySegment} activeCats={activeCats} prefs={prefs} />;
   const toggles = annotations.length > 0 ? <CategoryToggles counts={counts} active={activeCats} onToggle={toggleCat} /> : null;
-  return <ReaderBody asker={asker} toggles={toggles} transcript={transcript} highlightCount={annotations.length} />;
+  return <ReaderBody asker={asker} toggles={toggles} transcript={transcript} controls={<ReaderControls prefs={prefs} setPrefs={setPrefs} />} />;
 }
 
 // The open sermon lives in the route (#/notes/<id>); without one, the newest ready sermon opens.
@@ -373,11 +416,10 @@ export default function PastorNotes({ route, go }) {
         {canAdd && <button type="button" className="primary pn-add" aria-label="Add sermon" aria-haspopup="dialog" aria-expanded={adding} onClick={() => setAdding(true)}>
           <Icon name="plus" size={18} /><span>Add sermon</span>
         </button>}
-        <ReaderControls prefs={prefs} setPrefs={setPrefs} disabled={current?.status !== 'ready'} />
       </div>
     </header>
     {error && <div className="banner error" role="alert">{error}</div>}
-    {current ? <NoteView key={current.id} note={current} onChange={load} prefs={prefs} />
+    {current ? <NoteView key={current.id} note={current} onChange={load} prefs={prefs} setPrefs={setPrefs} />
       : <section className="card pn-state pn-empty"><Icon name="book" size={40} />
           <h2>{!loaded ? 'Loading sermons…' : selected ? 'Sermon not found' : 'No sermons yet'}</h2>
           {loaded && <p>{selected ? 'It may have been removed. Pick another from the list above.' : 'Add a YouTube link or upload a file. Once it is transcribed you can read it here and ask questions.'}</p>}
