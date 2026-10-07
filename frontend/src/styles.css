@@ -402,6 +402,28 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .pn-new .filters { align-self: flex-start; }
 @keyframes pn-slide { from { opacity: 0; transform: translateX(28px); } }
 @keyframes pn-rise { from { opacity: 0; transform: translateY(28px); } }
+/* Sermon Notes, layout A: Ask and the highlight chips fold open from a slim bar above the transcript. */
+.pn-tools { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+.pn-tools-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; }
+.pn-tool { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 10px; color: var(--green-800); font-size: 15px; font-weight: 600; }
+.pn-tool:hover { background: var(--green-50); }
+.pn-tool:focus-visible { outline: 3px solid #cfe3d4; }
+.pn-tool[aria-expanded=true] { background: var(--green-100); }
+.pn-tool small { min-width: 22px; padding: 1px 7px; border-radius: 999px; background: var(--green-100); color: var(--green-800); font-size: 12px; font-weight: 700; text-align: center; }
+.pn-tool[aria-expanded=true] small { background: var(--card); }
+.pn-tool .pn-chevron { width: 7px; height: 7px; margin: 0 0 0 2px; }
+.pn-tool-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sand-700); }
+.pn-tools-panel { padding: 14px 16px 16px; border-top: 1px solid var(--line); animation: pop .15s ease; }
+.pn-tools-ask .pn-ask-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 860px) {
+  .pn-tools-bar { flex-wrap: nowrap; }
+  .pn-tool { flex: 1 1 0; justify-content: center; min-width: 0; padding: 0 10px; font-size: 14px; }
+  .pn-tool-more { display: none; }
+  .pn-tools-ask .pn-ask { flex-direction: row; align-items: stretch; }
+  .pn-tools-ask .pn-ask .primary { width: auto; flex: none; }
+  .pn-tools-panel { padding: 12px; }
+  .pn-tools-panel .pn-cats { margin: 0 -12px; padding: 0 12px 2px; }
+}
 
 /* ---------- Give ---------- */
 .give { display: flex; flex-direction: column; gap: 16px; }

@@ -287,10 +287,28 @@ function Transcript({ segments, bySegment, activeCats, prefs }) {
 }
 
 // Where Ask and the highlight chips sit around the transcript.
-function ReaderBody({ asker, toggles, transcript }) {
+// Here: a slim bar above the text, and each folds open from it, so the transcript stays the focus.
+function ReaderBody({ asker, toggles, transcript, highlightCount }) {
+  const [askOpen, setAskOpen] = useState(false), [chipsOpen, setChipsOpen] = useState(false);
+  const askId = useId(), chipsId = useId(), askRef = useRef(null);
+  useEffect(() => { if (askOpen) askRef.current?.querySelector('input')?.focus(); }, [askOpen]);
   return <div className="pn-body">
-    <AskBox asker={asker} />
-    {toggles}
+    <div className="pn-tools">
+      <div className="pn-tools-bar">
+        <button type="button" className="pn-tool" data-ask-open aria-expanded={askOpen} aria-controls={askId} onClick={() => setAskOpen(o => !o)}
+          aria-label={'Ask about this sermon' + (asker.answer && !askOpen ? ', has an answer' : '')}>
+          <Icon name="sparkle" size={16} /><span>Ask<span className="pn-tool-more"> about this sermon</span></span>
+          {asker.answer && !askOpen && <span className="pn-tool-dot" aria-hidden="true" />}
+          <span className="pn-chevron" aria-hidden="true" />
+        </button>
+        {toggles && <button type="button" className="pn-tool" aria-expanded={chipsOpen} aria-controls={chipsId} onClick={() => setChipsOpen(o => !o)}>
+          <Icon name="tag" size={16} /><span>Highlights</span><small>{highlightCount}</small>
+          <span className="pn-chevron" aria-hidden="true" />
+        </button>}
+      </div>
+      {askOpen && <div id={askId} ref={askRef} className="pn-tools-panel pn-tools-ask"><AskBox asker={asker} /></div>}
+      {chipsOpen && toggles && <div id={chipsId} className="pn-tools-panel">{toggles}</div>}
+    </div>
     {transcript}
   </div>;
 }
