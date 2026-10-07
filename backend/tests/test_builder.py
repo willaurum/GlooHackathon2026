@@ -7,6 +7,8 @@ complete and consistent. The AI step is replaced by a fake so the tests are dete
     python -m unittest backend.tests.test_builder
 """
 import os
+import time
+from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -189,6 +191,8 @@ class RouteTests(ChurchTestCase):
     def setUp(self):
         super().setUp()
         self.client = TestClient(main.app)
+        builder.import_limiter.reset()
+        self.addCleanup(builder.import_limiter.reset)
         for patcher in (mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1', 'BUILDER_AI': '0'}),
                         mock.patch.object(builder, '_http_fetch', site('harborlight-messy')),
                         mock.patch.object(builder, '_ai_complete', None),
@@ -199,37 +203,133 @@ class RouteTests(ChurchTestCase):
     def hope(self):
         return {'X-Church': 'hope-chapel', 'X-Church-Name': 'Hope%20Chapel', 'X-Church-City': 'Austin'}
 
-    def test_import_answer_and_build_into_a_church(self):
-        created = self.client.post('/api/builder/sessions', headers=self.hope(), json={'url': 'https://church.test/'})
-        self.assertEqual(created.status_code, 201, created.text)
-        sid = created.json()['id']
-        self.assertNotIn('text', created.json()['sources'][0])  # page texts stay on the server
-        self.assertEqual(self.client.get('/api/builder/sessions/' + sid).status_code, 404)  # another church can't see it
-        self.assertEqual(self.client.post(f'/api/builder/sessions/{sid}/build', headers=self.hope(), json={'apply': True}).status_code, 400)
+    def create(self, headers=None):
+        response = self.client.post('/api/builder/drafts', headers=headers, json={'url': 'https://church.test/'})
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertNotIn('text', response.json()['sources'][0])
+        self.assertEqual(len(response.json()['id']), 24)
+        return response.json()['id']
+
+    def confirm(self, sid):
         for field, value in [('services', 'Sundays 9 and 11'), ('phone', '5550194433'), ('name', 'Harborlight Chapel'),
-                             ('address', '12 Water Street, Corvallen'), ('email', 'hello@harborlight.example.org')]:
-            r = self.client.post(f'/api/builder/sessions/{sid}/answers', headers=self.hope(), json={'field': field, 'value': value})
+                             ('address', '12 Water Street, Corvallen'), ('email', 'hello@example.org')]:
+            r = self.client.post(f'/api/builder/drafts/{sid}/answers', json={'field': field, 'value': value})
             self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()['status'], 'review')
-        built = self.client.post(f'/api/builder/sessions/{sid}/build', headers=self.hope(), json={'apply': True})
+
+    def test_public_import_answer_and_preview_without_a_church(self):
+        sid = self.create()
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 200)
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/preview').status_code, 400)
+        self.confirm(sid)
+        preview = self.client.post(f'/api/builder/drafts/{sid}/preview')
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertEqual(preview.json()['content']['info']['name'], 'Harborlight Chapel')
+        self.assertEqual(set(self.fake.seen), {builder.DRAFT_SPACE})
+
+    def test_drafts_live_outside_the_requesting_church(self):
+        sid = self.create(self.hope())
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 200)
+        self.confirm(sid)
+        with db.use_church('hope-chapel'):
+            self.assertIsNone(db.one('SELECT data FROM config WHERE key = ?', ('draft:' + sid,)))
+            self.assertIsNone(db.one('SELECT data FROM config WHERE key = ?', ('builder:' + sid,)))
+        with db.use_church(builder.DRAFT_SPACE):
+            self.assertIsNotNone(db.one('SELECT data FROM config WHERE key = ?', ('draft:' + sid,)))
+
+    def test_apply_writes_into_current_church_and_consumes_draft(self):
+        sid = self.create()
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope()).status_code, 400)
+        self.confirm(sid)
+        built = self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope())
         self.assertEqual(built.status_code, 200, built.text)
+        self.assertEqual(built.json()['church'], 'hope-chapel')
         with db.use_church('hope-chapel'):
             info = db.get_church_info()
         self.assertEqual(info['name'], 'Harborlight Chapel')
         self.assertEqual([s['time'] for s in info['services']], ['9:00 AM', '11:00 AM'])
-
-    def test_the_demo_church_cannot_be_replaced(self):
-        sid = self.client.post('/api/builder/sessions', json={'url': 'https://church.test/'}).json()['id']
-        for field, value in [('services', 'Sundays 9 and 11'), ('phone', '5550194433'), ('name', 'X Church'),
-                             ('address', '1 Main Street, Corvallen'), ('email', 'x@example.org')]:
-            self.client.post(f'/api/builder/sessions/{sid}/answers', json={'field': field, 'value': value})
-        self.assertEqual(self.client.post(f'/api/builder/sessions/{sid}/build', json={'apply': False}).status_code, 200)
-        self.assertEqual(self.client.post(f'/api/builder/sessions/{sid}/build', json={'apply': True}).status_code, 403)
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 404)
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope()).status_code, 404)
+        with db.use_church(builder.DRAFT_SPACE):
+            self.assertIsNone(db.one('SELECT data FROM config WHERE key = ?', ('draft:' + sid,)))
         self.assertEqual(db.get_church_info()['name'], 'Grace Community Church')
 
-    def test_unknown_or_malformed_sessions_are_404(self):
-        for sid in ('nope-nope-nope', '../../etc', 'x'):
-            self.assertEqual(self.client.get('/api/builder/sessions/' + sid).status_code, 404)
+    def test_failed_apply_preserves_draft_for_retry(self):
+        sid = self.create()
+        self.confirm(sid)
+        with mock.patch.object(db, 'replace_content', side_effect=RuntimeError('write unavailable')):
+            with self.assertRaises(RuntimeError):
+                self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope())
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 200)
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply', headers=self.hope()).status_code, 200)
+
+    def test_the_demo_church_cannot_be_replaced(self):
+        sid = self.create()
+        self.confirm(sid)
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/preview').status_code, 200)
+        self.assertEqual(self.client.post(f'/api/builder/drafts/{sid}/apply').status_code, 403)
+        self.assertEqual(self.client.get('/api/builder/drafts/' + sid).status_code, 200)
+        self.assertEqual(db.get_church_info()['name'], 'Grace Community Church')
+
+    def test_expiry_is_measured_from_creation_not_last_answer(self):
+        sid = self.create()
+        draft = builder._load(sid)
+        now = datetime.now(timezone.utc)
+        draft['created_at'] = (now - timedelta(hours=23)).isoformat()
+        builder._save(draft)
+        self.confirm(sid)
+        self.assertEqual(builder._load(sid)['created_at'], draft['created_at'])
+        draft['created_at'] = (now - timedelta(hours=24, seconds=1)).isoformat()
+        builder._save(draft)
+        for path, method in [('', 'get'), ('/answers', 'post'), ('/preview', 'post'), ('/apply', 'post')]:
+            kwargs = {'json': {'field': 'name', 'value': 'Church'}} if path == '/answers' else {}
+            self.assertEqual(getattr(self.client, method)(f'/api/builder/drafts/{sid}{path}', **kwargs).status_code, 404)
+        with db.use_church(builder.DRAFT_SPACE):
+            self.assertIsNone(db.one('SELECT data FROM config WHERE key = ?', ('draft:' + sid,)))
+
+    def test_per_ip_limit_and_forwarded_client_ip(self):
+        for _ in range(5):
+            self.create({'cf-connecting-ip': '192.0.2.1'})
+        with mock.patch.object(builder, 'new_session') as importing:
+            limited = self.client.post('/api/builder/drafts', headers={'cf-connecting-ip': '192.0.2.1'},
+                                       json={'url': 'https://church.test/'})
+            self.assertEqual(limited.status_code, 429)
+            self.assertIn('address', limited.json()['detail'])
+            importing.assert_not_called()
+        self.create({'cf-connecting-ip': '192.0.2.2'})
+
+    def test_socket_ip_limit_and_rolling_hour(self):
+        builder.import_limiter.starts.extend((time.monotonic(), 'testclient') for _ in range(5))
+        self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'}).status_code, 429)
+        builder.import_limiter.reset()
+        builder.import_limiter.starts.extend((time.monotonic() - 3601, 'testclient') for _ in range(5))
+        self.create()
+
+    def test_overall_limit(self):
+        builder.import_limiter.starts.extend((time.monotonic(), f'client-{i}') for i in range(60))
+        r = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
+        self.assertEqual(r.status_code, 429)
+        self.assertIn('hour', r.json()['detail'])
+
+    def test_concurrency_limit_and_release_on_import_failure(self):
+        with builder.import_limiter.importing('one'), builder.import_limiter.importing('two'), builder.import_limiter.importing('three'):
+            r = self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'})
+            self.assertEqual(r.status_code, 429)
+            self.assertIn('already running', r.json()['detail'])
+        self.assertEqual(builder.import_limiter.running, 0)
+        with mock.patch.object(builder, 'new_session', side_effect=ValueError('No pages')):
+            self.assertEqual(self.client.post('/api/builder/drafts', json={'url': 'https://church.test/'}).status_code, 400)
+        self.assertEqual(builder.import_limiter.running, 0)
+        self.create()
+
+    def test_unknown_or_malformed_drafts_are_404(self):
+        for sid in ('a' * 24, 'nope-nope-nope', '../../etc', 'x', '+' * 24, 'a' * 25):
+            for path, method in [('', 'get'), ('/answers', 'post'), ('/preview', 'post'), ('/apply', 'post')]:
+                kwargs = {'json': {'field': 'name', 'value': 'Church'}} if path == '/answers' else {}
+                self.assertEqual(getattr(self.client, method)(f'/api/builder/drafts/{sid}{path}', **kwargs).status_code, 404)
+
+    def test_old_session_routes_are_removed(self):
+        self.assertEqual(self.client.post('/api/builder/sessions', json={'url': 'https://church.test/'}).status_code, 404)
 
 
 if __name__ == '__main__':

@@ -1,50 +1,55 @@
 import { useEffect, useState } from 'react';
-import { api } from './api.js';
+import { createFromDraft, draftApi } from './builderApi.js';
 import { BUILDER_LABELS, builderEvidence, builderPage, builderValue, canReviewBuilder } from './builder.js';
 import { useChurch } from './ChurchContext.js';
-import { StaffSignIn } from './ChurchSetup.jsx';
+import { hashFor } from './church.js';
 import { PageHeader } from './Layout.jsx';
 
-const SESSION_KEY = 'belong-builder-session';
+const DRAFT_KEY = 'tekton-new-draft';
+const CREATED_KEY = 'tekton-new-church';
 
-function savedSession() {
-  try { return sessionStorage.getItem(SESSION_KEY) || ''; } catch { return ''; }
+function savedDraft() {
+  try { return sessionStorage.getItem(DRAFT_KEY) || ''; } catch { return ''; }
 }
-function rememberSession(id) {
+function rememberDraft(id) {
   try {
-    if (id) sessionStorage.setItem(SESSION_KEY, id);
-    else sessionStorage.removeItem(SESSION_KEY);
+    if (id) sessionStorage.setItem(DRAFT_KEY, id);
+    else sessionStorage.removeItem(DRAFT_KEY);
   } catch { /* The builder still works when browser storage is unavailable. */ }
 }
-
-export default function Builder({ go }) {
-  const church = useChurch();
-  if (!church.staff) return <>
-    <PageHeader eyebrow="Site builder" title={'Sign in to build ' + church.name + '.'} text="Church staff can import an existing website and confirm its details before building." />
-    <StaffSignIn />
-  </>;
-  return <BuilderFlow go={go} />;
+function savedCreated() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(CREATED_KEY) || 'null');
+    return saved?.draftId === savedDraft() && typeof saved?.slug === 'string' ? saved : null;
+  } catch { return null; }
+}
+function rememberCreated(church) {
+  try {
+    if (church) sessionStorage.setItem(CREATED_KEY, JSON.stringify({ slug: church.slug, draftId: church.draftId }));
+    else sessionStorage.removeItem(CREATED_KEY);
+  } catch { /* Keep the target in memory if browser storage is unavailable. */ }
 }
 
-function BuilderFlow({ go }) {
+export default function Builder() {
   const church = useChurch();
-  const [session, setSession] = useState(null), [sessionId, setSessionId] = useState(savedSession);
+  const [session, setSession] = useState(null), [sessionId, setSessionId] = useState(savedDraft);
   const [url, setUrl] = useState(''), [busy, setBusy] = useState('');
   const [loading, setLoading] = useState(!!sessionId), [retry, setRetry] = useState(0);
-  const [error, setError] = useState(''), [demoBlocked, setDemoBlocked] = useState(false);
+  const [error, setError] = useState('');
   const [preview, setPreview] = useState(null), [editing, setEditing] = useState('');
+  const [created, setCreated] = useState(savedCreated), [creating, setCreating] = useState(!!savedCreated());
 
   useEffect(() => {
     if (!sessionId || session?.id === sessionId) return;
     let live = true;
     const controller = new AbortController();
     setLoading(true); setError('');
-    api('/builder/sessions/' + encodeURIComponent(sessionId), { signal: controller.signal })
+    draftApi('/' + encodeURIComponent(sessionId), { signal: controller.signal })
       .then(saved => { if (live) { setSession(saved); setUrl(saved.url); } })
       .catch(err => {
         if (!live) return;
         setError(err.message);
-        if (err.status === 404) { rememberSession(''); setSessionId(''); }
+        if (err.status === 404 && !created) { rememberDraft(''); setSessionId(''); }
       })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; controller.abort(); };
@@ -55,17 +60,17 @@ function BuilderFlow({ go }) {
     if (busy || loading) return;
     setBusy('reading'); setError('');
     try {
-      const created = await api('/builder/sessions', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
-      rememberSession(created.id); setSession(created); setSessionId(created.id);
+      const draft = await draftApi('', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
+      rememberDraft(draft.id); setSession(draft); setSessionId(draft.id);
     } catch (err) { setError(err.message); }
     finally { setBusy(''); }
   }
 
   async function answer(field, value) {
     if (busy || loading) return false;
-    setBusy('answer:' + field); setError(''); setDemoBlocked(false);
+    setBusy('answer:' + field); setError('');
     try {
-      const updated = await api('/builder/sessions/' + encodeURIComponent(session.id) + '/answers', {
+      const updated = await draftApi('/' + encodeURIComponent(session.id) + '/answers', {
         method: 'POST', body: JSON.stringify({ field, value }),
       });
       // Only the API's successful answer response can mark a field confirmed.
@@ -74,47 +79,52 @@ function BuilderFlow({ go }) {
     } finally { setBusy(''); }
   }
 
-  async function build(apply) {
+  async function showPreview() {
     if (busy || loading || editing || !canReviewBuilder(session)) return;
-    setBusy(apply ? 'build' : 'preview'); setError(''); setDemoBlocked(false);
+    setBusy('preview'); setError('');
     try {
-      const result = await api('/builder/sessions/' + encodeURIComponent(session.id) + '/build', {
-        method: 'POST', body: JSON.stringify({ apply }),
-      });
-      if (result.applied) { setSession(current => ({ ...current, status: 'built' })); church.refresh(); }
-      else setPreview(result.content);
-    } catch (err) {
-      setError(err.message); setDemoBlocked(apply && err.status === 403 && church.demo);
-    } finally { setBusy(''); }
+      const result = await draftApi('/' + encodeURIComponent(session.id) + '/preview', { method: 'POST' });
+      setPreview(result.content);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(''); }
   }
 
   function startOver() {
-    rememberSession(''); setSessionId(''); setSession(null); setUrl('');
-    setPreview(null); setEditing(''); setError(''); setDemoBlocked(false);
+    rememberDraft(''); rememberCreated(null); setSessionId(''); setSession(null); setUrl('');
+    setPreview(null); setEditing(''); setError(''); setCreating(false);
+  }
+
+  function onCreated(target) {
+    rememberCreated(target); setCreated(target);
+  }
+  function onSuccess(slug) {
+    rememberDraft(''); rememberCreated(null);
+    church.choose(slug);
   }
 
   const questions = session?.questions || [];
   const review = canReviewBuilder(session);
   const locked = !!busy || loading;
-  const step = session?.status === 'built' ? 4 : questions.length ? 2 : review ? 3 : busy === 'reading' ? 1 : 0;
+  const step = creating ? 3 : questions.length ? 1 : review ? 2 : 0;
   return <>
-    <PageHeader eyebrow="Site builder" title="Build your site from your current website"
-      text="We read your public pages and ask you about anything unclear."
-      action={(session || sessionId) && <button type="button" className="secondary" disabled={locked} onClick={startOver}>Start over</button>} />
+    <PageHeader eyebrow="Tekton" title="Create your church site"
+      text="Start with your current website. Confirm its details, then create a new site for your church."
+      action={(session || sessionId) && !created && <button type="button" className="secondary" disabled={locked} onClick={startOver}>Start over</button>} />
     <div className="builder">
-      <ol className="builder-steps" aria-label="Build your site steps">{['Import', 'Extract', 'Clarify', 'Confirm', 'Build preview'].map((label, i) => <li key={label} aria-current={step === i ? 'step' : undefined}><span aria-hidden="true">{i + 1}</span>{label}</li>)}</ol>
-      <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your website import…' : busy === 'reading' ? 'Reading your website… This can take up to a minute.' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'build' ? 'Building your site…' : questions.length ? `${questions.length} ${questions.length === 1 ? 'question' : 'questions'} left` : session?.status === 'built' ? 'Your site is ready.' : review ? 'All questions answered. Review and confirm your details.' : 'Start with your website address.'}</p>
-      {error && <div className="banner error" role="alert"><p>{error}</p>{demoBlocked && <button type="button" className="link" onClick={() => go('start')}>Sign up a church</button>}</div>}
-      {!loading && !session && sessionId && <div className="card give-pad"><p>Your saved import could not be loaded.</p><button type="button" className="secondary" onClick={() => setRetry(v => v + 1)}>Try again</button></div>}
+      <ol className="builder-steps" aria-label="Create your site steps">{['Import', 'Clarify', 'Review', 'Create your church'].map((label, i) => <li key={label} aria-current={step === i ? 'step' : undefined}><span aria-hidden="true">{i + 1}</span>{label}</li>)}</ol>
+      <p className="builder-progress" role="status" aria-live="polite">{loading ? 'Resuming your website import…' : busy === 'reading' ? 'Reading your website… This can take up to a minute.' : busy.startsWith('answer:') ? 'Saving your answer…' : busy === 'preview' ? 'Preparing the content preview…' : busy === 'create' ? 'Creating your church site…' : creating ? 'Set up your church and staff account.' : questions.length ? questions.length + ' ' + (questions.length === 1 ? 'question' : 'questions') + ' left' : review ? 'All questions answered. Review your details.' : 'Start with your website address.'}</p>
+      {error && <div className="banner error" role="alert"><p>{error}</p></div>}
+      {!loading && !session && sessionId && !created && <div className="card give-pad"><p>Your saved import could not be loaded.</p><button type="button" className="secondary" onClick={() => setRetry(v => v + 1)}>Try again</button></div>}
       {!loading && !session && !sessionId && <form className="card give-pad" onSubmit={readWebsite}>
-        <label className="field">Current website URL<input type="url" placeholder="https://yourchurch.org" required maxLength={500} value={url} disabled={locked} onChange={e => setUrl(e.target.value)} /></label>
+        <label className="field">Current website URL<input type="url" placeholder="https://church.example.org" required maxLength={500} value={url} disabled={locked} onChange={e => setUrl(e.target.value)} /></label>
         <button className="primary" disabled={locked || !url.trim()}>{busy === 'reading' ? 'Reading your website…' : 'Read my website'}</button>
+        <p className="form-note">Drafts expire 24 hours after import. Keep this browser tab to resume your draft.</p>
       </form>}
-      {!loading && session && session.status !== 'built' && questions.map(question => <Question key={session.id + ':' + question.field} question={question} answer={answer} disabled={locked} />)}
-      {!loading && review && <>
+      {!loading && !creating && questions.map(question => <Question key={session.id + ':' + question.field} question={question} answer={answer} disabled={locked} />)}
+      {!loading && review && !creating && <>
         <section className="card give-pad">
-          <div className="eyebrow">Confirm</div><h2>Review your church details</h2>
-          <p>Check the details below. You can edit anything before building.</p>
+          <div className="eyebrow">Review</div><h2>Review your church details</h2>
+          <p>Check the details below. You can edit anything before creating your church.</p>
           {Object.entries(BUILDER_LABELS).map(([field, label]) => <ReviewField key={session.id + ':' + field} field={field} label={label} session={session} editing={editing === field} onEdit={() => { setEditing(field); setPreview(null); }} onCancel={() => setEditing('')} answer={answer} disabled={locked} />)}
         </section>
         {preview && <section className="card give-pad builder-preview" aria-label="Content preview">
@@ -123,19 +133,69 @@ function BuilderFlow({ go }) {
           <p>{preview.faqs?.length || 0} FAQs</p>
         </section>}
         <section className="card give-pad builder-build">
-          <p>Build my site replaces the information and imported FAQs for {church.name}. Then you can open your church’s site as the preview.</p>
-          {editing && <p className="form-note">Save or cancel your edit before previewing or building.</p>}
-          <div className="builder-actions"><button type="button" className="secondary" disabled={locked || !!editing} onClick={() => build(false)}>Preview the content</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => build(true)}>Build my site</button></div>
+          <p>Ready? Create your church and a staff account to manage its new site.</p>
+          {editing && <p className="form-note">Save or cancel your edit before continuing.</p>}
+          <div className="builder-actions"><button type="button" className="secondary" disabled={locked || !!editing} onClick={showPreview}>Preview the content</button><button type="button" className="primary" disabled={locked || !!editing} onClick={() => setCreating(true)}>Create your church</button></div>
         </section>
       </>}
-      {!loading && session?.status === 'built' && <section className="card give-pad builder-built">
-        <div className="eyebrow">Built</div><h2>Your site is ready</h2><p>Your church details have been saved. Open your site to see the preview.</p>
-        <div className="builder-actions"><button type="button" className="primary" onClick={() => go('')}>Open my site</button><button type="button" className="secondary" onClick={startOver}>Start over</button></div>
-      </section>}
+      {!loading && creating && (review || created) && <CreateAccount session={session} draftId={sessionId} created={created} onCreated={onCreated} onSuccess={onSuccess} onBack={() => setCreating(false)} answer={answer} disabled={locked} setBusy={setBusy} />}
     </div>
   </>;
 }
 
+function addressCity(address = '') {
+  // Addresses normally read "street, town, state"; leave unstructured addresses for the person to fill in.
+  return address.split(',')[1]?.trim() || '';
+}
+
+function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack, answer, disabled, setBusy }) {
+  const [name, setName] = useState(session?.fields.name?.value || '');
+  const [city, setCity] = useState(addressCity(session?.fields.address?.value));
+  const [ownerName, setOwnerName] = useState(''), [ownerEmail, setOwnerEmail] = useState('');
+  const [password, setPassword] = useState(''), [confirm, setConfirm] = useState(''), [error, setError] = useState('');
+  async function submit(e) {
+    e.preventDefault();
+    if (disabled) return;
+    setError('');
+    if (!created && (password.length < 10 || password !== confirm)) {
+      setError(password.length < 10 ? 'Use a password of at least 10 characters.' : 'The passwords must match.');
+      return;
+    }
+    try {
+      if (!created) {
+        // Keep the registry name and confirmed content together if the name changes here.
+        if (name.trim() !== session.fields.name.value) await answer('name', name.trim());
+        setBusy('create');
+        // Validate content and expiry before creating a church.
+        await draftApi('/' + encodeURIComponent(draftId) + '/preview', { method: 'POST' });
+      } else setBusy('create');
+      const result = await createFromDraft(draftId, {
+        name: name.trim(), city: city.trim(), ownerName: ownerName.trim(), ownerEmail: ownerEmail.trim(), password,
+      }, created, target => { onCreated(target); setPassword(''); setConfirm(''); });
+      onSuccess(result.church);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
+  return <form className="card give-pad builder-create" onSubmit={submit}>
+    <div className="eyebrow">Create</div><h2>{created ? 'Finish loading your content' : 'Create your church'}</h2>
+    {created ? <>
+      <p>Your church was created, but its confirmed content has not finished loading. Try again to load this draft into the same church.</p>
+      <p className="form-note">Church address: <a href={'/' + hashFor(created.slug, '')}>{created.slug}</a>. You can also sign in there to finish setup if your draft has expired.</p>
+    </> : <>
+      <label className="field">Church name<input required minLength={3} maxLength={80} value={name} disabled={disabled} onChange={e => setName(e.target.value)} /></label>
+      <label className="field">Town or city<input required maxLength={80} value={city} disabled={disabled} onChange={e => setCity(e.target.value)} /></label>
+      <label className="field">Your name<input required minLength={2} maxLength={120} autoComplete="name" value={ownerName} disabled={disabled} onChange={e => setOwnerName(e.target.value)} /></label>
+      <label className="field">Your email<input required type="email" maxLength={200} autoComplete="email" value={ownerEmail} disabled={disabled} onChange={e => setOwnerEmail(e.target.value)} /></label>
+      <label className="field">Password (10+ characters)<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={password} disabled={disabled} onChange={e => setPassword(e.target.value)} /></label>
+      <label className="field">Confirm password<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={confirm} disabled={disabled} onChange={e => setConfirm(e.target.value)} /></label>
+    </>}
+    {error && <div className="banner error" role="alert">{error}</div>}
+    <div className="builder-actions">
+      <button className="primary" disabled={disabled}>{disabled ? 'Loading your church…' : created ? 'Try again' : 'Create my church site'}</button>
+      {!created && <button type="button" className="secondary" disabled={disabled} onClick={onBack}>Back to review</button>}
+    </div>
+  </form>;
+}
 function Evidence({ items }) {
   return <ul className="builder-evidence">{items.map((item, i) => <li key={i}>
     {/^(https?):\/\//i.test(item.url) ? <a href={item.url} target="_blank" rel="noreferrer">{builderPage(item)}</a> : <span>{builderPage(item)}</span>}

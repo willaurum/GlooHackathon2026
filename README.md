@@ -224,7 +224,11 @@ Extra fields are kept. A ministry that saved connections or requests still point
 
 ### Agentic builder
 
-Staff can open `#/build` from Church setup to follow **Import → Extract → Clarify → Confirm → Build preview**. Conflicting values stay unresolved until staff choose or type an answer; review the content, build into the church, then open its site as the preview. The backend is `backend/app/builder.py`, with staff-only routes at `/api/builder/sessions...`.
+Anyone can open `#/new`, a standalone **Create your church site** page, to follow **Import → Clarify → Review → Create your church**. Import an existing website, resolve conflicts using the page and exact quote behind each candidate, fill missing details, and review or edit the confirmed content. Then enter the church name, city, and owner account details. Signup creates a church, and its staff session loads the confirmed content before opening the new church's home. If loading fails after signup, **Try again** applies to the same church. The browser tab remembers the draft and any created church across reloads. The in-church `#/build` page and its Church setup entry have been removed.
+
+The backend is `backend/app/builder.py`. Public routes are `POST /api/builder/drafts`, `GET /api/builder/drafts/<id>`, and `POST /api/builder/drafts/<id>/answers` or `/preview`. Preview requires all questions to be answered. `POST /api/builder/drafts/<id>/apply` requires the target church's staff session, refuses the demo church, and consumes the draft after a successful write. All other builder paths stay staff only; the old sessions routes are gone.
+
+Drafts are church-independent: they live in the reserved platform database space `builder`, in its `config` table as `draft:<id>`. The registry reserves the `builder` slug. Only the unguessable draft id grants public access; drafts expire 24 hours after creation, and page texts stay on the server. Public imports refuse private-network addresses and are limited to 5 starts per client IP per rolling hour, 60 overall per hour, and 3 concurrent imports in the single backend container. Limit failures return 429; the Worker forwards Cloudflare's client IP header.
 
 ### Adding an endpoint
 

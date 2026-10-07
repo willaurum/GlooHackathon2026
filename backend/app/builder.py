@@ -11,7 +11,8 @@
     5. Build    the confirmed profile becomes ChurchContent JSON (church_content.py) and can be loaded into a
                 church, whose own site is then the preview.
 
-A session is stored per church in the config table as 'builder:<id>'.
+Public drafts live in the reserved platform space 'builder' as 'draft:<id>', expire after 24 hours,
+and can be applied once by staff into a new church.
 """
 import ipaddress
 import json
@@ -20,12 +21,16 @@ import os
 import re
 import secrets
 import socket
+import threading
+import time
+from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urldefrag, urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import church_content, db
@@ -623,30 +628,82 @@ def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None)
     claims = extract(sources, complete)
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
-    return {'id': secrets.token_urlsafe(9), 'created_at': datetime.now(timezone.utc).isoformat(),
+    return {'id': secrets.token_urlsafe(18), 'created_at': datetime.now(timezone.utc).isoformat(),
             'url': url, 'status': 'clarifying' if qs else 'review',
             'sources': sources, 'claims': claims, 'fields': fields, 'questions': qs}
 
 
 # ---------------------------------------------------------------- storage and routes
 
+DRAFT_SPACE = 'builder'
+DRAFT_TTL = 24 * 60 * 60
+_draft_lock = threading.RLock()
+
+
+class ImportLimiter:
+    """One container's rolling hour of imports; reset() keeps tests independent."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.starts = deque()
+        self.running = 0
+
+    def reset(self):
+        with self.lock:
+            self.starts.clear()
+            self.running = 0
+
+    @contextmanager
+    def importing(self, ip):
+        with self.lock:
+            now = time.monotonic()
+            while self.starts and self.starts[0][0] <= now - 3600:
+                self.starts.popleft()
+            if sum(client == ip for _, client in self.starts) >= 5:
+                raise HTTPException(status_code=429, detail='Too many imports from this address. Try again in an hour.')
+            if len(self.starts) >= 60:
+                raise HTTPException(status_code=429, detail='Too many website imports this hour. Please try again later.')
+            if self.running >= 3:
+                raise HTTPException(status_code=429, detail='Three website imports are already running. Please try again shortly.')
+            self.starts.append((now, ip))
+            self.running += 1
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.running -= 1
+
+
+import_limiter = ImportLimiter()
+
+
 def _save(session):
-    db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
-            ('builder:' + session['id'], json.dumps(session))))
+    with db.use_church(DRAFT_SPACE):
+        db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
+                ('draft:' + session['id'], json.dumps(session))))
     return session
 
 
-def _load(session_id):
-    if not re.fullmatch(r'[\w-]{6,40}', session_id):
-        raise HTTPException(status_code=404, detail='Builder session not found')
-    row = db.one('SELECT data FROM config WHERE key = ?', ('builder:' + session_id,))
+def _delete(draft_id):
+    with db.use_church(DRAFT_SPACE):
+        db.run(('DELETE FROM config WHERE key = ?', ('draft:' + draft_id,)))
+
+
+def _load(draft_id):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{24}', draft_id):
+        raise HTTPException(status_code=404, detail='Builder draft not found')
+    with db.use_church(DRAFT_SPACE):
+        row = db.one('SELECT data FROM config WHERE key = ?', ('draft:' + draft_id,))
     if not row:
-        raise HTTPException(status_code=404, detail='Builder session not found')
-    return json.loads(row['data'])
+        raise HTTPException(status_code=404, detail='Builder draft not found')
+    draft = json.loads(row['data'])
+    if (datetime.now(timezone.utc) - datetime.fromisoformat(draft['created_at'])).total_seconds() >= DRAFT_TTL:
+        _delete(draft_id)
+        raise HTTPException(status_code=404, detail='Builder draft not found')
+    return draft
 
 
 def _public(session):
-    """The session for the page, without the full page texts (the evidence quotes are enough)."""
+    """The draft for the page, without the full page texts (the evidence quotes are enough)."""
     return {**session, 'sources': [{k: s[k] for k in ('id', 'kind', 'url', 'title')} for s in session['sources']]}
 
 
@@ -660,46 +717,55 @@ class AnswerBody(BaseModel):
     value: str | list | dict
 
 
-class BuildBody(BaseModel):
-    apply: bool = False
+@router.post('/api/builder/drafts', status_code=201)
+def import_site(body: ImportBody, request: Request):
+    ip = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else 'unknown')
+    with import_limiter.importing(ip):
+        try:
+            session = new_session(body.url)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        with _draft_lock:
+            return _public(_save(session))
 
 
-@router.post('/api/builder/sessions', status_code=201)
-def import_site(body: ImportBody):
+@router.get('/api/builder/drafts/{draft_id}')
+def get_draft(draft_id: str):
+    with _draft_lock:
+        return _public(_load(draft_id))
+
+
+@router.post('/api/builder/drafts/{draft_id}/answers')
+def answer(draft_id: str, body: AnswerBody):
+    with _draft_lock:
+        session = _load(draft_id)
+        try:
+            apply_answer(session, body.field, body.value)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _public(_save(session))
+
+
+def _content(draft_id):
     try:
-        session = new_session(body.url)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return _public(_save(session))
-
-
-@router.get('/api/builder/sessions/{session_id}')
-def get_session(session_id: str):
-    return _public(_load(session_id))
-
-
-@router.post('/api/builder/sessions/{session_id}/answers')
-def answer(session_id: str, body: AnswerBody):
-    session = _load(session_id)
-    try:
-        apply_answer(session, body.field, body.value)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return _public(_save(session))
-
-
-@router.post('/api/builder/sessions/{session_id}/build')
-def build(session_id: str, body: BuildBody):
-    """The profile as ChurchContent. With apply, it replaces this church's info (and FAQs if any were found)."""
-    session = _load(session_id)
-    try:
-        content = build_content(session)
+        return build_content(_load(draft_id))
     except (ValueError, church_content.ContentError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    if body.apply:
+
+
+@router.post('/api/builder/drafts/{draft_id}/preview')
+def preview(draft_id: str):
+    with _draft_lock:
+        return {'content': _content(draft_id)}
+
+
+@router.post('/api/builder/drafts/{draft_id}/apply')
+def apply(draft_id: str):
+    """The Worker requires this church's staff session. Consume the draft only after a successful write."""
+    with _draft_lock:
+        content = _content(draft_id)
         if db.current_church() == db.DEMO_CHURCH:
             raise HTTPException(status_code=403, detail='The demo church cannot be replaced. Sign up a church to build into.')
         db.replace_content(content)
-        session['status'] = 'built'
-        _save(session)
-    return {'content': content, 'applied': body.apply, 'church': db.current_church()}
+        _delete(draft_id)
+        return {'content': content, 'church': db.current_church()}

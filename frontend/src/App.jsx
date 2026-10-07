@@ -9,7 +9,7 @@ import { ChurchMissing, ChurchNotReady } from './ChurchStates.jsx';
 import Give from './Give.jsx';
 import { churchApi, givingCapabilities, verifyStaffSession } from './giving.js';
 import Home from './Home.jsx';
-import { ABOUT_DEMO_ONLY, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
+import { ABOUT_DEMO_ONLY, Brand, PageHeader, SECTIONS, Sidebar, SubNav, TabBar, TopBar, WorkspaceBar, aboutTabsFor } from './Layout.jsx';
 import PastorNotes from './PastorNotes.jsx';
 import Platform from './Platform.jsx';
 import Serve from './Serve.jsx';
@@ -23,7 +23,7 @@ import News from './News.jsx';
 import Directory from './Directory.jsx';
 import Connect from './Connect.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'build', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -198,12 +198,13 @@ export default function App() {
 
   const name = listing?.name || (demo ? DEMO_INFO.name : '');
   useEffect(() => {
+    if (route === 'new') { document.title = 'Create your church site · Tekton'; return; }
     if (!name) return;
     document.title = name;
     let icon = document.querySelector('link[rel="icon"]');
     if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
     icon.href = churchIcon(name);
-  }, [name]);
+  }, [name, route]);
   const ready = demo || apiReady === true;
   const staff = !!staffToken && getVerifiedStaffToken(slug) === staffToken;
   const church = useMemo(() => ({
@@ -213,6 +214,12 @@ export default function App() {
   }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion]);
 
   const section = route.split('/')[0];
+  if (section === 'new') return <ChurchContext.Provider value={church}>
+    <div className="standalone-builder">
+      <header><Brand /></header>
+      <main><Builder /></main>
+    </div>
+  </ChurchContext.Provider>;
   // A new church on an older church API: everything but giving waits for the deploy.
   const blocked = !ready && apiReady !== null && !WORKS_WITHOUT_CHURCH_API.has(section) && !giveSession;
   let page;
@@ -253,7 +260,6 @@ export default function App() {
       <PrayerMap />
     </div>}
     {section === 'setup' && <div className="page"><ChurchSetup /></div>}
-    {section === 'build' && <div className="page"><Builder go={go} /></div>}
     {section === 'platform' && <div className="page"><Platform /></div>}
   </>;
 

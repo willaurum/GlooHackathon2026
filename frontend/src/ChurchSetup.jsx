@@ -32,7 +32,6 @@ export default function ChurchSetup() {
     <PageHeader eyebrow="Church setup" title={'Set up ' + church.name + '.'} text="Fill in what you can. Each part saves on its own, and visitors see it right away."
       action={<button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>} />
     {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
-    <section className="card give-pad builder-entry"><h2>Have a website already?</h2><button type="button" className="link" onClick={() => church.go('build')}>Build from it</button></section>
     <ChurchLink />
     {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Church staff.</p></div>}
   </>;
@@ -62,6 +61,7 @@ export function StaffSignIn() {
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
     <p className="form-note">Need an account? Ask your church Owner to add you in Church staff → Team.</p>
+    <p className="form-note">Starting a new church site? <a href="/#/new">Create it from your current website</a>.</p>
   </form>;
 }
 

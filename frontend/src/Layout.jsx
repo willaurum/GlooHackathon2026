@@ -40,6 +40,10 @@ export function Avatar() {
   return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
 }
 
+export function Brand() {
+  return <a className="tekton-brand" href="/#/new"><Icon name="sparkle" size={26} />Tekton</a>;
+}
+
 export function Sidebar({ route, go, savedCount }) {
   const { demo, staff } = useChurch();
   const user = identity(staff);

@@ -117,12 +117,13 @@ test('who may call what', () => {
 });
 
 test('the container gets the church from the Worker, never from the browser', () => {
-  const spoofed = new Headers({ 'X-Church': 'grace-community', 'X-Church-Name': 'Evil', Authorization: 'Bearer ' + 'a'.repeat(32), 'Content-Type': 'application/json' });
+  const spoofed = new Headers({ 'X-Church': 'grace-community', 'X-Church-Name': 'Evil', Authorization: 'Bearer ' + 'a'.repeat(32), 'Content-Type': 'application/json', 'cf-connecting-ip': '192.0.2.1' });
   const out = churchHeaders(spoofed, { slug: 'hope-chapel', name: 'Hope Chapel & Friends', city: 'Austin', demo: false });
   assert.equal(out.get('X-Church'), 'hope-chapel');
   assert.equal(decodeURIComponent(out.get('X-Church-Name')), 'Hope Chapel & Friends');
   assert.equal(out.get('Authorization'), null);
   assert.equal(out.get('Content-Type'), 'application/json');
+  assert.equal(out.get('cf-connecting-ip'), '192.0.2.1');
 });
 
 test('church subdomains of BASE_DOMAIN are allowed origins', () => {
@@ -202,11 +203,18 @@ test('a rejected staff session is flagged so the browser drops it; no session se
   assert.equal(sentStaffToken(new Request('https://api.test', { headers: { 'X-API-Key': 'k' } })), false);
 });
 
-test('the agentic builder is staff only on every church, the demo church included', () => {
+test('drafts are public; apply and all unknown builder routes stay staff only', () => {
   for (const demo of [true, false]) {
-    for (const [m, p] of [['POST', '/api/builder/sessions'], ['GET', '/api/builder/sessions/abc123def'],
-      ['POST', '/api/builder/sessions/abc123def/answers'], ['POST', '/api/builder/sessions/abc123def/build']]) {
-      assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
+    assert.equal(access('POST', '/api/builder/drafts', demo), 'public');
+    for (const id of ['abc123def', '+1', '01', '1_0', ' 1', 'odd.id']) {
+      for (const [m, p] of [['GET', `/api/builder/drafts/${id}`],
+        ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/preview`]])
+        assert.equal(access(m, p, demo), 'public', m + ' ' + p);
+      assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
     }
+    for (const p of ['/api/builder', '/api/builder/sessions', '/api/builder/unknown',
+      '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra'])
+      for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+        if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
   }
 });
