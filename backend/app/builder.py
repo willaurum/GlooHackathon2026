@@ -159,13 +159,23 @@ def parse_html(html):
     return {'title': page.title.strip(), 'text': page.text(), 'links': page.links, 'images': page.images}
 
 
+class FetchRefused(ValueError):
+    """The fetch bridge refused an address (private network, unknown host, bad scheme)."""
+
+
+def _fetch_bridge():
+    """Base URL of a fetch bridge, or ''. On Cloudflare the container cannot reach arbitrary websites, so it asks
+    the Worker (http://builder-fetch, api/builderfetch.ts), which checks every address and redirect itself."""
+    return os.environ.get('BUILDER_FETCH_URL', '').strip().rstrip('/')
+
+
 def _check_public(url):
     """Refuse URLs that would make the server fetch its own network (SSRF), unless BUILDER_ALLOW_PRIVATE=1."""
     parsed = urlparse(url)
     if parsed.scheme not in ('http', 'https') or not parsed.hostname:
         raise ValueError('Enter a website address starting with http:// or https://')
-    if os.environ.get('BUILDER_ALLOW_PRIVATE') == '1':
-        return
+    if os.environ.get('BUILDER_ALLOW_PRIVATE') == '1' or _fetch_bridge():
+        return  # A fetch bridge resolves and checks the address where the request is really made.
     try:
         infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80))
     except socket.gaierror as error:
@@ -198,6 +208,10 @@ def crawl(start_url, fetch=None, max_pages=MAX_PAGES, deadline=None, notes=None)
                 queue.insert(0, url)
                 break
             final_url, content_type, body = results[0]
+        except FetchRefused:
+            if url == start_url:
+                raise  # "That address is on a private network" says more than "no pages could be read".
+            continue
         except Exception as error:  # one broken page must not stop the import
             log.info('builder: skipped %s (%s)', url, error)
             continue
@@ -275,8 +289,28 @@ def read_images(sources, fetch_bytes=None, describe=None, deadline=None, notes=N
     return out
 
 
+def _bridge_fetch(url, kind):
+    """(final_url, content_type, body bytes) through the fetch bridge, which enforces the size and redirect limits."""
+    with httpx.Client(timeout=FETCH_TIMEOUT + 5) as client:
+        response = client.post(_fetch_bridge() + '/fetch', json={'url': url, 'kind': kind})
+    if response.status_code != 200:
+        try:
+            detail = response.json().get('detail')
+        except Exception:
+            detail = None
+        error = FetchRefused if response.status_code in (400, 403) else ValueError
+        raise error(detail if isinstance(detail, str) else f'That page could not be read ({response.status_code}).')
+    return response.headers.get('x-final-url') or url, response.headers.get('content-type', ''), response.content
+
+
 def _http_fetch_bytes(url):
     _check_public(url)
+    if _fetch_bridge():
+        _, content_type, data = _bridge_fetch(url, 'image')
+        content_type = content_type.split(';')[0]
+        if not content_type.startswith('image/') or len(data) > MAX_IMAGE_BYTES:
+            raise ValueError('not a small image')
+        return content_type, data
     with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
         response = client.get(url)
         response.raise_for_status()
@@ -492,6 +526,14 @@ def read_files(files, describe=None, deadline=None, notes=None):
 
 def _http_fetch(url):
     _check_public(url)
+    if _fetch_bridge():
+        final_url, content_type, data = _bridge_fetch(url, 'page')
+        charset = re.search(r'charset=([\w.-]+)', content_type)
+        try:
+            text = data.decode(charset.group(1) if charset else 'utf-8', errors='replace')
+        except LookupError:
+            text = data.decode('utf-8', errors='replace')
+        return final_url, content_type, text[:MAX_PAGE_BYTES]
     with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
         response = client.get(url)
         hops = 0
@@ -629,9 +671,13 @@ def grounded(quote, text):
     return len(q) >= 3 and q in _normalize_space(text)
 
 
-def ai_claims(source, complete=None):
+def ai_claims(source, complete=None, deadline=None, errors=None):
     """Claims from the AI. `complete(messages, tools) -> tool arguments dict` can be injected for tests.
-    Any claim whose quote is not found in the source is dropped: the AI can propose, never invent."""
+    Any claim whose quote is not found in the source is dropped: the AI can propose, never invent.
+    A failed call is appended to `errors`; each real call is limited to the time left before `deadline`."""
+    if complete is None and _ai_complete is not None and deadline is not None:
+        remaining = max(1.0, deadline - _now())
+        complete = lambda messages, tools: _ai_complete(messages, tools, timeout=remaining)  # noqa: E731
     complete = complete or _ai_complete
     if not complete:
         return []
@@ -645,7 +691,9 @@ def ai_claims(source, complete=None):
     try:
         args = complete(messages, [AI_TOOL]) or {}
     except Exception as error:
-        log.warning('builder: AI extraction failed for %s: %s', source['url'], error)
+        log.warning('builder: AI extraction failed for %s: %s', source.get('url') or source.get('title'), error)
+        if errors is not None:
+            errors.append(source['id'])
         return []
     claims = []
     for fact in args.get('facts', []) if isinstance(args, dict) else []:
@@ -661,15 +709,24 @@ def ai_claims(source, complete=None):
     return claims
 
 
-def _ai_complete_impl(messages, tools):
+def _ai_complete_impl(messages, tools, timeout=None):
+    import openai
     from . import chat
     clients = chat.make_clients()
     if not clients:
         return None
     name, model, extra_body, client = clients[0]
-    response = client.chat.completions.create(model=model, messages=messages, tools=tools,
-                                              tool_choice={'type': 'function', 'function': {'name': 'record_church_facts'}},
-                                              temperature=0, **({'extra_body': extra_body} if extra_body else {}))
+    if timeout is not None:  # never outlive the import that asked
+        client = client.with_options(timeout=min(timeout, chat.provider_timeout(name)), max_retries=0)
+    forced = {'type': 'function', 'function': {'name': 'record_church_facts'}}
+    extra = {'extra_body': extra_body} if extra_body else {}
+    try:
+        response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                                  tool_choice=forced, temperature=0, **extra)
+    except openai.BadRequestError:
+        # Some endpoints and models accept tools but not a forced choice.
+        response = client.chat.completions.create(model=model, messages=messages, tools=tools,
+                                                  tool_choice='auto', temperature=0, **extra)
     calls = response.choices[0].message.tool_calls or []
     return json.loads(calls[0].function.arguments) if calls else None
 
@@ -685,16 +742,36 @@ def _ai_available():
 _ai_complete = _ai_complete_impl if os.environ.get('BUILDER_AI', '1') != '0' else None
 
 
+AI_OFFLINE_NOTE = ('The AI reader is offline right now, so only details found by plain rules (phone, email, address, '
+                   'service times) were filled in. Add the rest in the questions and review.')
+AI_SLOW_NOTE = ('The AI reader did not answer in time, so only details found by plain rules (phone, email, address, '
+                'service times) were filled in. Add the rest in the questions and review.')
+AI_MISSING_NOTE = ('No AI model is set up, so only details found by plain rules (phone, email, address, '
+                   'service times) were filled in. Add the rest in the questions and review.')
+
+
 def extract(sources, complete=None, deadline=None, notes=None):
     claims = []
     use_ai = complete is not None or (_ai_complete is not None and _ai_available())
     deadline = deadline if deadline is not None else _now() + IMPORT_BUDGET
     results = [None] * len(sources)
+    failed = []
     if use_ai:
-        results, skipped = _parallel(sources, lambda source: ai_claims(source, complete), deadline)
-        if skipped and notes is not None:
+        results, skipped = _parallel(sources, lambda source: ai_claims(source, complete, deadline, failed), deadline)
+        answered = len(sources) - skipped
+        if sources and not answered and notes is not None:
+            notes.append(AI_SLOW_NOTE)
+        elif skipped and notes is not None:
             subject = '1 source was' if skipped == 1 else f'{skipped} sources were'
             notes.append(f'{subject} read without AI because it took too long.')
+        if answered and failed and notes is not None:
+            if len(failed) >= answered:
+                notes.append(AI_OFFLINE_NOTE)
+            else:
+                subject = '1 source was' if len(failed) == 1 else f'{len(failed)} sources were'
+                notes.append(f'{subject} read without AI because the AI reader returned an error.')
+    elif sources and complete is None and _ai_complete is not None and notes is not None:
+        notes.append(AI_MISSING_NOTE)
     for source, result in zip(sources, results):
         claims += pattern_claims(source)
         claims += result or []
@@ -968,9 +1045,12 @@ import_limiter = ImportLimiter()
 
 
 def _save(session):
+    """Store a draft and drop expired ones; a draft nobody opens again would otherwise stay forever."""
+    cutoff = datetime.fromtimestamp(time.time() - DRAFT_TTL, timezone.utc).isoformat()
     with db.use_church(DRAFT_SPACE):
         db.run(("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data",
-                ('draft:' + session['id'], json.dumps(session))))
+                ('draft:' + session['id'], json.dumps(session))),
+               ("DELETE FROM config WHERE key LIKE 'draft:%' AND json_extract(data, '$.created_at') < ?", (cutoff,)))
     return session
 
 

@@ -8,6 +8,7 @@ complete and consistent. The AI step is replaced by a fake so the tests are dete
 """
 import asyncio
 import io
+import json
 import os
 import threading
 import time
@@ -877,6 +878,121 @@ class RouteTests(ChurchTestCase):
 
     def test_old_session_routes_are_removed(self):
         self.assertEqual(self.client.post('/api/builder/sessions', json={'url': 'https://church.test/'}).status_code, 404)
+
+    def test_saving_a_draft_drops_expired_drafts(self):
+        old = {**builder.session_from_sources(None, []), 'created_at': (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()}
+        builder._save(old)
+        sid = self.create()
+        with db.use_church(builder.DRAFT_SPACE):
+            keys = [row['key'] for row in db.query("SELECT key FROM config WHERE key LIKE 'draft:%'")]
+        self.assertEqual(keys, ['draft:' + sid])
+
+
+class AiOfflineTests(BuilderTestCase):
+    """The laptop build's Ollama (or Cloudflare's Gloo) can be down; the import must still finish and say so."""
+
+    def test_an_offline_ai_is_explained_in_the_notes(self):
+        def offline(messages, tools):
+            raise ConnectionError('Connection refused')
+        s = self.session('cedar-hollow-static', complete=offline)
+        self.assertEqual(s['fields']['phone']['value'], '5550142290')
+        self.assertEqual(s['notes'], [builder.AI_OFFLINE_NOTE])
+
+    def test_an_ai_that_never_answers_is_explained(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def hung(messages, tools):
+            release.wait(2)
+            return {'facts': []}
+        with mock.patch.object(builder, 'IMPORT_BUDGET', 0.15):
+            s = self.session('cedar-hollow-static', complete=hung)
+        self.assertEqual(s['notes'], [builder.AI_SLOW_NOTE])
+        self.assertEqual(s['fields']['phone']['value'], '5550142290')
+
+    def test_some_failed_ai_calls_are_counted(self):
+        def flaky(messages, tools):
+            if 'Page: https://church.test/\n' in messages[1]['content']:
+                raise RuntimeError('500 from the model')
+            return {'facts': []}
+        s = self.session('harborlight-messy', complete=flaky)
+        self.assertEqual(s['notes'], ['1 source was read without AI because the AI reader returned an error.'])
+
+    def test_no_configured_model_is_explained(self):
+        with mock.patch.object(builder, '_ai_complete', lambda m, t, timeout=None: None), \
+                mock.patch.object(builder, '_ai_available', lambda: False):
+            s = builder.new_session('https://church.test/', fetch=site('cedar-hollow-static'), describe=False)
+        self.assertEqual(s['notes'], [builder.AI_MISSING_NOTE])
+
+    def test_real_calls_are_bounded_by_the_budget_and_fall_back_from_a_forced_tool(self):
+        import httpx
+        import openai
+        calls, options = [], []
+
+        class Completions:
+            def create(self, **kwargs):
+                calls.append(kwargs['tool_choice'])
+                if isinstance(kwargs['tool_choice'], dict):
+                    raise openai.BadRequestError('tool_choice not supported', body=None,
+                                                 response=httpx.Response(400, request=httpx.Request('POST', 'http://ai.test')))
+                call = mock.Mock()
+                call.function.arguments = '{"facts": []}'
+                return mock.Mock(choices=[mock.Mock(message=mock.Mock(tool_calls=[call]))])
+
+        class Client:
+            chat = mock.Mock(completions=Completions())
+
+            def with_options(self, **kwargs):
+                options.append(kwargs)
+                return self
+
+        with mock.patch('backend.app.chat.make_clients', return_value=[('ollama', 'qwen', {}, Client())]):
+            self.assertEqual(builder._ai_complete_impl([], [builder.AI_TOOL], timeout=12.0), {'facts': []})
+        self.assertEqual(calls, [{'type': 'function', 'function': {'name': 'record_church_facts'}}, 'auto'])
+        self.assertEqual(options, [{'timeout': 12.0, 'max_retries': 0}])
+
+
+class FetchBridgeTests(unittest.TestCase):
+    """On Cloudflare the container fetches through the Worker (BUILDER_FETCH_URL=http://builder-fetch)."""
+
+    def setUp(self):
+        import httpx
+        self.requests = []
+        real_client = httpx.Client
+
+        def handler(request):
+            self.requests.append(request)
+            body = json.loads(request.content)
+            if 'private' in body['url']:
+                return httpx.Response(403, json={'detail': 'That address is on a private network and cannot be imported.'})
+            if body['kind'] == 'image':
+                return httpx.Response(200, content=b'\x89PNG', headers={'content-type': 'image/png'})
+            return httpx.Response(200, content='<title>Hi | Grace</title><p>Café at 9am</p>'.encode('latin-1'),
+                                  headers={'content-type': 'text/html; charset=iso-8859-1', 'x-final-url': body['url'] + 'home'})
+
+        transport = httpx.MockTransport(handler)
+        for patcher in (mock.patch.dict(os.environ, {'BUILDER_FETCH_URL': 'http://builder-fetch/', 'BUILDER_ALLOW_PRIVATE': '0'}),
+                        mock.patch.object(builder.httpx, 'Client', lambda **kw: real_client(transport=transport, **kw))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_pages_and_images_go_through_the_bridge(self):
+        final, content_type, text = builder._http_fetch('https://grace.example/')
+        self.assertEqual((final, content_type), ('https://grace.example/home', 'text/html; charset=iso-8859-1'))
+        self.assertIn('Café at 9am', text)
+        self.assertEqual(builder._http_fetch_bytes('https://grace.example/a.png'), ('image/png', b'\x89PNG'))
+        self.assertEqual([str(r.url) for r in self.requests], ['http://builder-fetch/fetch'] * 2)
+
+    def test_the_bridge_refusal_reaches_the_church(self):
+        with self.assertRaises(ValueError) as caught:
+            builder.crawl('https://private.example/')
+        self.assertIn('private network', str(caught.exception))
+
+    def test_schemes_are_still_checked_in_the_container(self):
+        for url in ('file:///etc/passwd', 'ftp://example.org/', 'not a url'):
+            with self.assertRaises(ValueError, msg=url):
+                builder.crawl(url)
+        self.assertEqual(self.requests, [])
 
 
 if __name__ == '__main__':

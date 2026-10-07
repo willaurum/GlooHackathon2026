@@ -45,6 +45,8 @@ Each AI suggestion must come with the **exact quote** from the page it read. `gr
 
 - **Uploads:** 1–5 files, each up to 5 MB, at most 10 MB total. PDF, plain text, HTML, DOCX and PNG/JPEG/WebP are detected from their contents. DOCX extraction caps the uncompressed size at 5 MB. Images and scanned PDFs are skipped with a note when no vision model is available. File evidence uses the sanitized filename and exact quote, with no URL.
 - **No private addresses.** Import refuses `localhost`, private networks and link-local addresses, including after redirects (`_check_public`). `BUILDER_ALLOW_PRIVATE=1` turns this off for local testing only.
+- **Fetch bridge (optional).** With `BUILDER_FETCH_URL` set, pages and images are fetched by a bridge that checks every address and redirect itself, and the container only checks the scheme. The Cloudflare build sets it to the Worker's `http://builder-fetch`, because its container can only reach listed hosts. Unset (the laptop build), the container fetches directly.
+- **AI offline.** The rules still run when the AI reader is down, slow or not set up, and the draft's `notes` say so. Each AI call is limited to the time left in the import, so a hung model never holds a worker past it. A model that refuses a forced tool choice is asked again with `tool_choice: auto`.
 - **Same site only.** The crawler never follows links to other domains.
 - **Time budget.** An import finishes within 75 seconds, safely under Cloudflare's ~100 second request limit:
   - page reading stops after 30 seconds;
@@ -56,7 +58,7 @@ Each AI suggestion must come with the **exact quote** from the page it read. `gr
 - **Drafts:**
   - stored outside every church's data, in the reserved `builder` space;
   - reached only by an unguessable 24-character id;
-  - expire after 24 hours;
+  - expire after 24 hours, and expired drafts are deleted whenever a draft is saved;
   - can be applied to a church only once, and never to the demo church.
 
 ## Testing
