@@ -59,10 +59,12 @@ def get_api_key() -> str:
 
 
 def get_timeout() -> float:
-    """Seconds to wait for one summary; the team bridge's 27B model is slow (see chat.provider_timeout)."""
+    """Seconds to wait for one summary: the chat's per-call limit for the provider in use (60 for Gloo).
+    A local or custom endpoint gets the Ollama limit; the team bridge's 27B model is slow."""
     from . import chat
 
-    return float(chat.provider_timeout("ollama"))
+    provider = endpoint()["provider"]
+    return float(chat.provider_timeout("ollama" if provider in ("ollama", "local", "custom") else provider))
 
 
 def get_default_model() -> str:

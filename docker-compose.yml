@@ -70,6 +70,7 @@ services:
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       GLOO_API_KEY: ${GLOO_API_KEY:-}
       GLOO_MODEL: ${GLOO_MODEL:-gloo-qwen-3.7-flash}
+      GLOO_NOTES_MODEL: ${GLOO_NOTES_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

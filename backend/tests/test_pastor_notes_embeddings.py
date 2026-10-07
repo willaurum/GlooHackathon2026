@@ -85,7 +85,7 @@ class ProcessTests(ChurchTestCase):
                 mock.patch.object(pastor_notes, 'probe', return_value=(18.0, True)), \
                 mock.patch.object(pastor_notes, 'split_audio', return_value=[Path('/tmp/part000.mp3')]), \
                 mock.patch.object(pastor_notes, 'transcribe', return_value=list(SEGMENTS)) as transcribe, \
-                mock.patch.object(pastor_notes, 'categorize', return_value=[]), \
+                mock.patch.object(pastor_notes, 'categorize', return_value=([], 'none')), \
                 mock.patch.object(pastor_notes._ai, 'post', return_value=response(503)):
             pastor_notes.process(NOTE)
         transcribe.assert_called_once()

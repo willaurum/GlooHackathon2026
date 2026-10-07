@@ -7,13 +7,16 @@ ffmpeg cuts the audio into 10-minute mono parts, Workers AI transcribes each par
 chunks and embedded with Gloo (gloo-baai-bge-base-en-v1.5, through the Worker's
 /embed bridge) so the Worker can answer questions later. If embeddings fail, the
 chunks are saved unembedded and the Worker embeds them on the first question.
-Finally an LLM (`/llm`) tags passages by category (Bible quotes, personal stories, ...)
-so the transcript can highlight them.
+Finally Gloo (GLOO_NOTES_MODEL, else GLOO_MODEL) tags passages by category (Bible quotes,
+personal stories, ...) so the transcript can highlight them. A window Gloo can't tag falls back
+to the Worker's Workers AI `/llm` bridge, and a window neither can tag is skipped: highlights
+never fail a note.
 
 One background worker runs one job at a time. Jobs are claimed atomically in the
 database, so a note is never processed twice at once.
 """
 
+import contextvars
 import json
 import logging
 import os
@@ -24,6 +27,7 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -31,7 +35,8 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import db
+from . import chat, db
+from .recommendations import THINKING
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +49,11 @@ CHUNK_SECONDS = 30
 EMBED_BATCH = 50
 CATEGORIZE_WORDS = 1500
 MIN_CONFIDENCE = 0.5
+# gloo-qwen-3.7-flash is a reasoning model: one window can take 30+ seconds, and its thinking counts
+# toward max_tokens. A few windows run at once so a 90-minute sermon is tagged in a couple of minutes.
+GLOO_NOTES_TIMEOUT = 60
+GLOO_NOTES_MAX_TOKENS = 4096
+CATEGORIZE_PARALLEL = 3
 
 YOUTUBE_HOSTS = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'}
 VIDEO_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
@@ -277,12 +287,20 @@ def embed_chunks(chunks):
 CATEGORIZE_PROMPT = """You tag passages in a sermon transcript. Each line is one segment: [index] text.
 
 Categories:
-- bible_quote: the speaker reads or quotes Bible text directly
-- bible_paraphrase: retells or refers to a Bible story, character or teaching without quoting it
+- bible_quote: the speaker actually reads or recites the words of a verse.
+  Example: "In the beginning God created the heavens and the earth."
+- bible_paraphrase (shown as "Bible references"): the speaker names, points to or invites people to open a
+  passage, or retells a Bible story, character or teaching in their own words without reciting it.
+  Examples: "Turn with me to Genesis 1", "Let me invite you to open to the very first chapter, Genesis chapter 1",
+  "As Paul says in Romans 8", "Jesus told a story about a man who was robbed on the road to Jericho".
 - recent_event: mentions a recent or current news event
 - political_event: mentions politics, elections, government or politicians
 - personal_story: the speaker tells a personal anecdote or story from their own life
 - inerrancy_claim: claims the Bible is accurate, without error, or divinely authored
+
+Announcing a passage is always a reference (bible_paraphrase), never a quote, even when the reading follows.
+If the speaker announces a passage and then reads it, tag the announcement as bible_paraphrase and the
+words of the verse as bible_quote.
 
 Tag only passages that clearly fit. A passage is a run of consecutive segments (seg_from to seg_to, inclusive).
 label is a short description, with the verse reference when there is one (e.g. "Luke 10:25-37, the Good Samaritan").
@@ -307,19 +325,35 @@ def _windows(segments):
         yield first, segments[first:]
 
 
+def _annotation_items(text):
+    """The "annotations" list in a model reply, or None. Reasoning models may wrap the JSON in a <think>
+    block, a code fence or prose (which can contain braces of its own), so each {...} is tried in turn."""
+    text = THINKING.sub('', str(text or ''))
+    if '<think>' in text.lower():  # thinking cut off before it closed: nothing after it is an answer
+        text = text[:text.lower().index('<think>')]
+    decoder = json.JSONDecoder()
+    start = text.find('{')
+    while start >= 0:
+        try:
+            value, _ = decoder.raw_decode(text, start)
+        except ValueError:
+            value = None
+        if isinstance(value, dict) and isinstance(value.get('annotations'), list):
+            return value['annotations']
+        start = text.find('{', start + 1)
+    return None
+
+
 def _parse_annotations(text, first, last):
     """Valid annotations from a model reply, clamped to segments first..last. Bad items are dropped."""
-    start, end = text.find('{'), text.rfind('}')
-    try:
-        items = json.loads(text[start:end + 1]).get('annotations') if 0 <= start < end else None
-    except (ValueError, AttributeError):
-        items = None
     out = []
-    for a in items if isinstance(items, list) else []:
+    for a in _annotation_items(text) or []:
+        if not isinstance(a, dict):
+            continue
         try:
             seg_from, seg_to = int(a['seg_from']), int(a['seg_to'])
             confidence = float(a.get('confidence', 1.0))
-        except (KeyError, TypeError, ValueError, AttributeError):
+        except (KeyError, TypeError, ValueError):
             continue
         if a.get('category') not in db.ANNOTATION_CATEGORIES or confidence < MIN_CONFIDENCE:
             continue
@@ -331,22 +365,125 @@ def _parse_annotations(text, first, last):
     return out
 
 
-def categorize(segments):
-    """Tag passages by category. Best effort: a failed window is logged and skipped, never fails the note."""
-    annotations = []
-    for first, window in _windows(segments):
-        numbered = '\n'.join(f'[{first + i}] {s["text"]}' for i, s in enumerate(window))
+class NoGlooKey(Exception):
+    """GLOO_API_KEY is not set (the laptop build without Gloo): go straight to the fallback, quietly."""
+
+
+def gloo_notes_model():
+    """The Gloo model for highlights: GLOO_NOTES_MODEL, else the chat's GLOO_MODEL (gloo-qwen-3.7-flash)."""
+    name, default = chat.PROVIDERS['gloo']['model']
+    return (os.environ.get('GLOO_NOTES_MODEL') or '').strip() or (os.environ.get(name) or '').strip() or default
+
+
+def _gloo_categorize(prompt):
+    """(reply text, engine tag) from Gloo's chat completions, with the endpoint and options the chat uses.
+    Raises on a missing key, an HTTP error, a timeout or an empty reply."""
+    spec = chat.PROVIDERS['gloo']
+    key = os.environ.get(spec['key'], '').strip()
+    if not key:
+        raise NoGlooKey()
+    model = gloo_notes_model()
+    response = httpx.post(spec['base_url'].rstrip('/') + '/chat/completions',
+                          headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+                          json={**spec['extra_body'], 'model': model,
+                                'messages': [{'role': 'user', 'content': prompt}],
+                                'temperature': 0, 'max_tokens': GLOO_NOTES_MAX_TOKENS},
+                          timeout=httpx.Timeout(GLOO_NOTES_TIMEOUT, connect=10))
+    if response.status_code != 200:
+        raise RuntimeError(f'gloo {response.status_code}: {response.text[:300]}')
+    content = ((response.json().get('choices') or [{}])[0].get('message') or {}).get('content') or ''
+    if not content.strip():
+        raise RuntimeError('gloo returned an empty reply')
+    return content, f'gloo:{model}'
+
+
+def _workers_ai_categorize(prompt):
+    """(reply text, engine tag) from the Worker's /llm bridge (Workers AI). Only used when Gloo fails."""
+    response = _ai.post('/llm', json={'prompt': prompt}, timeout=httpx.Timeout(GLOO_NOTES_TIMEOUT, connect=10))
+    if response.status_code != 200:
+        raise RuntimeError(f'workers-ai {response.status_code}: {response.text[:300]}')
+    body = response.json()
+    return str(body.get('text') or ''), str(body.get('model') or 'workers-ai')
+
+
+def _categorize_window(first, window):
+    """(annotations, engine tag or None) for one window. Gloo first; a failure, or a reply without an
+    annotations list, goes to Workers AI; if that fails too the window is skipped."""
+    prompt = CATEGORIZE_PROMPT + '\n'.join(f'[{first + i}] {s["text"]}' for i, s in enumerate(window))
+    last = first + len(window) - 1
+    for engine in (_gloo_categorize, _workers_ai_categorize):
         try:
-            response = _ai.post('/llm', json={'prompt': CATEGORIZE_PROMPT + numbered})
-            if response.status_code != 200:
-                log.warning('categorize failed: %s %s', response.status_code, response.text[:300])
-                continue
-            text = response.json().get('text') or ''
-        except (httpx.HTTPError, ValueError, AttributeError) as err:
-            log.warning('categorize failed: %s', err)
+            text, tag = engine(prompt)
+        except NoGlooKey:
             continue
-        annotations += _parse_annotations(str(text), first, first + len(window) - 1)
-    return merge_annotations(annotations)
+        except Exception as err:  # best effort: try the next engine, or skip the window
+            log.warning('categorize via %s failed: %s', engine.__name__, str(err)[:300])
+            continue
+        if _annotation_items(text) is None:
+            log.warning('categorize via %s: no annotations JSON in the reply', tag)
+            continue
+        return _parse_annotations(text, first, last), tag
+    return [], None
+
+
+# Navigation language: pointing people to a passage rather than reading it.
+NAVIGATION = re.compile(
+    r"\b(turn(ing)?\s+(with\s+me\s+)?(back\s+)?to|open(ing)?\s+(up\s+)?(your\s+bibles?\s+)?(to|with)|"
+    r"(let\s+me\s+)?invite\s+you|if\s+you\s+have\s+(a|your)\s+bibles?|have\s+a\s+bible|look\s+on\s+with|"
+    r"find\s+your\s+place|follow\s+along|chapters?|verses?\s+\d+|page\s+\d+|"
+    r"we('re|\s+are)\s+(going\s+to\s+be\s+)?(in|reading|looking\s+at))\b", re.I)
+# Words and marks that suggest the words of a verse are being recited.
+VERSE_TEXT = re.compile(
+    r"[\"\u201c\u201d]|\b(god|lord|jesus|christ|spirit|shall|unto|thee|thou|thy|thine|hath|saith|behold|ye|verily|"
+    r"blessed|heavens?|righteous(ness)?|created|truly)\b", re.I)
+
+
+def _reference_not_quote(annotation, segments):
+    """A bible_quote whose segments only point to a passage ("open to Genesis chapter 1") is a reference.
+    It is downgraded when some clause is navigation language and no other clause reads like verse text."""
+    if annotation['category'] != 'bible_quote':
+        return annotation
+    text = ' '.join(s['text'] for s in segments[annotation['seg_from']:annotation['seg_to'] + 1])
+    clauses = [c for c in re.split(r'[.,;:!?]+', text) if c.strip()]
+    navigates = any(NAVIGATION.search(c) for c in clauses)
+    recites = any(VERSE_TEXT.search(c) for c in clauses if not NAVIGATION.search(c))
+    return {**annotation, 'category': 'bible_paraphrase'} if navigates and not recites else annotation
+
+
+def categorize(segments):
+    """(annotations, engine) for a transcript. engine names the model(s) that tagged it, for example
+    "gloo:gloo-qwen-3.7-flash", or "none" when no window could be tagged. Best effort: never raises."""
+    windows = list(_windows(segments))
+    if not windows:
+        return [], 'none'
+    with ThreadPoolExecutor(max_workers=min(CATEGORIZE_PARALLEL, len(windows))) as pool:
+        results = list(pool.map(lambda w: _categorize_window(*w), windows))
+    tags = list(dict.fromkeys(tag for _, tag in results if tag))
+    skipped = sum(1 for _, tag in results if not tag)
+    engine = '+'.join(tags) or 'none'
+    if skipped and tags:
+        engine += f' ({skipped} of {len(windows)} windows skipped)'
+    annotations = [_reference_not_quote(a, segments) for found, _ in results for a in found]
+    return merge_annotations(annotations), engine
+
+
+_recategorizing = set()
+_recategorizing_lock = threading.Lock()
+
+
+def recategorize(note_id):
+    """Re-tag a ready note's highlights from its stored segments (no download, no Whisper). Best effort."""
+    try:
+        segments = db.list_segments(note_id)
+        annotations, engine = categorize(segments)
+        db.replace_annotations(note_id, annotations, engine)
+        log.info('note %s re-categorized: %d annotations (highlights: %s)', note_id, len(annotations), engine)
+    except Exception:
+        log.exception('note %s: re-categorizing failed', note_id)
+        db.set_highlight_engine(note_id, 'none')
+    finally:
+        with _recategorizing_lock:
+            _recategorizing.discard((db.current_church(), note_id))
 
 
 def merge_annotations(annotations):
@@ -388,10 +525,14 @@ def process(note_id):
             raise NoteError('no_speech')
         chunks = make_chunks(segments)
         embed_chunks(chunks)
-        annotations = categorize(segments)
-        db.save_transcript(note_id, segments, chunks, round(duration, 2), annotations)
-        log.info('note %s ready: %d segments, %d chunks, %d annotations',
-                 note_id, len(segments), len(chunks), len(annotations))
+        try:
+            annotations, highlight_engine = categorize(segments)
+        except Exception:  # highlights are optional; the transcript is what the note is for
+            log.exception('note %s: highlights failed', note_id)
+            annotations, highlight_engine = [], 'none'
+        db.save_transcript(note_id, segments, chunks, round(duration, 2), annotations, highlight_engine)
+        log.info('note %s ready: %d segments, %d chunks, %d annotations (highlights: %s)',
+                 note_id, len(segments), len(chunks), len(annotations), highlight_engine)
     except NoteError as err:
         db.fail_note(note_id, err.code)
     except subprocess.TimeoutExpired:
@@ -528,6 +669,28 @@ def retry(note_id: str):
         raise HTTPException(status_code=409, detail=f"Note is {note['status']}; only failed notes can be retried")
     kick()
     return {'id': note_id, 'status': 'queued'}
+
+
+@router.post('/api/notes/{note_id}/recategorize', status_code=202)
+def start_recategorize(note_id: str):
+    """Staff or API key (the Worker's default for notes routes): re-run highlights on a ready note from its
+    stored transcript, in the background. GET /api/notes/<id> shows highlight_engine 'recategorizing'
+    until it is done, then the model that tagged it."""
+    _ready_note(note_id)
+    key = (db.current_church(), note_id)
+    with _recategorizing_lock:
+        if key in _recategorizing:
+            raise HTTPException(status_code=409, detail='This note is already being re-categorized')
+        _recategorizing.add(key)
+    db.set_highlight_engine(note_id, 'recategorizing')
+    _in_background(recategorize, note_id)
+    return {'id': note_id, 'highlight_engine': 'recategorizing'}
+
+
+def _in_background(fn, *args):
+    """Run fn(*args) on its own thread, for the church this request is for."""
+    context = contextvars.copy_context()
+    threading.Thread(target=context.run, args=(fn, *args), name='notes-recategorize', daemon=True).start()
 
 
 # Internal routes: the Worker blocks /api/internal/* from outside and calls these itself.

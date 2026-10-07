@@ -62,8 +62,10 @@ jobs:
           GLOO_MODEL: ${{ vars.GLOO_MODEL }}
           # Also a variable: the Gloo embedding model for sermon-note search (default gloo-baai-bge-base-en-v1.5).
           GLOO_EMBED_MODEL: ${{ vars.GLOO_EMBED_MODEL }}
+          # Also a variable: the Gloo model that tags sermon highlights (default: GLOO_MODEL, then gloo-qwen-3.7-flash).
+          GLOO_NOTES_MODEL: ${{ vars.GLOO_NOTES_MODEL }}
         run: |
-          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL GLOO_EMBED_MODEL; do
+          for name in GLOO_API_KEY NEWSDATA_API_KEY GLOO_MODEL GLOO_EMBED_MODEL GLOO_NOTES_MODEL; do
             value="${!name}"
             if [ -n "$value" ]; then
               printf '%s' "$value" | npx wrangler secret put "$name"
