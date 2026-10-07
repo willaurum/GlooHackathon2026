@@ -375,7 +375,7 @@ def public_site_model(content):
 
 def page_summaries(pages):
     """The menu needs each page's slug and title; a page's sections come from GET /api/church/pages/{slug}."""
-    return [{'id': p['id'], 'slug': p['slug'], 'title': p['title'], 'page_type': p.get('page_type', '')} for p in pages]
+    return [{'id': p['id'], 'slug': p['slug'], 'title': p['title'], 'page_type': p.get('page_type', ''), 'source_url': p.get('source_url', '')} for p in pages]
 
 
 def public_ministries(content):

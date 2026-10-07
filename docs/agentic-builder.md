@@ -175,3 +175,11 @@ On `#/new`, choose **Start from JSON files**. Upload the versioned `church.json`
 The loaded draft goes straight to Review, preserves all supplied content in the site preview, and creates a church through the existing invite-code and Owner-account flow. Change the files and import again to edit before launch; Church setup remains available after launch. Plain-word extraction edits are unavailable for JSON drafts. Draft expiry and retrying a failed apply work as usual.
 
 Offline verification: `python -m unittest backend.tests.test_builder_json_import` runs the local giving adapter (Node 24 and `api-giving` dependencies required) on an ephemeral port with a generated, test-only invite code. The test checks the real Worker registry lookup and Owner-token gate before applying with its church headers. It skips the integration case if Node or adapter dependencies are missing.
+
+### Imported site display and page editing
+
+Approved assets (`rights: true`) supply the church logo and Home hero image, with the existing illustration or initials as a fallback when an image fails. Imported background, accent and text colors apply alongside the primary color and fonts. Registration links include the imported forms' action URLs. Links to imported pages open their new Tekton routes rather than sending visitors back to the old website.
+
+After launch, authorized staff can edit imported page titles, section headings and text under **Church setup → Website pages**, and add sections. Saving preserves each page's address, links and embeds and refreshes the menu. Visitors need no account; the creation flow registers the church's Owner account with an invite code.
+
+**Ask Tekton to change something** is available on Review and in the website preview banner for extracted or questionnaire drafts. JSON drafts currently have no plain-language editing control. The public Home **Ask Tekton** button answers questions; it is separate from the draft editor.

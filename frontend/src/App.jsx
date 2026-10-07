@@ -287,10 +287,18 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
   const ready = !!snapshot || demo || apiReady === true;
   // The church's imported website (menu and page list), when the site builder made one.
   useEffect(() => {
-    let live = true;
+    let live = true, retry;
     setWebsite(null);
-    if (ready && !demo) api('/church').then(c => { if (live && c.site) setWebsite({ site: c.site, pages: c.pages || [] }); }).catch(() => {});
-    return () => { live = false; };
+    async function load() {
+      try {
+        const content = await api('/church');
+        if (live) setWebsite(content.site ? { site: content.site, pages: content.pages || [] } : null);
+      } catch {
+        if (live) retry = setTimeout(load, 2000);
+      }
+    }
+    if (ready && !demo) load();
+    return () => { live = false; clearTimeout(retry); };
   }, [slug, ready, demo, listingVersion]);
   // Its colors and fonts, until another church (or the demo church) is shown.
   useEffect(() => website?.site?.theme ? applyTheme(website.site.theme) : undefined, [website]);
