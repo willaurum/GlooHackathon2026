@@ -337,7 +337,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
       <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
     </div>}
     {section === 'calendar' && <div className="page">
-      <PageHeader eyebrow="Calendar" title="Church Life & Gatherings." text="Explore upcoming gatherings, services, and outreach with AI-generated summaries." />
+      <PageHeader eyebrow="Calendar" title="Church Life & Gatherings." text="Explore upcoming gatherings, services, and outreach." />
       <Calendar />
     </div>}
     {section === 'guests' && <div className="page">
