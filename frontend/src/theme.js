@@ -18,7 +18,12 @@ export function themeVariables(theme) {
     '--green-600': mix(primary, '#ffffff', 0.15), '--green-200': mix(primary, '#ffffff', 0.75),
     '--green-100': mix(primary, '#ffffff', 0.88), '--green-50': mix(primary, '#ffffff', 0.94),
   });
-  if (HEX.test(theme?.text || '')) vars['--text'] = theme.text.toLowerCase();
+  if (HEX.test(theme?.background || '')) vars['--bg'] = theme.background.toLowerCase();
+  if (HEX.test(theme?.accent || '')) Object.assign(vars, {
+    '--sand-50': mix(theme.accent, '#ffffff', 0.94), '--sand-100': mix(theme.accent, '#ffffff', 0.85),
+    '--sand-700': mix(theme.accent, '#000000', 0.35),
+  });
+  if (HEX.test(theme?.text || '')) Object.assign(vars, { '--text': theme.text.toLowerCase(), '--ink': theme.text.toLowerCase() });
   if (FONT.test(theme?.body_font || '')) vars['--font'] = `'${theme.body_font}', system-ui, -apple-system, sans-serif`;
   if (FONT.test(theme?.heading_font || '')) vars['--display'] = `'${theme.heading_font}', Georgia, serif`;
   return vars;

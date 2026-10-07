@@ -72,3 +72,24 @@ test('preview neither reads nor changes the real site key', () => {
     assert.deepEqual([...store], [['pastor-notes-api-key', 'real-key']]);
   } finally { stopApiPreview(); globalThis.sessionStorage = original; }
 });
+
+test('preview chat posts only to its draft without church credentials', async () => {
+  const originalFetch = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push([url, options]);
+    return Response.json({ reply: 'Harborlight Chapel meets Sunday at 9:00 AM.', actions: [] });
+  };
+  try {
+    setApiChurch(DEMO_CHURCH);
+    startApiPreview(snapshot, 'draft-123');
+    const body = JSON.stringify({ session_id: 'test', messages: [{ role: 'user', content: 'When are services?' }] });
+    const result = await api('/chat', { method: 'POST', body, headers: { Authorization: 'Bearer real-token' } });
+    assert.equal(calls[0][0], '/api/builder/drafts/draft-123/chat');
+    assert.deepEqual(calls[0][1].headers, { 'Content-Type': 'application/json' });
+    assert.equal(calls[0][1].credentials, 'omit');
+    assert.equal(calls[0][1].body, body);
+    assert.doesNotMatch(result.reply, /Grace Community/);
+    await assert.rejects(api('/visits', { method: 'POST', body: '{}' }), { message });
+    assert.equal(calls.length, 1);
+  } finally { stopApiPreview(); globalThis.fetch = originalFetch; }
+});

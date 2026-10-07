@@ -15,7 +15,24 @@ export function siteLinks(site, kind) {
 export const givingLink = site => siteLinks(site, 'giving')[0] || null;
 export const livestreamLink = site => siteLinks(site, 'livestream')[0] || null;
 // Registration and sign-up forms the church already uses (Church Center, Google Forms, SignUpGenius...).
-export const signupLinks = site => siteLinks(site, 'form').map(link => ({ ...link, label: link.text || link.provider })).slice(0, 6);
+export function signupLinks(site) {
+  const seen = new Set();
+  const forms = (site?.forms || []).filter(form => safeHref(form.action)).map(form => ({
+    url: safeHref(form.action), label: form.name || form.submit || form.provider || 'Register',
+  }));
+  return [...siteLinks(site, 'form').map(link => ({ ...link, label: link.text || link.provider || 'Register' })), ...forms]
+    .filter(link => !seen.has(link.url) && seen.add(link.url)).slice(0, 6);
+}
+
+/** Only images the church has approved. Hero photos never fall back to logos or icons. */
+export function siteImage(site, role) {
+  const assets = (site?.assets || []).filter(asset => asset.rights && safeHref(asset.url));
+  const selected = role === 'logo'
+    ? assets.find(asset => asset.url === site?.theme?.logo || asset.role === 'logo')
+    : assets.find(asset => ['hero', 'banner', 'cover'].includes(asset.role))
+      || assets.find(asset => !['logo', 'icon', 'favicon'].includes(asset.role));
+  return selected ? { ...selected, url: safeHref(selected.url) } : null;
+}
 
 /** Social accounts and apps for the footer, one per provider. */
 export function footerLinks(site) {

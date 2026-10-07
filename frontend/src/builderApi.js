@@ -33,6 +33,11 @@ export const editApi = (draftId, request) => draftApi('/' + encodeURIComponent(d
 
 export const undoEditApi = draftId => draftApi('/' + encodeURIComponent(draftId) + '/edits/undo', { method: 'POST' });
 
+/** A change asked while looking at the preview: { draft, reply, changes, refused, asking }. */
+export const customizeApi = (draftId, request, viewing = '') => draftApi('/' + encodeURIComponent(draftId) + '/customize', { method: 'POST', body: JSON.stringify({ request, viewing }) });
+
+export const undoCustomizeApi = draftId => draftApi('/' + encodeURIComponent(draftId) + '/customize/undo', { method: 'POST' });
+
 /** Import the upcoming events of a calendar Tekton found on the church's site (only after the church says yes),
  * or leave it out. Tekton reads the feed it found itself; the page never sends an address. */
 export const calendarApi = (draftId, calendarId, action) => draftApi('/' + encodeURIComponent(draftId) + '/calendars/'
@@ -44,6 +49,19 @@ export const removedApi = (draftId, removedId) => draftApi('/' + encodeURICompon
 
 /** The pastor confirms (or takes back) the statement of faith Tekton kept word for word. */
 export const beliefsApi = (draftId, confirmed) => draftApi('/' + encodeURIComponent(draftId) + '/beliefs', { method: 'POST', body: JSON.stringify({ confirmed }) });
+
+export async function downloadSiteFiles(draftId) {
+  const { files } = await draftApi('/' + encodeURIComponent(draftId) + '/files');
+  const name = files['church.json']?.info?.name || 'church';
+  const url = URL.createObjectURL(new Blob([JSON.stringify(files, null, 2) + '\n'], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'church') + '-site-files.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const timer = setTimeout(resolve, ms);
@@ -96,4 +114,33 @@ export async function createFromDraft(draftId, account, created, onCreated) {
   return request(apiUrl('/builder/drafts/' + encodeURIComponent(draftId) + '/apply', church.slug), {
     method: 'POST', headers,
   });
+}
+
+export async function createFromJson(files) {
+  if (!files.length || files.length > 5 || files.reduce((n, file) => n + file.size, 0) > 10 * 1024 * 1024) {
+    throw new Error('Choose up to five site JSON files, at most 10 MB of uploads.');
+  }
+  const parsed = [];
+  for (const file of files) {
+    try { parsed.push(JSON.parse(await file.text())); }
+    catch { throw new Error(file.name + ' is not valid JSON.'); }
+  }
+  let content;
+  const names = ['church.json', 'ministries.json', 'events.json', 'builder.json', 'regions.json', 'site.json'];
+  if (files.length === 1 && !names.includes(files[0].name)) content = parsed[0];
+  else {
+    content = {};
+    for (const [i, file] of files.entries()) {
+      if (!names.includes(file.name) || Object.hasOwn(content, file.name)) {
+        throw new Error('Choose unique church.json and site.json files, legacy seed files, or one combined site-files JSON.');
+      }
+      content[file.name] = parsed[i];
+    }
+  }
+  const body = JSON.stringify(content, (_, value) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Site files contain a number that is too large.');
+    return value;
+  });
+  if (new Blob([body]).size > 2 * 1024 * 1024) throw new Error('Site files must be 2 MB or smaller in total.');
+  return draftApi('/json', { method: 'POST', body });
 }
