@@ -37,7 +37,7 @@ class BuilderTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def session(self, name, complete=None):
-        return builder.new_session('https://church.test/', fetch=site(name), complete=complete or (lambda m, t: None))
+        return builder.new_session('https://church.test/', fetch=site(name), complete=complete or (lambda m, t: None), describe=False)
 
 
 class MessySiteTests(BuilderTestCase):
@@ -131,6 +131,31 @@ class AiGroundingTests(BuilderTestCase):
         self.assertEqual(s['fields']['phone']['value'], '5550142290')
 
 
+class ImageTests(BuilderTestCase):
+    def test_a_bulletin_image_adds_its_service_time_as_a_third_source(self):
+        bulletin = ('HARBOR LIGHT\nWeekly Bulletin ~ Summer Schedule\nONE service this summer: Sundays at 10 AM\n'
+                    '(June through Labor Day; two services return in the fall)')
+        described = []
+
+        def describe(data, content_type):
+            described.append(content_type)
+            return bulletin
+        s = builder.new_session('https://church.test/', fetch=site('harborlight-messy'), complete=lambda m, t: None,
+                                fetch_bytes=lambda url: ('image/png', b'png'), describe=describe)
+        self.assertEqual(described, ['image/png'])  # one image on the site, read once
+        image = next(x for x in s['sources'] if x['kind'] == 'image')
+        self.assertTrue(image['url'].endswith('images/bulletin.png'))
+        q = next(q for q in s['questions'] if q['field'] == 'services')
+        shown = {c['display']: c['evidence'] for c in q['candidates']}
+        self.assertEqual(set(shown), {'Sunday 9:00 AM, Sunday 11:00 AM', 'Sunday 10:30 AM', 'Sunday 10:00 AM'})
+        self.assertIn('Sundays at 10 AM', shown['Sunday 10:00 AM'][0]['quote'])
+        self.assertEqual(shown['Sunday 10:00 AM'][0]['source_id'], image['id'])
+
+    def test_without_a_vision_model_images_are_skipped(self):
+        s = self.session('harborlight-messy')
+        self.assertEqual([x for x in s['sources'] if x['kind'] == 'image'], [])
+
+
 class SafetyTests(unittest.TestCase):
     def test_private_and_local_addresses_are_refused(self):
         with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '0'}):
@@ -158,7 +183,8 @@ class RouteTests(ChurchTestCase):
         self.client = TestClient(main.app)
         for patcher in (mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1', 'BUILDER_AI': '0'}),
                         mock.patch.object(builder, '_http_fetch', site('harborlight-messy')),
-                        mock.patch.object(builder, '_ai_complete', None)):
+                        mock.patch.object(builder, '_ai_complete', None),
+                        mock.patch.object(builder, '_ai_describe', None)):
             patcher.start()
             self.addCleanup(patcher.stop)
 

@@ -56,7 +56,7 @@ class _PageText(HTMLParser):
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.parts, self.links, self.title, self._skip, self._in_title = [], [], '', 0, False
+        self.parts, self.links, self.images, self.title, self._skip, self._in_title = [], [], [], '', 0, False
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -66,8 +66,11 @@ class _PageText(HTMLParser):
             self._in_title = True
         elif tag == 'a' and attrs.get('href'):
             self.links.append(attrs['href'])
-        elif tag == 'img' and attrs.get('alt'):
-            self.parts.append(f" [image: {attrs['alt']}] ")
+        elif tag == 'img':
+            if attrs.get('src'):
+                self.images.append(attrs['src'])
+            if attrs.get('alt'):
+                self.parts.append(f" [image: {attrs['alt']}] ")
         if tag in self.BLOCK:
             self.parts.append('\n')
 
@@ -94,7 +97,7 @@ def parse_html(html):
     page = _PageText()
     page.feed(html)
     page.close()
-    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links}
+    return {'title': page.title.strip(), 'text': page.text(), 'links': page.links, 'images': page.images}
 
 
 def _check_public(url):
@@ -134,14 +137,78 @@ def crawl(start_url, fetch=None, max_pages=MAX_PAGES):
         # The same page under two addresses ("/" and "/index.html") is one source, or it would count twice.
         if any(s['text'] == page['text'][:MAX_SOURCE_CHARS] for s in sources):
             continue
+        images = [urldefrag(urljoin(final_url, src))[0] for src in page['images']]
         sources.append({'id': f's{len(sources) + 1}', 'kind': 'page', 'url': final_url, 'title': page['title'],
-                        'text': page['text'][:MAX_SOURCE_CHARS]})
+                        'text': page['text'][:MAX_SOURCE_CHARS],
+                        'images': [i for i in images if urlparse(i).netloc == origin and IMAGE_RE.search(i)]})
         for href in page['links']:
             link = urldefrag(urljoin(final_url, href))[0]
             if urlparse(link).netloc == origin and link not in seen and not re.search(r'\.(pdf|jpe?g|png|gif|zip|docx?)$', link, re.I):
                 seen.add(link)
                 queue.append(link)
     return sources
+
+
+IMAGE_RE = re.compile(r'\.(png|jpe?g|gif|webp)$', re.I)
+MAX_IMAGES = 5
+MAX_IMAGE_BYTES = 4_000_000
+
+
+def read_images(sources, fetch_bytes=None, describe=None):
+    """Image sources: a bulletin or flyer often holds the only copy of a service time. Each same-site image
+    (at most MAX_IMAGES) is transcribed by a vision model into text that the same rules then read. With no
+    vision model, images are skipped."""
+    describe = describe if describe is not None else _ai_describe
+    if not describe:
+        return []
+    fetch_bytes = fetch_bytes or _http_fetch_bytes
+    out, seen = [], set()
+    for page in sources:
+        for url in page.get('images', []):
+            if url in seen or len(out) >= MAX_IMAGES:
+                continue
+            seen.add(url)
+            try:
+                content_type, data = fetch_bytes(url)
+                text = (describe(data, content_type) or '').strip()
+            except Exception as error:
+                log.info('builder: skipped image %s (%s)', url, error)
+                continue
+            if len(text) >= 20:
+                out.append({'id': f's{len(sources) + len(out) + 1}', 'kind': 'image', 'url': url,
+                            'title': f"Image on {page.get('title') or page['url']}", 'text': text[:MAX_SOURCE_CHARS]})
+    return out
+
+
+def _http_fetch_bytes(url):
+    _check_public(url)
+    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=False, headers={'User-Agent': 'TektonBuilder/0.1'}) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        content_type = response.headers.get('content-type', '').split(';')[0]
+        if not content_type.startswith('image/') or len(response.content) > MAX_IMAGE_BYTES:
+            raise ValueError('not a small image')
+        return content_type, response.content
+
+
+def _ai_describe_impl(data, content_type):
+    """Transcribe an image's words with the first configured model that accepts images."""
+    import base64
+    from . import chat
+    clients = chat.make_clients()
+    if not clients:
+        return ''
+    name, model, extra_body, client = clients[0]
+    url = f'data:{content_type};base64,' + base64.b64encode(data).decode()
+    response = client.chat.completions.create(model=model, temperature=0, max_tokens=800, messages=[
+        {'role': 'user', 'content': [
+            {'type': 'text', 'text': 'Copy out every word printed in this image, line by line, exactly as written. '
+                                     'No commentary. If there is no text, reply with nothing.'},
+            {'type': 'image_url', 'image_url': {'url': url}}]}], **({'extra_body': extra_body} if extra_body else {}))
+    return response.choices[0].message.content or ''
+
+
+_ai_describe = _ai_describe_impl if os.environ.get('BUILDER_VISION', '1') != '0' and os.environ.get('BUILDER_AI', '1') != '0' else None
 
 
 def _http_fetch(url):
@@ -533,10 +600,12 @@ def build_content(session):
     return church_content.normalize(church_content.ChurchContent(**content))
 
 
-def new_session(url, fetch=None, complete=None):
+def new_session(url, fetch=None, complete=None, fetch_bytes=None, describe=None):
     sources = crawl(url, fetch)
     if not sources:
         raise ValueError('No pages could be read from that address.')
+    if describe is not None or (_ai_describe is not None and _ai_available()):
+        sources += read_images(sources, fetch_bytes, describe)
     claims = extract(sources, complete)
     fields = reconcile(claims, len(sources))
     qs = questions(fields, claims, sources)
