@@ -134,8 +134,8 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/files$`)],
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/chat$`)],
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/pages/${ID}$`)],
-	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|parts|preview|beliefs|edits)$`)],
-	['POST', new RegExp(`^/api/builder/drafts/${ID}/edits/undo$`)],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/(answers|items|parts|preview|beliefs|edits|customize)$`)],
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/(edits|customize)/undo$`)],
 ];
 
 // Staff work requires a church session, including on the demo church.

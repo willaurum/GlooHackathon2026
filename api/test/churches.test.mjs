@@ -221,7 +221,8 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
         ['POST', `/api/builder/drafts/${id}/answers`], ['POST', `/api/builder/drafts/${id}/items`],
         ['POST', `/api/builder/drafts/${id}/parts`], ['POST', `/api/builder/drafts/${id}/preview`],
         ['POST', `/api/builder/drafts/${id}/beliefs`], ['POST', `/api/builder/drafts/${id}/edits`],
-        ['POST', `/api/builder/drafts/${id}/edits/undo`]])
+        ['POST', `/api/builder/drafts/${id}/edits/undo`],
+        ['POST', `/api/builder/drafts/${id}/customize`], ['POST', `/api/builder/drafts/${id}/customize/undo`]])
         assert.equal(access(m, p, demo), 'public', m + ' ' + p);
       assert.equal(access('POST', `/api/builder/drafts/${id}/apply`, demo), 'staff');
       for (const method of ['GET', 'PUT', 'PATCH', 'DELETE'])
@@ -234,7 +235,7 @@ test('drafts are public; apply and all unknown builder routes stay staff only', 
     for (const p of ['/api/builder', '/api/builder/sessions', '/api/builder/unknown',
       '/api/builder/drafts', '/api/builder/drafts/x/apply', '/api/builder/drafts/x/unknown', '/api/builder/drafts/x/preview/extra', '/api/builder/drafts/x/site/extra',
       '/api/builder/drafts/x/files/extra', '/api/builder/drafts/x/pages', '/api/builder/drafts/x/pages/s1/extra', '/api/builder/drafts/x/parts/extra',
-      '/api/builder/drafts/x/edits/undo/extra', '/api/builder/drafts/x/edits/redo'])
+      '/api/builder/drafts/x/edits/undo/extra', '/api/builder/drafts/x/edits/redo', '/api/builder/drafts/x/customize/undo/extra'])
       for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
         if (!(m === 'POST' && p === '/api/builder/drafts')) assert.equal(access(m, p, demo), 'staff', m + ' ' + p);
   }

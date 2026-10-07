@@ -27,7 +27,7 @@ import SitePage from './SitePages.jsx';
 import { footerLinks } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
-import TektonEdit from './TektonEdit.jsx';
+import TektonAgent from './TektonAgent.jsx';
 
 const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -50,6 +50,17 @@ const WORKS_WITHOUT_CHURCH_API = new Set(['give', 'staff', 'platform']);
 
 // A section whose own route has no page (Guests, Prayer) opens its first sub-page,
 // so tapping it in the phone tab bar never lands on an empty page.
+// The page on screen in words, for Tekton's preview bar ("put service times at the top" means this page).
+function viewingName(route) {
+  if (!route) return 'Home';
+  for (const s of SECTIONS) {
+    const child = (s.children || []).find(([r]) => r === route);
+    if (child) return child[1];
+    if (s.route === route) return s.label;
+  }
+  return route.startsWith('p/') ? 'an imported page' : '';
+}
+
 function withDefault(route, demo = true) {
   const s = SECTIONS.find(x => x.route === route);
   return s?.children && !s.children.some(([r]) => r === route) ? s.children[0][0] : route;
@@ -114,7 +125,7 @@ export default function App() {
 
 function BuilderPreview() {
   const [snapshot, setSnapshot] = useState(null), [error, setError] = useState(''), [version, setVersion] = useState(0);
-  const [draft, setDraft] = useState(null), [loaded, setLoaded] = useState(0), [lastEdit, setLastEdit] = useState(null);
+  const [draft, setDraft] = useState(null), [loaded, setLoaded] = useState(0), [lastAsk, setLastAsk] = useState(null);
   useEffect(() => {
     document.title = 'Site preview · Tekton';
     let live = true;
@@ -133,10 +144,10 @@ function BuilderPreview() {
     <main><p role={error ? 'alert' : 'status'}>{error || 'Loading your site preview…'}</p><a href="#/new">Back to Tekton</a></main>
   </div>;
   // A change asked in the banner reloads the preview with the changed draft (same page, new content).
-  return <SiteApp key={loaded} snapshot={snapshot} draft={draft} lastEdit={lastEdit} onEdited={done => { setLastEdit(done); setVersion(v => v + 1); }} />;
+  return <SiteApp key={loaded} snapshot={snapshot} draft={draft} lastAsk={lastAsk} onEdited={result => { setLastAsk(result); setVersion(v => v + 1); }} />;
 }
 
-function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
+function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   const previewBanner = useRef(null);
   // On a Tekton preview, each imported fact can show where it came from (Sourced.jsx); on by default.
   const [showSources, setShowSources] = useState(true);
@@ -368,7 +379,7 @@ function SiteApp({ snapshot, draft, lastEdit, onEdited }) {
       {snapshot && <div className="site-preview-banner" ref={previewBanner}>
         <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
         {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
-        {draft && draft.import_kind !== 'json' && <TektonEdit draftId={draft.id} undoCount={draft.undo_count || 0} compact lastResult={lastEdit} onChanged={(_, done) => onEdited?.(done)} />}
+        {draft && <TektonAgent draftId={draft.id} steps={draft.custom_steps?.length || 0} viewing={viewingName(route)} lastResult={lastAsk} onChanged={(_, result) => onEdited?.(result)} />}
         <a href="#/new">Back to Tekton</a>
       </div>}
       <SiteNav route={route} go={go} savedCount={savedCount} />

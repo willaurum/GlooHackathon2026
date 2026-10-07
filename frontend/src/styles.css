@@ -1326,6 +1326,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .tekton-edit.compact input { padding: 6px 10px; font-size: 13px; }
 .tekton-edit.compact button { padding: 6px 12px; font-size: 13px; }
 .tekton-edit.compact .tekton-edit-result { font-size: 12px; }
+.tekton-agent .tekton-agent-question { color: var(--green-700); font-weight: 600; }
 .site-preview-banner { flex-wrap: wrap; }
 .site-preview-banner > button { flex: none; padding: 6px 12px; font-size: 13px; }
 
