@@ -1609,7 +1609,7 @@ export class GivingRegistry extends DurableObject<GivingEnv> {
     if (!this.#rateOk('signup:' + ip, 5, 3_600_000) || !this.#rateOk('signup-all', 200, 3_600_000)) return { error: 'Too many new churches from here. Please try again later.' };
     const base = slugify(name);
     // Slugs become subdomains later (<slug>.<BASE_DOMAIN>), so keep names a site needs for itself.
-    const reserved = new Set(['admin', 'api', 'new', 'start', 'give', 'church', 'churches', 'demo', 'www', 'app', 'mail', 'setup', 'staff', 'static']);
+    const reserved = new Set(['admin', 'api', 'new', 'start', 'give', 'church', 'churches', 'demo', 'www', 'app', 'mail', 'setup', 'staff', 'static', 'builder']);
     const sql = this.ctx.storage.sql;
     for (let i = 1; i < 50; i++) {
       const slug = i === 1 && !reserved.has(base) ? base : `${base}-${i}`;

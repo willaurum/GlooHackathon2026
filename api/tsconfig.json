@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["index.ts", "notes.ts", "embed.ts", "verse.ts", "churches.ts", "teamai.ts", "worker-configuration.d.ts"]
+  "include": ["index.ts", "notes.ts", "embed.ts", "verse.ts", "churches.ts", "teamai.ts", "ythelper.ts", "builderfetch.ts", "worker-configuration.d.ts"]
 }

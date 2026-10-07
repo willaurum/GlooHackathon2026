@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai_client, blog_ai, chat, church_content, db, newsdata, pastor_notes, recommendations
+from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, recommendations
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ app = FastAPI(title="Tekton API", lifespan=lifespan)
 app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
 app.include_router(church_content.router)
+app.include_router(builder.router)
 
 
 class AvailabilityWindow(BaseModel):
@@ -73,12 +74,12 @@ class ConnectionRequest(BaseModel):
 @app.get('/api/info')
 def church_info():
     # Public church details (address, service times) for the home page.
-    return db.get_church_info()
+    return church_content.public_info({'info': db.get_church_info()})
 
 
 @app.get('/api/ministries')
 def ministries():
-    return db.list_ministries()
+    return church_content.public_ministries({'ministries': db.list_ministries()})
 
 
 @app.post('/api/matches')
@@ -230,7 +231,8 @@ class ClaimRequest(BaseModel):
 
 @app.get('/api/church')
 def church():
-    return {'info': db.get_church_info(), 'faqs': db.list_content('faqs'), 'events': db.list_content('events')}
+    return church_content.public_church({'info': db.get_church_info(), 'faqs': db.list_content('faqs'),
+                                        'events': db.list_content('events')})
 
 
 @app.post('/api/visits', status_code=201)
@@ -390,7 +392,7 @@ async def auto_summarize_background():
 
 @app.get("/api/events")
 def get_events():
-    return db.list_events()
+    return church_content.public_events({'calendar': db.list_events()})
 
 
 @app.get("/api/events/{event_id}")
@@ -466,6 +468,10 @@ def set_ai_model(body: ModelUpdateRequest):
 # --- Blog Endpoints ---
 
 
+# A news link is a page on this site (serve/find, about/connect) or a full http(s) address.
+NEWS_LINK = r"^$|^https?://\S+$|^[a-z0-9][a-z0-9/_-]*$"
+
+
 class BlogPostCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=300)
@@ -474,6 +480,10 @@ class BlogPostCreate(BaseModel):
     categories: list[str] = Field(default_factory=list)
     auto_categorize: bool = False
     auto_summarize: bool = False
+    # 'update': a short post that points somewhere, never summarized. 'article': a longer read with key takeaways.
+    kind: Literal["update", "article"] = "article"
+    link_url: str = Field(default="", max_length=500, pattern=NEWS_LINK)
+    link_label: str = Field(default="", max_length=80)
 
 
 class CategorizeRequest(BaseModel):
@@ -487,8 +497,8 @@ class SummarizePostRequest(BaseModel):
 
 
 @app.get("/api/blog")
-def get_blog_posts(category: str | None = None):
-    return db.list_blog_posts(category=category)
+def get_blog_posts(category: str | None = None, kind: str | None = None):
+    return db.list_blog_posts(category=category, kind=kind)
 
 
 @app.get("/api/blog/categories")
@@ -520,7 +530,7 @@ async def create_new_blog_post(body: BlogPostCreate):
         categories = list(dict.fromkeys(categories + nlp_cats))
 
     bullet_summary = None
-    if body.auto_summarize:
+    if body.auto_summarize and body.kind == "article":
         try:
             bullet_summary = await blog_ai.summarize_blog_bullets(title=body.title, content=body.content)
         except Exception as exc:
@@ -532,6 +542,9 @@ async def create_new_blog_post(body: BlogPostCreate):
         author=body.author or "Church Staff",
         categories=categories,
         bullet_summary=bullet_summary,
+        kind=body.kind,
+        link_url=body.link_url,
+        link_label=body.link_label if body.link_url else "",
     )
     return post
 
@@ -541,6 +554,8 @@ async def summarize_blog_post_endpoint(post_id: int, body: SummarizePostRequest 
     post = db.get_blog_post(post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Blog post not found")
+    if post["kind"] != "article":
+        raise HTTPException(status_code=400, detail="Only articles have key takeaways")
 
     target_model = body.model if body else None
     try:

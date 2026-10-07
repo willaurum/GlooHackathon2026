@@ -35,6 +35,7 @@ _sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 BLOG_SEEDED = "SELECT 1 FROM config WHERE key = 'blog_seeded'"
+NEWS_POSTS_SEEDED = "SELECT 1 FROM config WHERE key = 'news_posts_seeded'"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
 # Every chunk records the embedding model that made its vector; the Worker only compares a question with chunks
@@ -204,6 +205,7 @@ def _create_tables(seed=True):
     """Create tables and seed content without resetting user data. One batch.
     With seed=False only the tables are made (every INSERT is left out)."""
     ministries = json.loads(Path(__file__).with_name('ministries.json').read_text(encoding='utf-8'))
+    _add_news_columns()
     statements = [
         ("CREATE TABLE IF NOT EXISTS ministries (id INTEGER PRIMARY KEY, data TEXT NOT NULL)", ()),
         ("""CREATE TABLE IF NOT EXISTS connections (
@@ -321,6 +323,8 @@ def _create_tables(seed=True):
             data TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
+        # News posts. kind 'update' is a short post that points somewhere (link_url) and never has
+        # key takeaways; kind 'article' is a longer read with key takeaways and an optional link.
         (f"""CREATE TABLE IF NOT EXISTS blog_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -329,7 +333,10 @@ def _create_tables(seed=True):
             categories TEXT NOT NULL DEFAULT '[]',
             bullet_summary TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT {NOW},
-            updated_at TEXT NOT NULL DEFAULT {NOW}
+            updated_at TEXT NOT NULL DEFAULT {NOW},
+            kind TEXT NOT NULL DEFAULT 'article',
+            link_url TEXT NOT NULL DEFAULT '',
+            link_label TEXT NOT NULL DEFAULT ''
         )""", ()),
         ("INSERT OR IGNORE INTO config VALUES ('church', ?)", (json.dumps(DEFAULT_CONFIG),)),
         # A restart interrupts any job that was running; let it be retried.
@@ -408,6 +415,19 @@ def _create_tables(seed=True):
     # after sleepAfter) would bring back a sample post that staff had deleted.
     statements.append(("INSERT OR IGNORE INTO config VALUES ('blog_seeded', 'true')", ()))
 
+    # More News posts: mostly short updates that point somewhere, plus articles with key takeaways.
+    # Seeded once, like the sample posts above (a separate marker, so a church seeded before these existed gets them).
+    for post in json.loads(Path(__file__).with_name('news_posts.json').read_text(encoding='utf-8')):
+        posted = post['date'] + 'T12:00:00Z'
+        categories = post.get('categories') or [post['category']]
+        statements.append((f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?) AND NOT EXISTS ({NEWS_POSTS_SEEDED})""",
+            (post['title'], post['content'], post.get('author', 'Church Staff'), json.dumps(categories),
+             json.dumps(post.get('bullet_summary', [])), post.get('kind', 'update'),
+             post.get('link_url', ''), post.get('link_label', ''), posted, posted, post['title'])))
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('news_posts_seeded', 'true')", ()))
+
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
@@ -439,6 +459,19 @@ def _create_tables(seed=True):
         _existing = _data(_row)
         _merged = {**church['info'], **_existing}
         run(("UPDATE church_content SET data = ? WHERE kind = 'info'", (json.dumps(_merged),)))
+
+
+NEWS_COLUMNS = (("kind", "'article'"), ("link_url", "''"), ("link_label", "''"))
+
+
+def _add_news_columns():
+    """Blog posts became News posts: add the kind and link columns to a table made before them."""
+    row = one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blog_posts'")
+    if not row:
+        return
+    missing = [(name, default) for name, default in NEWS_COLUMNS if name not in row['sql']]
+    if missing:
+        run(*((f"ALTER TABLE blog_posts ADD COLUMN {name} TEXT NOT NULL DEFAULT {default}", ()) for name, default in missing))
 
 
 def backfill_ministry(existing, seed):
@@ -881,7 +914,8 @@ def replace_news(items, snapshot=None):
 
 # --- Blog posts ---
 
-BLOG_COLUMNS = "id, title, content, author, categories, bullet_summary, created_at, updated_at"
+BLOG_COLUMNS = "id, title, content, author, categories, bullet_summary, created_at, updated_at, kind, link_url, link_label"
+POST_KINDS = ('update', 'article')
 
 
 def _format_blog_post(row):
@@ -909,21 +943,28 @@ def _format_blog_post(row):
     elif not isinstance(bullet_summary, list):
         bullet_summary = []
 
+    kind = row.get("kind") if row.get("kind") in POST_KINDS else "article"
     return {
         "id": row["id"],
+        "kind": kind,
         "title": row["title"],
         "content": row["content"],
         "author": row.get("author") or "Church Staff",
         "categories": categories,
-        "bullet_summary": bullet_summary,
+        # Updates are short enough to read whole; only articles carry key takeaways.
+        "bullet_summary": bullet_summary if kind == "article" else [],
+        "link_url": row.get("link_url") or "",
+        "link_label": row.get("link_label") or "",
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
 
 
-def list_blog_posts(category: str | None = None):
-    rows = query(f"SELECT {BLOG_COLUMNS} FROM blog_posts ORDER BY id DESC")
+def list_blog_posts(category: str | None = None, kind: str | None = None):
+    rows = query(f"SELECT {BLOG_COLUMNS} FROM blog_posts ORDER BY created_at DESC, id DESC")
     posts = [_format_blog_post(r) for r in rows]
+    if kind in POST_KINDS:
+        posts = [p for p in posts if p["kind"] == kind]
     if category and category.strip():
         cat_lower = category.strip().lower()
         posts = [p for p in posts if any(cat_lower == c.lower() for c in p["categories"])]
@@ -935,12 +976,15 @@ def get_blog_post(post_id: int):
     return _format_blog_post(row)
 
 
-def create_blog_post(title: str, content: str, author: str, categories: list[str], bullet_summary: list[str] | None = None):
+def create_blog_post(title: str, content: str, author: str, categories: list[str], bullet_summary: list[str] | None = None,
+                     kind: str = 'article', link_url: str = '', link_label: str = ''):
+    kind = kind if kind in POST_KINDS else 'article'
     cats_json = json.dumps(categories if isinstance(categories, list) else [])
-    summary_json = json.dumps(bullet_summary if isinstance(bullet_summary, list) else [])
-    row = one(f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, {NOW}, {NOW})
-        RETURNING {BLOG_COLUMNS}""", (title.strip(), content.strip(), author.strip() or "Church Staff", cats_json, summary_json))
+    summary_json = json.dumps(bullet_summary if kind == 'article' and isinstance(bullet_summary, list) else [])
+    row = one(f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, {NOW}, {NOW})
+        RETURNING {BLOG_COLUMNS}""", (title.strip(), content.strip(), author.strip() or "Church Staff", cats_json, summary_json,
+                                      kind, link_url.strip(), link_label.strip()))
     return _format_blog_post(row)
 
 

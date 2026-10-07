@@ -64,6 +64,7 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
       {err && <div className="banner error" role="alert">{err}</div>}
       <button className="primary wide" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
       <p className="form-note">Need an account? Ask your church Owner to add you.</p>
+      <p className="form-note">Starting a new church site? <a href="/#/new">Create it from your current website</a>.</p>
     </form>
   </div>;
 }

@@ -1,0 +1,8 @@
+{
+  "label": "Harborlight",
+  "office_hours": "Office is open most weekday mornings. If no one answers leave a message!",
+  "about": "Harborlight Fellowship was started by a handful of fishing families in 1952. The chapel building with its bell tower went up in 1958 and we've been worshipping there ever since. In 2011 we joined with the folks from the old Mariners' Mission and became one family.",
+  "first_visit": "New here? Just come on by. Somebody will say hi. Coffee's always on.",
+  "conflicts": ["name", "phone", "services"],
+  "missing": ["address", "email"]
+}
