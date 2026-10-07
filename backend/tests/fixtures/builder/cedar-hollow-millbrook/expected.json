@@ -1,0 +1,36 @@
+{
+  "label": "Cedar Hollow (Millbrook demo)",
+  "name": "Cedar Hollow Community Church",
+  "address": "412 Orchard Lane, Millbrook, VA 24599",
+  "phone": "4345550142",
+  "email": "office@cedarhollow.example",
+  "office_hours": "Tuesday–Thursday, 9:00 AM – 2:00 PM",
+  "conflicts": [
+    "services"
+  ],
+  "missing": [
+    "beliefs"
+  ],
+  "lists": {
+    "events": [
+      "Fall Festival"
+    ],
+    "ministries": [
+      "Children's Ministry (Nursery – 5th Grade)",
+      "Youth Group (Grades 6–12)",
+      "College & Young Adults",
+      "Women's Bible Study",
+      "Men's Breakfast",
+      "Music Ministry",
+      "Food Pantry"
+    ],
+    "groups": [
+      "Sunday School"
+    ],
+    "staff": [
+      "Dan Whitfield",
+      "Pastor Kyle"
+    ]
+  },
+  "today": "2026-10-07"
+}
