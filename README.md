@@ -2,7 +2,7 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-belong. is the base church-site template for a future agentic templatizer. The templatizer is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+belong. is the base church-site template for a future Agentic Website Builder. The Agentic Website Builder is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
@@ -107,7 +107,7 @@ For local API development run `npx wrangler dev` in `api/` or `api-giving/`.
 
 ## Churches
 
-Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future templatizer provisioning is outside this change.
+Grace Community is the fictional demo of the base template. Existing church sites keep their own data and staff accounts. There is no public signup flow; future Agentic Website Builder provisioning is outside this change.
 
 ### Which church the site shows
 
@@ -149,7 +149,7 @@ sessions remain valid until sign-out or expiry. Grace Community always retains t
 Owner login with email blank; its password lives in `ADMIN_KEY` in `api-giving/wrangler.jsonc`.
 Public `POST /api/churches` returns 403 and creates nothing. Internal church initialization
 remains for existing infrastructure and local test fixtures; no new provisioning UI or
-templatizer is included. Deploy the giving API alongside the frontend to disable the old
+Agentic Website Builder is included. Deploy the giving API alongside the frontend to disable the old
 public endpoint and enable staff accounts.
 
 For the full local giving checks (Node 22.13+), run `node test/fake-stripe.mjs` and
