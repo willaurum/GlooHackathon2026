@@ -14,7 +14,9 @@ class ChatTests(unittest.TestCase):
         self.ministries = json.loads((directory / 'ministries.json').read_text(encoding='utf-8'))
         patches = {
             'get_church_info': {'return_value': self.church['info']},
-            'list_content': {'side_effect': lambda kind: self.church[kind]},
+            'list_content': {'side_effect': lambda kind: self.church.get(kind, [])},
+            'get_site': {'return_value': None},
+            'list_events': {'return_value': []},
             'list_ministries': {'return_value': self.ministries},
             'get_ministry': {'side_effect': lambda key: next((m for m in self.ministries if m['id'] == key), None)},
             'find_pending_request': {'return_value': None},
@@ -37,6 +39,25 @@ class ChatTests(unittest.TestCase):
         self.assertIn('about yourself', self.reply('How can I get involved?'))
         self.assertEqual(self.actions[-1]['page'], 'find-place')
         self.assertIn('Young adults', self.reply('Are there small groups?'))
+
+    def test_tools_include_imported_content(self):
+        self.church.update(locations=[{'id': 0, 'name': 'North campus', 'address': '9 Hill Rd', 'service_times': 'Sundays 10am', 'note': '', 'map_query': ''}],
+                           staff=[{'id': 0, 'name': 'Ana Ruiz', 'role': 'Lead pastor', 'group': '', 'email': 'ana@church.test', 'phone': '', 'bio': 'Long bio'}],
+                           sermons=[{'id': 0, 'title': 'Older', 'date': '2026-01-04'}, {'id': 1, 'title': 'Newer', 'date': '2026-09-27', 'speaker': 'Ana Ruiz'}])
+        self.mocks['get_site'].return_value = {'links': [
+            {'kind': 'giving', 'text': 'Give', 'provider': 'Tithe.ly', 'url': 'https://tithe.ly/give'},
+            {'kind': 'external', 'text': 'Blog', 'url': 'https://blog.test/'},
+            *({'kind': 'social', 'text': f's{i}', 'url': f'https://instagram.com/{i}'} for i in range(9))]}
+        self.mocks['list_events'].return_value = [{'title': 'Past', 'date': '2000-01-01'}, {'title': 'Trunk or treat', 'date': '2099-10-25', 'time': '4:00 PM'}]
+        info = json.loads(json.dumps(chat.call_tool('get_church_info', '{}')))
+        self.assertEqual(info['locations'][0]['name'], 'North campus')
+        self.assertEqual(info['links']['giving'], [{'text': 'Give', 'provider': 'Tithe.ly', 'url': 'https://tithe.ly/give'}])
+        self.assertNotIn('external', info['links'])
+        self.assertEqual(len(info['links']['social']), chat.MAX_LINKS_PER_KIND)
+        self.assertEqual([e['title'] for e in chat.call_tool('list_events', '{}')['calendar']], ['Trunk or treat'])
+        self.assertEqual(chat.call_tool('list_staff', '{}')['staff'], [{'name': 'Ana Ruiz', 'role': 'Lead pastor', 'group': '', 'email': 'ana@church.test', 'phone': ''}])
+        self.assertEqual([s['title'] for s in chat.call_tool('list_sermons', '{}')['sermons']], ['Newer', 'Older'])
+        self.assertIn('Trunk or treat', self.reply('What upcoming events are there?'))
 
     def test_demo_navigation_and_events(self):
         for question, page in [('Browse ministries', 'ministries'), ('Show my saved connections', 'saved-connections'),

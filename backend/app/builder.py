@@ -1572,13 +1572,18 @@ def collection_content(collections, today=None):
                 'name': v.get('name', ''), 'when': (v.get('when') or v.get('time', ''))[:200], 'where': v.get('location', '')[:200],
                 'description': v.get('description', '')[:2000]}))
     for v in included['groups']:
+        # A group has no leader field, so its leader and contact stay in its description.
+        led = ' '.join(filter(None, ('Led by ' + v['leader'] if v.get('leader') else '', f"({v['email']})" if v.get('email') else '')))
         out['groups'].append(_valid(cc.Highlight, {
             'name': v.get('name', ''), 'when': v.get('when', '')[:200], 'where': v.get('where', '')[:200],
-            'description': v.get('description', '')[:2000], 'audience': v.get('audience', '')[:100]}))
+            'description': '\n'.join(filter(None, (v.get('description', ''), led + '.' if led else '')))[:2000],
+            'audience': v.get('audience', '')[:100]}))
     for v in included['ministries']:
+        # Where it meets and who it is for become the ministry's note.
+        note = '. '.join(filter(None, (v.get('where', ''), 'For ' + v['audience'] if v.get('audience') else '')))
         out['ministries'].append(_valid(cc.Ministry, {
             'name': v.get('name', '')[:120], 'description': v.get('description', '')[:2000], 'day': v.get('when', '')[:120],
-            'head': v.get('leader', '')[:120], 'email': v.get('email', '')[:200]}))
+            'head': v.get('leader', '')[:120], 'email': v.get('email', '')[:200], 'note': note[:500]}))
     for v in included['staff']:
         out['staff'].append(_valid(cc.Person, {k: v.get(k, '') for k in ITEM_FIELDS['staff']}))
     for v in included['locations']:

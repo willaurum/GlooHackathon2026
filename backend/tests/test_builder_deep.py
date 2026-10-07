@@ -313,6 +313,14 @@ class ContentTests(unittest.TestCase):
         self.assertEqual(content['locations'][1]['map_query'], '410 Mill Street, Ashgrove, OR')
         self.assertEqual(len(content['sermons']), 3)
 
+    def test_group_leaders_and_ministry_places_are_kept(self):
+        content = builder.collection_content({
+            'groups': [{'include': True, 'value': {'name': 'Young adults', 'description': 'Dinner and study.', 'leader': 'Sam Ortiz',
+                                                   'email': 'sam@church.test', 'when': 'Tuesdays 7pm'}}],
+            'ministries': [{'include': True, 'value': {'name': 'Food pantry', 'where': 'Fellowship hall', 'audience': 'everyone'}}]})
+        self.assertEqual(content['groups'][0]['description'], 'Dinner and study.\nLed by Sam Ortiz (sam@church.test).')
+        self.assertEqual(content['ministries'][0]['note'], 'Fellowship hall. For everyone')
+
     def test_item_edits_are_validated(self):
         s = import_stonebridge()
         maya = next(e for e in s['collections']['staff'] if e['value']['name'] == 'Maya Lindqvist')
