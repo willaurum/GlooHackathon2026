@@ -31,6 +31,11 @@ VIDEO_RE = re.compile(r'^https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|emb
 SERMON_FEED_RE = re.compile(r'sermon|message|podcast|teaching|preach|worship', re.I)
 
 
+def _today():
+    """Today's date; tests replace this so dated fixtures stay upcoming."""
+    return date.today()
+
+
 def _item(collection, value, quote, source, method='structured'):
     value = {k: (v.strip() if isinstance(v, str) else v) for k, v in value.items() if v not in (None, '')}
     return {'collection': collection, 'value': value, 'quote': ' '.join(str(quote).split())[:500],
@@ -102,7 +107,7 @@ ORG_TYPES = {'church', 'placeofworship', 'organization', 'religiousorganization'
 
 def jsonld(source, scripts, today=None):
     """(info claims, items) from the page's <script type="application/ld+json"> blocks."""
-    today = today or date.today()
+    today = today or _today()
     claims, items = [], []
     for raw in scripts[:10]:
         try:
@@ -158,7 +163,7 @@ DAY_CODES = {'SU': 'Sunday', 'MO': 'Monday', 'TU': 'Tuesday', 'WE': 'Wednesday',
 
 def ics_events(source, text, today=None):
     """Upcoming events (within EVENT_HORIZON_DAYS) and recurring ones from an iCal feed."""
-    today = today or date.today()
+    today = today or _today()
     lines = []
     for line in text.replace('\r\n', '\n').split('\n'):
         if line[:1] in (' ', '\t') and lines:
@@ -252,19 +257,29 @@ def feed_sermons(source, text):
         if node is not None and not author:
             author = _child_text(node, 'name')
         value = {'title': name, 'date': iso, 'speaker': author, 'series': '',
-                 'url': link if link.startswith(('http://', 'https://')) else ''}
+                 'url': canonical_video(link) if link.startswith(('http://', 'https://')) else ''}
         items.append(_item('sermons', value, f'{name} {published}', source))
     return items
 
 
 # ---------------------------------------------------------------- page patterns
 
+VIDEO_ID_RE = re.compile(r'(?:youtube\.com/(?:watch\?v=|embed/|live/)|youtu\.be/)([\w-]{11})', re.I)
+
+
+def canonical_video(url):
+    """One address per YouTube video, whether it was linked, shared or embedded."""
+    match = VIDEO_ID_RE.search(url or '')
+    return f'https://www.youtube.com/watch?v={match.group(1)}' if match else url
+
+
 def video_sermons(source, anchors, embeds):
     """Sermon videos linked or embedded on a sermons page."""
     items, seen = [], set()
     for url, label in [(href, text) for href, text, _ in anchors] + [(src, title) for src, title in embeds]:
-        if not VIDEO_RE.match(url or '') or url in seen:
+        if not VIDEO_RE.match(url or '') or canonical_video(url) in seen:
             continue
+        url = canonical_video(url)
         seen.add(url)
         title = ' '.join((label or '').split())
         if len(title) < 3 or title.lower() in ('watch', 'play', 'youtube', 'vimeo', 'watch now', 'listen'):
@@ -274,8 +289,9 @@ def video_sermons(source, anchors, embeds):
 
 
 def staff_cards(source):
-    """Name, role and optional email on consecutive lines: the usual staff card."""
-    lines = [line.strip() for line in source['text'].split('\n') if line.strip()]
+    """Name, role and optional email on consecutive lines: the usual staff card. Menu links are not people."""
+    menu = {text for _, text, in_nav in source.get('anchors', []) if in_nav}
+    lines = [line.strip() for line in source['text'].split('\n') if line.strip() and line.strip() not in menu]
     items = []
     for i, line in enumerate(lines[:-1]):
         role = lines[i + 1]
@@ -292,7 +308,7 @@ def staff_cards(source):
 
 def dated_events(source, today=None):
     """Event listings: a title line followed by a line with a calendar date ("Saturday, October 24, 2026 · 5:30 PM")."""
-    today = today or date.today()
+    today = today or _today()
     lines = [line.strip() for line in source['text'].split('\n') if line.strip()]
     items = []
     for i, line in enumerate(lines):
@@ -322,6 +338,25 @@ def dated_events(source, today=None):
     return items
 
 
+STREET_RE = re.compile(r'^\d{1,6}\s+(?:[A-Z][\w.\'-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Boulevard|Blvd|'
+                       r'Way|Court|Ct|Place|Pl|Parkway|Pkwy|Highway|Hwy|Circle|Terrace)\b')
+
+
+def location_cards(source):
+    """On a locations page: a campus name, then its street address, then (optionally) its service times."""
+    menu = {text for _, text, in_nav in source.get('anchors', []) if in_nav}
+    lines = [line.strip() for line in source['text'].split('\n') if line.strip() and line.strip() not in menu]
+    items = []
+    for i, line in enumerate(lines[1:], 1):
+        name = lines[i - 1]
+        if not STREET_RE.match(line) or len(name) > 60 or STREET_RE.match(name) or TIME_RE.search(name):
+            continue
+        times = lines[i + 1] if i + 1 < len(lines) and TIME_RE.search(lines[i + 1]) and len(lines[i + 1]) <= 120 else ''
+        value = {'name': name, 'address': line, 'service_times': times}
+        items.append(_item('locations', value, ' '.join(filter(None, (name, line, times))), source, method='pattern'))
+    return items
+
+
 def page_items(source, today=None):
     """(info claims, items) for one crawled page."""
     claims, items = jsonld(source, source.get('jsonld', []), today)
@@ -332,6 +367,8 @@ def page_items(source, today=None):
         items += staff_cards(source)
     if kind == 'events':
         items += dated_events(source, today)
+    if kind == 'locations':
+        items += location_cards(source)
     return claims, items
 
 

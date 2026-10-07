@@ -135,6 +135,18 @@ class FixtureScoreTests(unittest.TestCase):
         self.assertEqual(result['summary'], 'Harborlight: 2/3 conflicts flagged, 2/2 gaps flagged, '
                                           '0/3 fields correct, 0 false questions')
 
+    def test_stonebridge_large_current_accuracy(self):
+        root = FIXTURES / 'stonebridge-large'
+        expected = json.loads((root / 'expected.json').read_text(encoding='utf-8'))
+        with mock.patch.object(builder, '_ai_complete', side_effect=AssertionError('AI forbidden')) as ai:
+            session = builder_score.import_fixture(root)
+            ai.assert_not_called()
+        result = builder_score.score(session, expected)
+        # Structured data and page patterns alone: every field, and every list except the two that need the AI reader.
+        self.assertEqual(result['summary'], 'Stonebridge (large): 1/1 conflicts flagged, 4/4 fields correct, 0 false questions')
+        recall = {name: r['recall'] for name, r in builder_score.score_lists(session, expected).items()}
+        self.assertEqual(recall, {'events': 1.0, 'staff': 1.0, 'ministries': 0.0, 'groups': 0.0, 'locations': 1.0, 'sermons': 1.0})
+
 
 if __name__ == '__main__':
     unittest.main()

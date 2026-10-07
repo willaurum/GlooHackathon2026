@@ -364,7 +364,7 @@ def read_feeds(feeds, fetch_feed, first_id, deadline, notes=None):
         if not calendar and not re.search(r'<(rss|feed)\b', body[:2000]):
             continue
         out.append({'id': f's{first_id + len(out)}', 'kind': 'feed', 'url': final_url,
-                    'title': 'Calendar feed' if calendar else 'Sermon feed', 'text': '', 'feed': body[:MAX_PAGE_BYTES]})
+                    'title': 'Calendar feed' if calendar else 'News or podcast feed', 'text': '', 'feed': body[:MAX_PAGE_BYTES]})
     return out
 
 
@@ -781,10 +781,13 @@ def pattern_claims(source):
     if source.get('kind', 'page') == 'page' and ' | ' in title:  # "Plan a Visit | Cedar Hollow Community Church"
         name = title.rsplit(' | ', 1)[1].strip()
         claims.append({'field': 'name', 'value': name, 'quote': title, 'source_id': sid, 'method': 'pattern'})
+    # Uploads and campus pages list several sets of times; each quote is its own set, so different campuses'
+    # times become a question instead of being merged into one list.
+    separate = source.get('url') is None or source.get('page_type') == 'locations'
     for day, times in service_times(text).items():
         for clock, quote in times:
             claims.append({'field': 'services', 'value': {'day': day, 'time': clock}, 'quote': quote,
-                           'source_id': sid, 'method': 'pattern', **({'service_group': quote} if source.get('url') is None else {})})
+                           'source_id': sid, 'method': 'pattern', **({'service_group': quote} if separate else {})})
     return claims
 
 
@@ -1082,8 +1085,8 @@ def _candidate(field, value, claims):
 
 def reconcile(claims, source_count):
     """{field: {status, value, candidates}}. Plain rules, no AI:
-    - email/phone: a value on more than half the pages that mention one is the church's (staff addresses on a
-      single page are not); otherwise different values are a conflict.
+    - email/phone/address: a value on more than half the pages that mention one is the church's (staff addresses
+      on a single page, or a second campus on the locations page, are not); otherwise different values are a conflict.
     - services: per day, each page's set of times; if one page's set contains all the others it is used, else
       the different sets are a conflict ("9 & 11" on one page, "10:30" on another).
     - anything else: one distinct value is prefilled, more than one is a conflict.
@@ -1103,7 +1106,7 @@ def reconcile(claims, source_count):
             groups.setdefault(_key(field, claim['value']), []).append(claim)
         candidates = [_candidate(field, g[0]['value'], g) for g in groups.values()]
         candidates.sort(key=lambda c: -len(c['source_ids']))
-        if field in ('email', 'phone') and len(candidates) > 1:
+        if field in ('email', 'phone', 'address') and len(candidates) > 1:
             pages = len({c['source_id'] for c in items})
             if len(candidates[0]['source_ids']) * 2 > pages and len(candidates[0]['source_ids']) > len(candidates[1]['source_ids']):
                 candidates = candidates[:1]
@@ -1287,7 +1290,7 @@ def collection_content(collections, today=None):
     """Included list entries as ChurchContent sections. Dated events in the future go to the calendar; repeating
     or undated ones are event highlights. Sections with nothing included are left out, so applying a draft never
     empties a section the church already has."""
-    today = (today or datetime.now(timezone.utc).date()).isoformat()
+    today = (today or builder_structured._today()).isoformat()
     cc = church_content
     included = {name: [e['value'] for e in collections.get(name, []) if e.get('include')] for name in ITEM_FIELDS}
     out = {'calendar': [], 'events': [], 'groups': [], 'ministries': [], 'staff': [], 'locations': [], 'sermons': []}
@@ -1295,19 +1298,19 @@ def collection_content(collections, today=None):
         if v.get('date'):
             if v['date'] >= today:
                 out['calendar'].append(_valid(cc.CalendarEvent, {
-                    'title': v['name'], 'date': v['date'], 'time': v.get('time', '')[:100],
+                    'title': v.get('name', ''), 'date': v['date'], 'time': v.get('time', '')[:100],
                     'location': v.get('location', '')[:200], 'description': v.get('description', '')[:4000]}))
         else:
             out['events'].append(_valid(cc.Highlight, {
-                'name': v['name'], 'when': (v.get('when') or v.get('time', ''))[:200], 'where': v.get('location', '')[:200],
+                'name': v.get('name', ''), 'when': (v.get('when') or v.get('time', ''))[:200], 'where': v.get('location', '')[:200],
                 'description': v.get('description', '')[:2000]}))
     for v in included['groups']:
         out['groups'].append(_valid(cc.Highlight, {
-            'name': v['name'], 'when': v.get('when', '')[:200], 'where': v.get('where', '')[:200],
+            'name': v.get('name', ''), 'when': v.get('when', '')[:200], 'where': v.get('where', '')[:200],
             'description': v.get('description', '')[:2000], 'audience': v.get('audience', '')[:100]}))
     for v in included['ministries']:
         out['ministries'].append(_valid(cc.Ministry, {
-            'name': v['name'][:120], 'description': v.get('description', '')[:2000], 'day': v.get('when', '')[:120],
+            'name': v.get('name', '')[:120], 'description': v.get('description', '')[:2000], 'day': v.get('when', '')[:120],
             'head': v.get('leader', '')[:120], 'email': v.get('email', '')[:200]}))
     for v in included['staff']:
         out['staff'].append(_valid(cc.Person, {k: v.get(k, '') for k in ITEM_FIELDS['staff']}))

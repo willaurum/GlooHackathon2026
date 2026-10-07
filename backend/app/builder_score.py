@@ -2,6 +2,9 @@
 
 Keys contain single-answer field values, plus lists of `conflicts` and `missing` fields,
 and an optional `label`. Only keyed fields are scored. FAQ claims are not reconcile() fields.
+An optional `lists` key ({collection: [names]}) scores the imported lists (events, staff, ministries,
+groups, locations, sermons) by precision and recall on normalized names; `today` pins the date
+dated fixtures are read on.
 Prose is compared literally after the builder's whitespace/case normalization, not semantically.
 
     python -m backend.app.builder_score backend/tests/fixtures/builder/cedar-hollow-static
@@ -9,11 +12,13 @@ Prose is compared literally after the builder's whitespace/case normalization, n
 import argparse
 import json
 import os
+import re
+from datetime import date
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlparse
 
-from . import builder
+from . import builder, builder_structured
 
 OUTCOMES = ('correct', 'wrong', 'missed', 'correctly_flagged_conflict', 'correctly_flagged_missing',
             'false_conflict')
@@ -37,7 +42,7 @@ def score(draft, expected):
     Every expected field contributes one check to overall accuracy, including conflicts and gaps.
     """
     conflicts, missing = set(expected.get('conflicts', [])), set(expected.get('missing', []))
-    values = {f: v for f, v in expected.items() if f not in ('label', 'conflicts', 'missing')}
+    values = {f: v for f, v in expected.items() if f not in ('label', 'conflicts', 'missing', 'lists', 'today')}
     if conflicts & missing or (conflicts | missing) & values.keys():
         raise ValueError('Each expected field must have exactly one value, conflict, or missing designation.')
     questions = {}
@@ -77,18 +82,61 @@ def score(draft, expected):
     return {'fields': fields, 'totals': totals, 'summary': expected.get('label', 'Builder') + ': ' + ', '.join(parts)}
 
 
-def import_fixture(fixture_dir):
-    """Use the same injected-fetch session as builder tests, with all external readers disabled."""
+def _name(value):
+    return re.sub(r'[^a-z0-9]', '', str(value).lower())
+
+
+def score_lists(draft, expected):
+    """{collection: {found, expected, matched, precision, recall}} for the keyed lists (included or not)."""
+    out = {}
+    for collection, names in expected.get('lists', {}).items():
+        wanted = {_name(n) for n in names}
+        found = {_name(e['value'].get('name') or e['value'].get('title', ''))
+                 for e in draft.get('collections', {}).get(collection, [])}
+        matched = len(wanted & found)
+        out[collection] = {'found': len(found), 'expected': len(wanted), 'matched': matched,
+                           'precision': matched / len(found) if found else 0.0,
+                           'recall': matched / len(wanted) if wanted else 0.0}
+    return out
+
+
+FEED_TYPES = {'.txt': 'text/plain', '.xml': 'application/xml', '.ics': 'text/calendar'}
+
+
+def fixture_fetchers(fixture_dir):
+    """(fetch, fetch_feed) serving one fixture directory as https://church.test/."""
     root = Path(fixture_dir).resolve()
 
-    def fetch(url):
+    def path_of(url, suffixes):
         path = (root / (urlparse(url).path.lstrip('/') or 'index.html')).resolve()
-        if not path.is_relative_to(root) or path.suffix not in ('.html', '.htm') or not path.is_file():
+        if not path.is_relative_to(root) or path.suffix not in suffixes or not path.is_file():
             raise FileNotFoundError(url)
-        return url, 'text/html; charset=utf-8', path.read_text(encoding='utf-8')
+        return path
 
-    with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1'}):
-        return builder.new_session('https://church.test/', fetch=fetch, complete=lambda m, t: None, describe=False)
+    def fetch(url):
+        return url, 'text/html; charset=utf-8', path_of(url, ('.html', '.htm')).read_text(encoding='utf-8')
+
+    def fetch_feed(url):
+        path = path_of(url, tuple(FEED_TYPES))
+        return url, FEED_TYPES[path.suffix], path.read_text(encoding='utf-8')
+    return fetch, fetch_feed
+
+
+def import_fixture(fixture_dir, complete=None, today=None):
+    """Use the same injected-fetch session as builder tests, with all external readers disabled (or a fake `complete`).
+    robots.txt, sitemaps and feeds in the fixture are read too."""
+    fetch, fetch_feed = fixture_fetchers(fixture_dir)
+    key = Path(fixture_dir) / 'expected.json'
+    if today is None and key.is_file():
+        pinned = json.loads(key.read_text(encoding='utf-8')).get('today')
+        today = date.fromisoformat(pinned) if pinned else None
+    with mock.patch.dict(os.environ, {'BUILDER_ALLOW_PRIVATE': '1'}), \
+            mock.patch.object(builder_structured, '_today', lambda: today or date.today()):
+        session = builder.new_session('https://church.test/', fetch=fetch, fetch_feed=fetch_feed,
+                                      complete=complete or (lambda m, t: None), describe=False)
+        # Build while the date is pinned: dated events are kept or dropped against the same day.
+        session['content'] = builder.collection_content(session['collections'])
+    return session
 
 
 def main():
@@ -96,13 +144,19 @@ def main():
     parser.add_argument('fixture_dir', type=Path)
     args = parser.parse_args()
     expected = json.loads((args.fixture_dir / 'expected.json').read_text(encoding='utf-8'))
-    result = score(import_fixture(args.fixture_dir), expected)
+    draft = import_fixture(args.fixture_dir)
+    result = score(draft, expected)
     print(f"{'Field':<16} Outcome")
     for field, outcome in result['fields'].items():
         print(f'{field:<16} {outcome}')
     print(result['summary'])
     totals = result['totals']
     print(f"Overall: {totals['successful']}/{totals['total']} checks correct ({totals['accuracy']:.0%})")
+    lists = score_lists(draft, expected)
+    if lists:
+        print(f"\n{'List':<12} Found  Expected  Matched  Precision  Recall")
+        for name, r in lists.items():
+            print(f"{name:<12} {r['found']:>5}  {r['expected']:>8}  {r['matched']:>7}  {r['precision']:>9.0%}  {r['recall']:>6.0%}")
 
 
 if __name__ == '__main__':

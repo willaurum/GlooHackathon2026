@@ -15,6 +15,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from . import builder_structured
 from .builder_structured import EMAIL_RE, _upcoming
 
 log = logging.getLogger(__name__)
@@ -168,7 +169,7 @@ def _norm(text):
 def check(name, raw, source, today=None):
     """Validated items for one specialist answer, in the builder_structured item shape. Bad items are dropped."""
     from .builder import grounded
-    spec, today = SPECIALISTS[name], today or date.today()
+    spec, today = SPECIALISTS[name], today or builder_structured._today()
     out, dropped = [], 0
     for entry in (raw or {}).get('items', []) if isinstance(raw, dict) else []:
         try:
@@ -190,6 +191,8 @@ def check(name, raw, source, today=None):
             value['email'] = ''
         if value.get('url') and value['url'] not in source.get('links', []):
             value['url'] = ''
+        if value.get('url'):
+            value['url'] = builder_structured.canonical_video(value['url'])
         if value.get('date'):
             day = str(int(value['date'][8:]))
             if not re.search(rf'(?<!\d){day}(?!\d)', item.quote):

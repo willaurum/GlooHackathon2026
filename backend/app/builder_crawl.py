@@ -33,7 +33,7 @@ WEIGHTS = {'staff': 9, 'events': 9, 'ministries': 8, 'groups': 8, 'sermons': 8, 
            'about': 6, 'contact': 6, 'give': 1}
 # Blog, news and archive pages: a few are read (they can mention service changes), most are noise.
 POST_RE = re.compile(r'/(blog|news|posts?|articles?|stories|updates)/.+|/\d{4}/\d{2}/', re.I)
-SKIP_RE = re.compile(r'/(wp-admin|wp-login|wp-json|login|logout|signin|sign-in|account|cart|checkout|search|tag|tags|'
+SKIP_RE = re.compile(r'/wp-(admin|login|json)|/(login|logout|signin|sign-in|account|cart|checkout|search|tag|tags|'
                      r'category|categories|author|feed|comments?|print|share)(/|$)|/page/\d+|[?&](replytocom|share|print|'
                      r'sort|filter|s)=', re.I)
 FILE_RE = re.compile(r'\.(pdf|jpe?g|png|gif|webp|svg|zip|docx?|xlsx?|pptx?|mp3|mp4|mov|ics|xml|rss|css|js)$', re.I)
