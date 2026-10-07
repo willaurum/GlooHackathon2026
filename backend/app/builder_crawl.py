@@ -82,8 +82,18 @@ def skippable(url):
     return bool(SKIP_RE.search(url) or FILE_RE.search(urlparse(url).path))
 
 
+# Copies of pages made for a church app ("/staff-app", "Kids - App only", "Staff (App)") and the index pages of a
+# sermon library (/media/topic, /sermons/speaker...) repeat what other pages say; they are read last.
+APP_ONLY_RE = re.compile(r'(?<![a-z])app[-_\s]?only(?![a-z])|[-_]app/?$|\(app\)', re.I)
+SERMON_INDEX_RE = re.compile(r'/(media|sermons?|messages?|podcasts?)/(topics?|speakers?|scriptures?|series|books?|tags?|'
+                             r'categor(y|ies)|archives?)/?$', re.I)
+
+
 def score(url, anchor='', in_nav=False):
     """Higher is read sooner. Kind pages beat posts, navigation links beat links in body text."""
+    path = urlparse(url).path
+    if APP_ONLY_RE.search(path) or APP_ONLY_RE.search(anchor or '') or SERMON_INDEX_RE.search(path):
+        return -10
     kind = page_type(url, anchor)
     value = WEIGHTS.get(kind, 2)
     if kind == 'other' and anchor:

@@ -427,5 +427,29 @@ class GenericLinkAndFormTests(unittest.TestCase):
         self.assertEqual([f['label'] for f in page['forms'][0]['fields']], ['Name', 'Phone', 'Email', 'Note', 'c'])
 
 
+class PagePriorityTests(unittest.TestCase):
+    """Crosspoint: of 271 pages found, the import spent its pages on app-only copies ("Kids - App only", "Staff (App)",
+    "Volunteer - App Only") and sermon-library index pages (/media/topic, /media/speaker, /media/scripture)."""
+
+    def test_app_copies_and_sermon_indexes_are_read_last(self):
+        for url, anchor in (('https://church.test/staff-app', ''), ('https://church.test/kidsandfamily-app', ''),
+                            ('https://church.test/kids', 'Kids - App only'), ('https://church.test/team2', 'Staff (App)'),
+                            ('https://church.test/media/topic', ''), ('https://church.test/media/speaker/', ''),
+                            ('https://church.test/sermons/scripture', ''), ('https://church.test/media/series', '')):
+            self.assertLess(builder_crawl.score(url, anchor), builder_crawl.score('https://church.test/blog/2022/02/17/february-17'), url)
+        for url in ('https://church.test/team', 'https://church.test/kids', 'https://church.test/apple-festival',
+                    'https://church.test/media/topic/grace', 'https://church.test/happy'):
+            self.assertGreater(builder_crawl.score(url), -10, url)
+
+    def test_a_limited_import_reads_distinct_pages_first(self):
+        with mock.patch.object(builder, 'MAX_PAGES', 20):
+            session = import_site('crosspoint', '')
+        read = [s['url'] for s in session['sources'] if s.get('kind') == 'page']
+        self.assertEqual(len(read), 20)
+        self.assertFalse([u for u in read if u.endswith('-app')], read)
+        self.assertIn('https://church.test/contactus', read)
+        self.assertIn('https://church.test/our-values', read)
+
+
 if __name__ == '__main__':
     unittest.main()
