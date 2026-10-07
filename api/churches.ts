@@ -136,8 +136,8 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/edits/undo$`)],
 	// The files Tekton wrote, downloaded while there is no church (and so no staff) yet.
 	['GET', new RegExp(`^/api/builder/drafts/${ID}/(church|site)\\.json$`)],
-	// The church saying yes to a calendar Tekton found (the address is one Tekton derived, not the browser's).
-	['POST', new RegExp(`^/api/builder/drafts/${ID}/calendars/${ID}/import$`)],
+	// The church saying yes (or not now) to a calendar Tekton found (the address is one Tekton derived, not the browser's).
+	['POST', new RegExp(`^/api/builder/drafts/${ID}/calendars/${ID}/(import|decline)$`)],
 ];
 
 // Staff work requires a church session, including on the demo church.
