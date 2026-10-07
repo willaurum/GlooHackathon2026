@@ -35,6 +35,7 @@ _sqlite_conns = {}
 
 NOW = "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
 BLOG_SEEDED = "SELECT 1 FROM config WHERE key = 'blog_seeded'"
+NEWS_POSTS_SEEDED = "SELECT 1 FROM config WHERE key = 'news_posts_seeded'"
 CONFIG_FIELDS = ('name', 'timezone', 'default_language')
 DEFAULT_CONFIG = {'name': 'Our Church', 'timezone': 'UTC', 'default_language': 'en'}
 # Every chunk records the embedding model that made its vector; the Worker only compares a question with chunks
@@ -415,15 +416,17 @@ def _create_tables(seed=True):
     statements.append(("INSERT OR IGNORE INTO config VALUES ('blog_seeded', 'true')", ()))
 
     # More News posts: mostly short updates that point somewhere, plus articles with key takeaways.
+    # Seeded once, like the sample posts above (a separate marker, so a church seeded before these existed gets them).
     for post in json.loads(Path(__file__).with_name('news_posts.json').read_text(encoding='utf-8')):
         posted = post['date'] + 'T12:00:00Z'
         categories = post.get('categories') or [post['category']]
-        statements.append(("""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
+        statements.append((f"""INSERT INTO blog_posts (title, content, author, categories, bullet_summary, kind, link_url, link_label, created_at, updated_at)
             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?)""",
+            WHERE NOT EXISTS (SELECT 1 FROM blog_posts WHERE title = ?) AND NOT EXISTS ({NEWS_POSTS_SEEDED})""",
             (post['title'], post['content'], post.get('author', 'Church Staff'), json.dumps(categories),
              json.dumps(post.get('bullet_summary', [])), post.get('kind', 'update'),
              post.get('link_url', ''), post.get('link_label', ''), posted, posted, post['title'])))
+    statements.append(("INSERT OR IGNORE INTO config VALUES ('news_posts_seeded', 'true')", ()))
 
     statements.append(("INSERT INTO items (title, done) SELECT 'Stand up the docker stack', 1 "
                        "WHERE NOT EXISTS (SELECT 1 FROM items) UNION ALL "

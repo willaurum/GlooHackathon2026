@@ -18,21 +18,42 @@ def restart():
     db.initialize()
 
 
+NEWS_POSTS = json.loads((APP / 'news_posts.json').read_text(encoding='utf-8'))
+SAMPLES = 2 + len(NEWS_POSTS)  # the two sample posts and the News posts
+
+
 class BlogSeedTests(ChurchTestCase):
     def test_demo_church_starts_with_the_sample_posts(self):
-        self.assertEqual(sorted(p['id'] for p in db.list_blog_posts()), [1, 2])
+        ids = sorted(p['id'] for p in db.list_blog_posts())
+        self.assertEqual(ids[:2], [1, 2])
+        self.assertEqual(len(ids), SAMPLES)
 
     def test_a_deleted_sample_post_stays_deleted_after_a_restart(self):
         self.assertTrue(db.delete_blog_post(1))
         restart()
-        self.assertEqual([p['id'] for p in db.list_blog_posts()], [2])
+        ids = [p['id'] for p in db.list_blog_posts()]
+        self.assertNotIn(1, ids)
+        self.assertEqual(len(ids), SAMPLES - 1)
+
+    def test_a_deleted_news_post_stays_deleted_after_a_restart(self):
+        post = next(p for p in db.list_blog_posts() if p['title'] == NEWS_POSTS[0]['title'])
+        self.assertTrue(db.delete_blog_post(post['id']))
+        restart()
+        self.assertNotIn(NEWS_POSTS[0]['title'], [p['title'] for p in db.list_blog_posts()])
+        self.assertEqual(len(db.list_blog_posts()), SAMPLES - 1)
+
+    def test_a_church_seeded_before_the_news_posts_gets_them_once(self):
+        db.run(("DELETE FROM blog_posts WHERE id > 2", ()), ("DELETE FROM config WHERE key = 'news_posts_seeded'", ()))
+        restart()
+        restart()
+        self.assertEqual(len(db.list_blog_posts()), SAMPLES)
 
     def test_a_restart_keeps_staff_posts_and_adds_no_duplicates(self):
         db.create_blog_post('Staff post', 'Hello church', 'Pastor', ['Community'])
         restart()
         restart()
         self.assertEqual(sorted(p['title'] for p in db.list_blog_posts()).count('Staff post'), 1)
-        self.assertEqual(len(db.list_blog_posts()), 3)
+        self.assertEqual(len(db.list_blog_posts()), SAMPLES + 1)
 
     def test_a_new_church_gets_no_sample_posts(self):
         with db.use_church('hope-chapel', 'Hope Chapel'):
