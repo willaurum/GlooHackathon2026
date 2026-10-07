@@ -118,5 +118,30 @@ class ServiceTimeTests(unittest.TestCase):
         self.assertTrue(session['file_check']['valid'], session['file_check'])
 
 
+class OfficeHoursTests(unittest.TestCase):
+    """Forest Baptist: the info reader offered the Sunday service times as office hours. The site gives none."""
+
+    def setUp(self):
+        self.run, self.token = builder_run.start()
+        self.addCleanup(builder_run.finish, self.token)
+
+    def office_hours(self, path, value, quote):
+        answer = {'facts': [{'field': 'office_hours', 'value': value, 'quote': quote}]}
+        return [c['value'] for c in builder.ai_claims(source('forest-baptist', path), lambda m, t: answer)]
+
+    def test_service_times_and_an_office_phone_are_not_office_hours(self):
+        self.assertEqual(self.office_hours('home', 'Sundays 8:30a & 11:00a', 'Sundays: 8:30a & 11:00a (Nursery: birth - 4 years old)'), [])
+        self.assertEqual(self.office_hours('home', 'Wednesdays 6:30p', 'Wednesday Evening 6:30pm'), [])
+        self.assertEqual(self.office_hours('contact-us', 'Church Office', 'Church Office 434.525.4841'), [])
+        self.assertEqual(self.run.dropped, {'not office hours': 3})
+
+    def test_real_office_hours_are_kept(self):
+        page = {'id': 's1', 'url': 'https://church.test/contact', 'title': 'Contact',
+                'text': 'Church Office\nOffice hours: Monday - Thursday, 9:00 AM - 4:00 PM\nClosed Fridays'}
+        for quote in ('Office hours: Monday - Thursday, 9:00 AM - 4:00 PM', 'Church Office Office hours: Monday - Thursday, 9:00 AM - 4:00 PM'):
+            answer = {'facts': [{'field': 'office_hours', 'value': 'Monday - Thursday, 9:00 AM - 4:00 PM', 'quote': quote}]}
+            self.assertEqual([c['value'] for c in builder.ai_claims(page, lambda m, t: answer)], ['Monday - Thursday, 9:00 AM - 4:00 PM'])
+
+
 if __name__ == '__main__':
     unittest.main()

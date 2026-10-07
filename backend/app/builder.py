@@ -1134,6 +1134,11 @@ def pattern_claims(source):
     return claims
 
 
+# Office hours must be quoted from words about the office being open ("Office hours", "Open Monday - Thursday"), with
+# a time in them; a service time or a phone number under "Church Office" is not office hours.
+OFFICE_WORDS = re.compile(r'\b(office|hours?|open|closed|weekdays?)\b|\b(?:mon|tue|wed|thu|fri)[a-z]*\.?\s*(?:-|–|—|through|'
+                          r'thru|to)\s*(?:mon|tue|wed|thu|fri|sat)', re.I)
+OFFICE_TIMES = re.compile(r'\b\d{1,2}(?::\d{2})?\s*(?:[ap]\.?\s*m\b|-|–|—|to\b)|\bnoon\b|\bby appointment\b', re.I)
 AI_FIELDS = {
     'name': 'The church\'s name as the site states it.',
     'about': 'A short description of the church (history, beliefs), copied from the page.',
@@ -1252,6 +1257,9 @@ def ai_claims(source, complete=None, deadline=None, errors=None):
             continue
         if field == 'name' and _key('name', value) not in re.sub(r'[^a-z0-9]', '', quote.lower()):
             builder_run.drop('its quote does not name the church')
+            continue
+        if field == 'office_hours' and not (OFFICE_WORDS.search(quote) and OFFICE_TIMES.search(quote)):
+            builder_run.drop('not office hours')  # a service time, or "Church Office" over a phone number
             continue
         if beliefs and field == 'about':
             continue  # a statement of faith is kept word for word for the pastor, never summarized (is_beliefs)
