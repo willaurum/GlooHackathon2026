@@ -222,6 +222,10 @@ A church is one JSON document, read with `GET /api/church/content` and written w
 
 Extra fields are kept. A ministry that saved connections or requests still point at is not deleted by an import, so those stay readable. Giving funds and mission trips are not part of this document: they live in the giving Worker (`/api/churches/<slug>/admin/funds`), with the same staff session. Prayer map places and their field updates are in it under `regions`.
 
+### Agentic builder
+
+Staff can open `#/build` from Church setup to follow **Import → Extract → Clarify → Confirm → Build preview**. Conflicting values stay unresolved until staff choose or type an answer; review the content, build into the church, then open its site as the preview. The backend is `backend/app/builder.py`, with staff-only routes at `/api/builder/sessions...`.
+
 ### Adding an endpoint
 
 Nothing extra: any endpoint that goes through `db.py` already runs against the church of the request. In the Worker, add the route to the right list in `api/churches.ts` (public, staff work that the demo church leaves open, or staff only); a route on no list needs the API key or a staff session. A new table goes in `db.initialize` as usual. Its seed `INSERT`s only run for the demo church.
