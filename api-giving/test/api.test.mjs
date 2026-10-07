@@ -237,15 +237,32 @@ check(trip.raised === 1234 && trip.gifts === 1 && trip.spots === 8, 'trip progre
 check(r.data.totals.raised === 5000 + 1234 + 10000, 'totals', r.data.totals);
 
 console.log('applications');
+const why = 'I am a nurse who has served on two clinic teams before, and I would love to help with the health days on this trip and with the kids program.';
 r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example.com', phone: '555-0100', message: 'I am a nurse.' });
+check(r.status === 400, 'a message under 100 characters is refused');
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example.com', message: 'x'.repeat(1001) });
+check(r.status === 400, 'a message over 1000 characters is refused, not cut short');
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example.com', message: ' '.repeat(20) + 'x'.repeat(99) });
+check(r.status === 400, 'surrounding spaces do not count toward the minimum');
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example', message: why });
+check(r.status === 400, 'an email needs a real domain ending');
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example.com', phone: 'call me', message: why });
+check(r.status === 400, 'a phone must look like a phone number');
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example.com', phone: '555-0100', message: why });
+check(r.status === 400, 'a phone needs 10 digits');
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Applicant One', email: 'app1@example.com', phone: '555-010-0100', message: why });
 check(r.status === 200, 'apply');
-r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'No Email' });
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'No Email', message: why });
 check(r.status === 400, 'apply needs email');
 r = await call('POST', C + '/trips/general/apply', { name: 'X', email: 'x@example.com' });
 check(r.status === 404, 'cannot apply to a non-trip fund');
 r = await call('GET', C + '/admin/applications', undefined, token);
 check(r.data.applications.length === 1 && r.data.applications[0].name === 'Applicant One', 'admin sees application');
 const appId = r.data.applications[0].id;
+r = await call('PUT', C + '/admin/applications/' + appId, { status: 'accepted' }, token);
+check(r.status === 400, 'a status change needs a note');
+r = await call('PUT', C + '/admin/applications/' + appId, { status: 'accepted', note: '   ' }, token);
+check(r.status === 400, 'a blank note does not count');
 r = await call('PUT', C + '/admin/applications/' + appId, { status: 'accepted', note: 'Great fit' }, token);
 check(r.data.applications[0].status === 'accepted' && r.data.applications[0].note === 'Great fit', 'review application');
 r = await call('GET', C);
@@ -253,7 +270,7 @@ check(r.data.trips.find((t) => t.id === tripId).filled === 1, 'accepted count sh
 r = await call('GET', '/api/churches/' + slugB + '/admin/applications', undefined, tokenB);
 check(r.status === 200 && r.data.applications.length === 0, 'church B sees none of church A applications');
 r = await call('PUT', C + '/admin/funds/' + tripId, { applicationsOpen: false }, token);
-r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Late', email: 'late@example.com' });
+r = await call('POST', C + '/trips/' + tripId + '/apply', { name: 'Late', email: 'late@example.com', message: why });
 check(r.status === 400, 'closed trip rejects applications');
 
 console.log('donations (staff only)');

@@ -4,7 +4,6 @@ const pages = {
   'plan-visit': ['Plan your visit', 'guests/plan'],
   ministries: ['Ministries', 'serve'],
   'find-place': ['Find a place', 'serve/find'],
-  'saved-connections': ['Saved', 'serve/saved'],
   calendar: ['Calendar', 'calendar'],
   give: ['Give', 'give'],
   'prayer-map': ['Prayer map', 'prayer'],

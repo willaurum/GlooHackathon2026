@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fmt, gapi } from './api.js';
+import { EMAIL_HINT, PHONE_HINT, isEmail, isPhone } from './contact.js';
+import ContactInput from './ContactInput.jsx';
 import Icon from './Icon.jsx';
 import { PageHeader, SubNav } from './Layout.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
@@ -195,13 +197,20 @@ function Trips({ church, onGive, onApplied }) {
   </div>;
 }
 
+// Why they want to go: the giving API's APPLICATION_MIN / APPLICATION_MAX.
+const WHY_MIN = 100, WHY_MAX = 1000;
+
 function ApplyForm({ church, trip, onDone }) {
   const [f, setF] = useState({ name: '', email: '', phone: '', message: '' }), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [sent, setSent] = useState(false);
   const set = k => e => setF(v => ({ ...v, [k]: e.target.value }));
+  const length = f.message.trim().length;
   async function submit(e) {
     e.preventDefault();
     setErr('');
-    if (!f.name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) return setErr('Add your name and a valid email.');
+    if (!f.name.trim()) return setErr('Add your name.');
+    if (!isEmail(f.email)) return setErr(EMAIL_HINT);
+    if (f.phone.trim() && !isPhone(f.phone)) return setErr(PHONE_HINT);
+    if (length < WHY_MIN) return setErr(`Tell the trip team a little more about why you want to go: at least ${WHY_MIN} characters (${WHY_MIN - length} to go).`);
     setBusy(true);
     try {
       await churchApi(church.slug, '/trips/' + encodeURIComponent(trip.id) + '/apply', { method: 'POST', body: JSON.stringify(f) });
@@ -216,10 +225,15 @@ function ApplyForm({ church, trip, onDone }) {
     <p className="form-note">Only the church's trip leaders see your application.</p>
     <div className="form-row">
       <label className="field">Your name<input value={f.name} maxLength={120} autoComplete="name" onChange={set('name')} /></label>
-      <label className="field">Email<input type="email" value={f.email} maxLength={200} autoComplete="email" onChange={set('email')} /></label>
+      <label className="field">Email<ContactInput kind="email" value={f.email} maxLength={200} autoComplete="email" placeholder="name@example.com" onChange={set('email')} /></label>
     </div>
-    <label className="field">Phone <small>Optional</small><input type="tel" value={f.phone} maxLength={40} autoComplete="tel" onChange={set('phone')} /></label>
-    <label className="field">Why do you want to go? <small>Skills, experience, questions</small><textarea rows={4} value={f.message} maxLength={2000} onChange={set('message')} /></label>
+    <label className="field">Phone <small>Optional</small><ContactInput kind="phone" value={f.phone} maxLength={40} autoComplete="tel" placeholder="(555) 010-0140" onChange={set('phone')} /></label>
+    <label className="field">Why do you want to go? <small>Skills, experience, questions</small>
+      <textarea rows={4} value={f.message} maxLength={WHY_MAX} onChange={set('message')} aria-describedby={'why-count-' + trip.id} />
+      <span className={'char-count' + (length >= WHY_MIN ? ' done' : '')} id={'why-count-' + trip.id} aria-live="polite">
+        {length < WHY_MIN ? `${WHY_MIN - length} more characters needed` : 'Looks good'} · {length} / {WHY_MAX}
+      </span>
+    </label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send application'}</button>
   </form>;

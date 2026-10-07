@@ -1,82 +1,51 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
-import { SetUpThis, StaffOnly } from './ChurchStates.jsx';
+import { SetUpThis } from './ChurchStates.jsx';
+import { EMAIL_HINT, PHONE_HINT, isEmail, isPhone } from './contact.js';
+import ContactInput from './ContactInput.jsx';
 import Icon from './Icon.jsx';
 import { PageHeader, SubNav } from './Layout.jsx';
 
 const urgent = m => m.total > 0 && (m.total - m.filled) / m.total >= .35;
-const TABS = [['serve', 'Ministries', 'grid'], ['serve/find', 'Find a place', 'compass'], ['serve/saved', 'Saved', 'bookmark']];
+const TABS = [['serve', 'Ministries', 'grid'], ['serve/find', 'Find a place', 'compass']];
 const HEADERS = {
   'serve': ['Many teams. One purpose.', 'See where help is needed and meet the people who lead each team.'],
   'serve/find': ['Good gifts. The right place.', 'Tell us about yourself and discover where you could belong.'],
-  'serve/saved': ['Keep the connection going.', 'A shortlist for your next conversation, plus requests from the website chat.'],
 };
 
-export default function Serve({ route, go, requestsVersion, onCount }) {
+// Applications to serve are filed here and reviewed by church staff in Church staff → Volunteers.
+export default function Serve({ route, go }) {
   const church = useChurch();
-  // Saved connections and chat requests carry names and contacts: staff only, including on the demo church.
-  const staffView = church.staff;
   const [query, setQuery] = useState(''),
     [filter, setFilter] = useState(false),
     [detail, setDetail] = useState(null),
+    [applying, setApplying] = useState(false),
     [description, setDescription] = useState(''),
     [availabilityNote, setAvailabilityNote] = useState(''),
     [connectionNote, setConnectionNote] = useState(''),
     [matching, setMatching] = useState(false),
     [matchError, setMatchError] = useState(''),
     [results, setResults] = useState(null),
-    [saved, setSaved] = useState([]),
     [teams, setTeams] = useState([]),
-    [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
-    [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   async function load() {
     setLoading(true); setError('');
-    try {
-      const [ministries, connections, filed] = await Promise.all([api('/ministries'), staffView ? api('/connections') : [], staffView ? api('/requests') : []]);
-      setTeams(ministries); setSaved(connections); setRequests(filed);
-    } catch (err) { setError('Could not load church data. ' + err.message); }
+    try { setTeams(await api('/ministries')); }
+    catch (err) { setError('Could not load church data. ' + err.message); }
     finally { setLoading(false); }
   }
-  useEffect(() => {
-    if (!staffView) { setSaved([]); setRequests([]); }
-    load();
-  }, [staffView]);
-  // The chat widget filed a request; refresh the staff queue.
-  useEffect(() => { if (requestsVersion && staffView) api('/requests').then(setRequests).catch(() => {}); }, [requestsVersion, staffView]);
-  const pending = requests.filter(r => r.status === 'pending');
-  useEffect(() => { onCount(saved.length + pending.length); }, [saved.length, pending.length]);
+  useEffect(() => { load(); }, []);
   useEffect(() => {
     if (detail) document.getElementById('team-detail')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [detail]);
+  // Opens a team with its application form, from its card or a Find a place result.
+  function openTeam(m, apply = false) {
+    setDetail(teams.find(t => t.id === m.id) || m); setApplying(apply);
+    if (route !== 'serve') go('serve');
+  }
 
-  async function remove(connectionId) {
-    setBusy(true); setError('');
-    try {
-      await api('/connections/' + connectionId, { method: 'DELETE' });
-      setSaved(previous => previous.filter(s => s.connection_id !== connectionId));
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-  async function removeRequest(requestId) {
-    setBusy(true); setError('');
-    try {
-      await api('/requests/' + requestId, { method: 'DELETE' });
-      setRequests(previous => previous.filter(r => r.request_id !== requestId));
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-  async function review(requestId, status) {
-    setBusy(true); setError('');
-    try {
-      await api('/requests/' + requestId, { method: 'PATCH', body: JSON.stringify({ status }) });
-      const [connections, filed] = await Promise.all([api('/connections'), api('/requests')]);
-      setSaved(connections); setRequests(filed);
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
   async function match(e) {
     e.preventDefault();
     if (matching) return;
@@ -98,8 +67,8 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
   return <div className="page">
     <PageHeader eyebrow="Serve" title={title} text={text}
       action={route !== 'serve/find' && <button className="primary" onClick={() => go('serve/find')}><Icon name="compass" size={18} />Find a place to serve</button>} />
-    <SubNav tabs={TABS} route={route} go={go} counts={{ 'serve/saved': saved.length + pending.length }} />
-    {error && <div className="banner error" role="alert"><span>{error}</span><button className="secondary" onClick={load} disabled={loading || busy}>Reload</button></div>}
+    <SubNav tabs={TABS} route={route} go={go} />
+    {error && <div className="banner error" role="alert"><span>{error}</span><button className="secondary" onClick={load} disabled={loading}>Reload</button></div>}
     {loading && <p className="muted" role="status">Loading church data…</p>}
 
     {route === 'serve' && !loading && !error && !teams.length && <SetUpThis icon="users" title="No serving teams listed yet."
@@ -128,7 +97,7 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
           <div className="coverage"><span><b>{m.total - m.filled}</b> open spots</span><span>{m.filled} / {m.total} filled</span></div>
           <div className="progress" role="meter" aria-label={m.name + ' volunteer coverage'} aria-valuenow={m.filled} aria-valuemin={0} aria-valuemax={m.total}><span style={{ width: (m.total ? m.filled / m.total * 100 : 0) + '%' }} /></div>
           <Shifts ministry={m} />
-          <div className="card-bottom"><span><Icon name="clock" size={16} />{m.day}</span><button className="link" onClick={() => setDetail(m)}>View team<Icon name="arrow" size={16} /></button></div>
+          <div className="card-bottom"><span><Icon name="clock" size={16} />{m.day}</span><button className="link" onClick={() => openTeam(m)}>View team<Icon name="arrow" size={16} /></button></div>
         </article>)}
       </div>
       {!loading && !error && !visible.length && <div className="empty">No ministries match. Try another search or clear the filter.</div>}
@@ -140,14 +109,18 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
         <p><b>{detail.total - detail.filled} openings · {detail.day}</b></p>
         <Shifts ministry={detail} />
         <p>{detail.note}</p>
-        {/* The contact, with Explore a match beside it on the right (below it on phones). */}
+        {/* The contact, with Explore a match and Apply to join beside it on the right (below it on phones). */}
         <div className="team-contact">
           <div>
             <div className="team-contact-label">Contact us here:</div>
             <Contact m={detail} />
           </div>
-          <button className="secondary" onClick={exploreMatch}>Explore a match<Icon name="arrow" size={18} /></button>
+          <div className="team-actions">
+            <button className="secondary" onClick={exploreMatch}>Explore a match<Icon name="arrow" size={18} /></button>
+            {!applying && <button className="primary" onClick={() => setApplying(true)}>Apply to join</button>}
+          </div>
         </div>
+        {applying && <ApplyForm key={detail.id} team={detail} church={church} onClose={() => setApplying(false)} />}
       </section>}</div>
     </>}
 
@@ -189,27 +162,59 @@ export default function Serve({ route, go, requestsVersion, onCount }) {
             <div className="reason"><b>{results.engine === 'browse' ? 'Start a conversation' : 'Why it could fit you'}</b><p>{m.reason}</p></div>
             <p className="match-schedule">{m.day} · {m.total - m.filled} open spots</p>
             <div className="match-considerations"><b>Talk it through with the team</b><p>{m.considerations}</p></div>
-            <div className="contact-row"><Contact m={m} /></div>
+            <div className="contact-row"><Contact m={m} /><button className="secondary" onClick={() => openTeam(m, true)}>Apply to join<Icon name="arrow" size={16} /></button></div>
             <small className="requirement">{m.note}</small>
           </article>)}
         </>}
       </section>
     </div>}
-
-    {route === 'serve/saved' && !staffView && <StaffOnly what="Saved connections and chat requests" />}
-    {route === 'serve/saved' && staffView && <section>
-      {saved.length ? saved.map(m => <article className="card saved" key={m.id + '-' + m.member}>
-        <span className={'icon color' + m.id}>{m.icon}</span>
-        <div><h3>{m.member} → {m.name}</h3><Contact m={m} /><small>Introduction not yet sent</small></div>
-        <button className="secondary" disabled={busy} onClick={() => remove(m.connection_id)}>Remove</button>
-      </article>) : !loading && <div className="card empty">
-        <h2>Every connection starts somewhere.</h2>
-        <p>Approved connection requests from the website chat show up here.</p>
-        <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
-      </div>}
-      <Requests requests={requests} busy={busy} review={review} removeRequest={removeRequest} />
-    </section>}
   </div>;
+}
+
+// The explanation's length limits (backend main.APPLICATION_MIN / APPLICATION_MAX).
+const ABOUT_MIN = 250, ABOUT_MAX = 1000;
+
+// Only what this team needs: how to reach the person, and in their own words who they are,
+// what they'd like to do and why.
+function ApplyForm({ team, church, onClose }) {
+  const [f, setF] = useState({ name: '', email: '', phone: '', message: '' }),
+    [busy, setBusy] = useState(false), [err, setErr] = useState(''), [sent, setSent] = useState(false);
+  const set = k => e => setF(v => ({ ...v, [k]: e.target.value }));
+  const length = f.message.trim().length;
+  async function submit(e) {
+    e.preventDefault();
+    setErr('');
+    if (!f.name.trim()) return setErr('Add your name.');
+    if (!isEmail(f.email)) return setErr(EMAIL_HINT);
+    if (f.phone.trim() && !isPhone(f.phone)) return setErr(PHONE_HINT);
+    if (length < ABOUT_MIN) return setErr(`Tell us a little more about yourself: at least ${ABOUT_MIN} characters (${ABOUT_MIN - length} to go).`);
+    setBusy(true);
+    try {
+      await api(`/ministries/${team.id}/apply`, { method: 'POST', body: JSON.stringify(f) });
+      setSent(true);
+    } catch (e2) { setErr(e2.message); }
+    finally { setBusy(false); }
+  }
+  if (sent) return <div className="give-applied team-applied" role="status"><Icon name="check" size={20} />
+    <div><b>Application sent.</b><p>Church staff at {church.name} review every application, then someone from {team.name} will reach out by email.</p></div></div>;
+  return <form className="team-apply" onSubmit={submit} noValidate>
+    <div className="team-apply-head"><h3>Apply to join {team.name}</h3><button type="button" className="link" onClick={onClose}>Cancel</button></div>
+    <p className="form-note">Church staff review your application before anyone reaches out. Only {church.name}'s staff see it.</p>
+    <div className="form-row">
+      <label className="field">Your name<input value={f.name} maxLength={120} autoComplete="name" onChange={set('name')} /></label>
+      <label className="field">Email<ContactInput kind="email" value={f.email} maxLength={200} autoComplete="email" placeholder="name@example.com" onChange={set('email')} /></label>
+    </div>
+    <label className="field">Phone <small>Optional</small><ContactInput kind="phone" value={f.phone} maxLength={40} autoComplete="tel" placeholder="(555) 010-0140" onChange={set('phone')} /></label>
+    <label className="field">Tell us about yourself
+      <span className="field-hint" id="about-hint">Who you are, what you'd like to do on {team.name}, and why you want to serve.</span>
+      <textarea rows={6} value={f.message} maxLength={ABOUT_MAX} onChange={set('message')} aria-describedby="about-hint about-count" />
+      <span className={'char-count' + (length >= ABOUT_MIN ? ' done' : '')} id="about-count" aria-live="polite">
+        {length < ABOUT_MIN ? `${ABOUT_MIN - length} more characters needed` : 'Looks good'} · {length} / {ABOUT_MAX}
+      </span>
+    </label>
+    {err && <div className="banner error" role="alert">{err}</div>}
+    <button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send application'}</button>
+  </form>;
 }
 
 function Shifts({ ministry }) {
@@ -230,31 +235,4 @@ function Contact({ m }) {
   const { demo } = useChurch();
   if (!m.head && !m.email) return null;
   return <div className="contact"><strong>{m.head}</strong><small>{demo ? 'Ministry lead · Sample contact' : 'Team leader'}</small>{m.email && <a href={'mailto:' + m.email}><Icon name="mail" size={16} />{m.email}</a>}</div>;
-}
-
-const requestLabels = { connection: 'Connection', pastoral_care: 'Pastoral care', prayer: 'Prayer', crisis: 'Crisis', other: 'Question' };
-
-function Requests({ requests, busy, review, removeRequest }) {
-  if (!requests.length) return null;
-  return <div className="requests">
-    <div className="eyebrow">From the website chat</div>
-    <h2>Requests waiting on a person</h2>
-    <p>Requests are saved here for review. Approval saves a connection; staff must contact the person separately. No notifications are sent automatically.</p>
-    {requests.map(r => <article className="card request" key={r.request_id}>
-      <div>
-        <span className={'tag' + (r.kind === 'crisis' ? ' crisis' : '')}>{requestLabels[r.kind] ?? r.kind}</span>
-        {r.status !== 'pending' && <span className="tag done">{r.status}</span>}
-        <h3>{r.name}{r.ministry_name ? ' → ' + r.ministry_name : ''}</h3>
-        {r.details && <p>{r.details}</p>}
-        <small>{r.contact || 'No contact shared'} · {new Date(r.created_at).toLocaleString()}</small>
-      </div>
-      {r.status === 'pending' && <div className="actions">
-        <button className="secondary" disabled={busy} onClick={() => review(r.request_id, 'declined')}>{r.kind === 'connection' ? 'Decline' : 'Dismiss'}</button>
-        <button className="primary" disabled={busy} onClick={() => review(r.request_id, 'approved')}>{r.kind === 'connection' ? 'Approve' : 'Mark handled'}</button>
-      </div>}
-      {r.status !== 'pending' && <div className="actions">
-        <button className="secondary" disabled={busy} onClick={() => removeRequest(r.request_id)}>Remove</button>
-      </div>}
-    </article>)}
-  </div>;
 }

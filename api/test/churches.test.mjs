@@ -54,7 +54,7 @@ test('percent-encoded paths are refused, so a route cannot be checked as one thi
 
 test('other spellings of an id stay staff only (the container reads +1, 01 and 1_0 as numbers)', () => {
   for (const id of ['+1', '01', '1_0', ' 1', '1.0', 'abc']) {
-    for (const [m, p] of [['PATCH', `/api/requests/${id}`], ['DELETE', `/api/requests/${id}`], ['DELETE', `/api/connections/${id}`],
+    for (const [m, p] of [['PUT', `/api/volunteers/${id}`], ['PATCH', `/api/requests/${id}`], ['DELETE', `/api/requests/${id}`], ['DELETE', `/api/connections/${id}`],
       ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`]])
       for (const demo of [true, false]) assert.equal(access(m, p, demo), 'staff', `${m} ${p}`);
   }
@@ -97,12 +97,12 @@ test('a staff session only counts for its own church', async () => {
 
 test('who may call what', () => {
   // Public on every church.
-  for (const [m, p] of [['GET', '/api/info'], ['GET', '/api/church'], ['GET', '/api/ministries'], ['POST', '/api/chat'], ['POST', '/api/visits'], ['GET', '/api/visits/abcDEF_123'], ['POST', '/api/visits/abcDEF_123/arrive']]) {
+  for (const [m, p] of [['GET', '/api/info'], ['GET', '/api/church'], ['GET', '/api/ministries'], ['POST', '/api/ministries/3/apply'], ['POST', '/api/chat'], ['POST', '/api/visits'], ['GET', '/api/visits/abcDEF_123'], ['POST', '/api/visits/abcDEF_123/arrive']]) {
     assert.equal(access(m, p, false), 'public', m + ' ' + p);
     assert.equal(access(m, p, true), 'public', m + ' ' + p);
   }
   // Staff work requires a session, including on the demo church.
-  for (const [m, p] of [['GET', '/api/visits'], ['POST', '/api/visits/3/claim'], ['POST', '/api/visits/3/met'], ['GET', '/api/requests'], ['PATCH', '/api/requests/2'], ['GET', '/api/connections'], ['DELETE', '/api/connections/4'], ['DELETE', '/api/requests/5'], ['POST', '/api/events']]) {
+  for (const [m, p] of [['GET', '/api/visits'], ['POST', '/api/visits/3/claim'], ['POST', '/api/visits/3/met'], ['GET', '/api/requests'], ['PATCH', '/api/requests/2'], ['GET', '/api/connections'], ['DELETE', '/api/connections/4'], ['DELETE', '/api/requests/5'], ['POST', '/api/events'], ['GET', '/api/volunteers'], ['PUT', '/api/volunteers/7']]) {
     assert.equal(access(m, p, true), 'staff', m + ' ' + p);
     assert.equal(access(m, p, false), 'staff', m + ' ' + p);
   }

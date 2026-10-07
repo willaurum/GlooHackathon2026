@@ -9,7 +9,7 @@ import { formatReply } from './chatFormat.js';
 const greetingFor = name => `Hi! I’m Tekton, ${name || 'the church'}’s assistant. I can help with service times, events, small groups, or finding a place to serve.`;
 const starters = ['When are services?', 'How can I get involved?', 'Are there small groups?'];
 const actionLabels = {
-  request_connection: 'Connection request saved for staff review',
+  request_connection: 'Application saved for staff review',
   hand_off_to_staff: 'Request saved for staff review'
 };
 const Segments = ({ segments }) => segments.map((s, i) =>
@@ -19,7 +19,7 @@ const Reply = ({ text }) => <div className="chat-text">{formatReply(text).map((b
   : <block.type key={i}>{block.items.map((item, j) => <li key={j}><Segments segments={item} /></li>)}</block.type>)}</div>;
 const newSessionId = () => globalThis.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2);
 
-export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }) {
+export default function ChatWidget({ open, setOpen, onNavigate }) {
   const church = useChurch();
   const greeting = church.ready ? greetingFor(church.name) : `The ${church.name} assistant opens as soon as the updated church service is deployed.`;
   const [messages, setMessages] = useState([]),
@@ -47,7 +47,6 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
       });
       setConfigured(body.configured);
       setMessages(previous => [...previous, { role: 'assistant', content: body.reply, actions: body.actions }]);
-      if (body.actions?.some(a => a.request_id)) onRequestFiled?.();
     } catch (err) {
       setMessages(previous => [...previous, { role: 'assistant', content: err.message, error: true }]);
     } finally { setBusy(false); }
@@ -65,7 +64,8 @@ export default function ChatWidget({ open, setOpen, onRequestFiled, onNavigate }
             if (page) return <div className="chat-page" key={a.page + '/' + (a.section ?? '')}><strong>{page}</strong><button type="button" className="secondary" aria-label={'Take me to ' + page} onClick={() => {
               if (followSuggestion(a, onNavigate)) setOpen(false);
             }}>Take me there<Icon name="arrow" size={16} /></button></div>;
-            return a.request_id && actionLabels[a.tool] ? <span className="chat-action" key={a.request_id}><Icon name="check" size={16} />{actionLabels[a.tool]}</span> : null;
+            const filed = a.request_id ?? a.application_id;
+            return filed && actionLabels[a.tool] ? <span className="chat-action" key={a.tool + filed}><Icon name="check" size={16} />{actionLabels[a.tool]}</span> : null;
           })}
         </div>)}
         {busy && <p className="bubble assistant typing">Thinking…</p>}

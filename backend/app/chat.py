@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from . import db
+from . import contact as contacts
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,6 @@ SITE_PAGES = {
     'plan-visit': ('Plan your visit', 'What to expect, parking, kids, a map, and a way to let the church know you are coming.'),
     'ministries': ('Ministries', 'Browse teams, responsibilities, schedules, and ministry contacts.'),
     'find-place': ('Find a place', 'Share a little about yourself to get personalized ministry recommendations and contacts.'),
-    'saved-connections': ('Saved', 'Review saved connections and requests from the website chat in this shared demo workspace.'),
     'calendar': ('Calendar', 'Browse upcoming church events, classes, and services.'),
     'give': ('Give', 'Give to the church online.'),
     'prayer-map': ('Prayer map', "Pray for the church's missionaries and the regions where they serve."),
@@ -133,8 +133,9 @@ def collect_action(actions, tool, result):
             action |= {'section': result['section'], 'section_title': SITE_SECTIONS[result['page']][result['section']]}
         if action not in actions:
             actions.append(action)
-    elif 'request_id' in result:
-        actions.append({'tool': tool, 'request_id': result['request_id'], 'status': result['status']})
+    elif 'request_id' in result or 'application_id' in result:
+        key = 'request_id' if 'request_id' in result else 'application_id'
+        actions.append({'tool': tool, key: result[key], 'status': result['status']})
 
 NOT_CONFIGURED = ("The AI assistant isn't switched on yet: no AI provider key is configured. "
                   "Add GLOO_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY) to your .env file and restart the backend.")
@@ -174,7 +175,7 @@ How to work:
 - Call suggest_page whenever recommending a page so the visitor gets a clickable Take me there button. Available pages: {pages}. Never invent pages or URLs. Navigation happens only when the visitor clicks. The button appears only when you call the tool, so never write "Take me there" or a page key in your reply text.
 - When one part of a page answers the question, also pass section so the visitor lands on it: {sections}. For example, parking or accessibility questions go to plan-visit with good-to-know, and directions go to plan-visit with map.
 - Answer questions about upcoming events, service times, campuses, FAQs, small groups, staff, and sermons with the information tools. You may also suggest calendar for events or plan-visit for first-time visitors. There is no Small groups page; answer those questions here instead of inventing links.
-- Only call request_connection after the person clearly says yes to being connected and has given their name and an email or phone number. Tell them a staff member reviews every request before anyone reaches out.
+- Only call request_connection after the person clearly says yes to joining a team and has given their name and an email or phone number. It files an application to that team; tell them church staff review every application before anyone reaches out.
 - Requests are only saved in the church workspace for staff review. No notification, email, or introduction is sent automatically, even after approval. Never claim staff have been notified or promise a response time.
 - You are not a pastor or counselor. Do not counsel, diagnose, give spiritual direction, or make pastoral judgments. If someone shares grief, illness, a family crisis, or a prayer need, or asks for pastoral care, respond with brief kindness and offer to pass it to the care team with hand_off_to_staff. Ask for their name and contact first, but hand off without them if they'd rather not share.
 - If someone may be in danger, or talks about harming themselves or someone else, tell them right away to call or text 988 (Suicide & Crisis Lifeline, US), or call 911 in an emergency. Then call hand_off_to_staff with reason "crisis". Do not try to handle it yourself.
@@ -189,7 +190,7 @@ PAGES_NOTE = ("Copied from the church's old website and can be out of date. For 
 TOOLS = [
     {'type': 'function', 'function': {
         'name': 'suggest_page',
-        'description': 'Offer a clickable Take me there suggestion for an existing site page. Use find-place for personalized ministry recommendations, ministries for team browsing, plan-visit for first-time visitors, calendar for events, home for service times and the site overview, saved-connections for saved connections, give for giving, prayer-map for missions prayer.',
+        'description': 'Offer a clickable Take me there suggestion for an existing site page. Use find-place for personalized ministry recommendations, ministries for team browsing, plan-visit for first-time visitors, calendar for events, home for service times and the site overview, give for giving, prayer-map for missions prayer.',
         'parameters': {'type': 'object', 'properties': {
             'page': {'type': 'string', 'enum': list(SITE_PAGES)},
             'section': {'type': 'string', 'enum': SECTION_KEYS, 'description': 'Optional part of the page to scroll to. Valid sections: ' + '; '.join(
@@ -235,7 +236,7 @@ TOOLS = [
     }},
     {'type': 'function', 'function': {
         'name': 'request_connection',
-        'description': 'File a request for a staff member to introduce the person to a ministry lead. Staff review it first; nothing is sent automatically. Only call after the person agrees and has given their name and an email or phone number.',
+        'description': "File the person's application to serve on a ministry team. Church staff review it first; nothing is sent automatically. Only call after the person agrees and has given their name and an email or phone number.",
         'parameters': {'type': 'object', 'properties': {
             'ministry_id': {'type': 'integer', 'description': 'The id returned by search_ministries.'},
             'name': {'type': 'string', 'description': "The person's name."},
@@ -318,7 +319,7 @@ def make_clients():
 
 
 def looks_like_contact(value):
-    return '@' in value or len(re.sub(r'\D', '', value)) >= 7
+    return contacts.is_email_or_phone(value)
 
 
 def summarize_ministry(m):
@@ -378,11 +379,12 @@ def request_connection(ministry_id, name, contact, note='', source=db):
         return {'error': 'Contact must be an email address or phone number. Ask the person for one.'}
     if ministry['filled'] >= ministry['total']:
         return {'error': f"{ministry['name']} has no open spots right now. Suggest another ministry."}
-    if db.find_pending_request('connection', ministry_id, name):
-        return {'status': 'already_pending', 'message': f"{name} already has a pending request for {ministry['name']}."}
-    row = db.create_request('connection', name, contact, note.strip(), ministry_id)
-    return {'request_id': row['request_id'], 'status': 'pending_staff_review', 'ministry': ministry['name'],
-            'message': 'Saved in the church workspace for staff review. No notification or introduction has been sent.'}
+    email, phone = (contact, '') if '@' in contact else ('', contact)
+    if db.find_open_application(ministry_id, email=email, phone=phone):
+        return {'status': 'already_pending', 'message': f"{name} already has an application open for {ministry['name']}."}
+    row = db.create_volunteer_application(ministry, name, email=email, phone=phone, message=note.strip()[:1000], source='chat')
+    return {'application_id': row['id'], 'status': 'pending_staff_review', 'ministry': ministry['name'],
+            'message': 'Saved as an application for church staff to review. No notification or introduction has been sent.'}
 
 
 def hand_off_to_staff(reason, summary, name='', contact='', source=db):
@@ -471,7 +473,7 @@ DEMO_INTENTS = [
     ('search_ministries', ['ministry', 'ministries', 'volunteer', 'serve', 'music', 'kids', 'youth', 'teach', 'worship', 'get involved', 'community outreach']),
     ('get_church_info', ['info', 'about', 'what is this', 'tell me']),
 ]
-CONNECTION_PROMPT = ("To save a connection request, share the ministry's full name, your name "
+CONNECTION_PROMPT = ("To apply to a team, share the ministry's full name, your name "
                      "(say 'my name is ...'), and an email or phone number.")
 
 
@@ -578,10 +580,9 @@ def demo_reply(message: str, tools: dict, history=None) -> str:
             return DEMO_CRISIS + (" Your request was saved for staff review; no notification was sent."
                                   if saved else " I couldn't save your request for staff review.")
         if text.strip(' .!') in ('cancel', 'never mind', 'nevermind', 'no thanks'):
-            return 'Okay, I will not save a connection request. ' + DEMO_MENU
+            return 'Okay, I will not file an application. ' + DEMO_MENU
         page, section = next(((key, part) for key, part, phrases in (
             ('find-place', None, ['find a place', 'recommend', 'where can i serve', 'where should i serve']),
-            ('saved-connections', None, ['saved connections', 'saved requests', 'my connections']),
             ('plan-visit', 'good-to-know', ['parking', 'where do i park', 'accessib', 'wheelchair', 'kids check-in']),
             ('plan-visit', 'map', ['directions', 'how do i get there', 'where are you located']),
             ('plan-visit', None, ['plan a visit', 'plan my visit', 'first visit', 'first time visiting']),
@@ -621,8 +622,8 @@ def demo_reply(message: str, tools: dict, history=None) -> str:
         reply = format_demo_result(result)
         if intent == 'hand_off_to_staff' and 'request_id' in result:
             reply = f"I'm sorry you're going through that. {reply}"
-        if intent == 'request_connection' and 'request_id' in result:
-            reply = (f"Thanks! Your connection request for {result['ministry']} is saved for staff review. "
+        if intent == 'request_connection' and 'application_id' in result:
+            reply = (f"Thanks! Your application to {result['ministry']} is saved for church staff to review. "
                      "No notification or introduction has been sent.")
         return reply
     except Exception:

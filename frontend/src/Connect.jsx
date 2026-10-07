@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import { signupLinks } from './churchSite.js';
+import ContactInput from './ContactInput.jsx';
 import Icon from './Icon.jsx';
 import connect from './data/connect.json';
 const CONNECT_INTERESTS = connect.interests;
@@ -66,7 +67,7 @@ export default function Connect({ go, onAsk }) {
             <input required maxLength={100} value={name} onChange={e => setName(e.target.value)} placeholder="Jamie Parker" />
           </label>
           <label className="field">Email or phone <small>Optional</small>
-            <input maxLength={200} value={contact} onChange={e => setContact(e.target.value)} placeholder="jamie@example.com" />
+            <ContactInput kind="email-or-phone" maxLength={200} value={contact} onChange={e => setContact(e.target.value)} placeholder="jamie@example.com or (555) 010-0140" />
           </label>
           <label className="field">How can we help?
             <select value={interest} onChange={e => setInterest(e.target.value)}>
@@ -87,9 +88,7 @@ export default function Connect({ go, onAsk }) {
         <p>Prefer a conversation? Ask Tekton about groups, events or service times, or look up the right person in the directory.</p>
         <div className="about-actions stack">
           <button className="secondary wide" onClick={onAsk}><Icon name="chat" size={18} />Ask Tekton</button>
-          <button className="secondary wide" onClick={() => go('about/directory')}><Icon name="phone" size={18} />Contact directory</button>
-          <button className="secondary wide" onClick={() => go('serve/saved')}><Icon name="bookmark" size={18} />My saved connections</button>
-        </div>
+          <button className="secondary wide" onClick={() => go('about/directory')}><Icon name="phone" size={18} />Contact directory</button>        </div>
         <small>Need prayer or care? Mention it in your note, or call the office. Staff respond within one business day.</small>
       </aside>
     </div>

@@ -283,6 +283,16 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .team-detail p { font-size: 15px; margin-top: 10px; }
 .team-contact { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 14px 20px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .team-contact-label { margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.team-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+/* Apply to join a team: only what that team needs. */
+.team-apply { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.team-apply-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.team-apply .field { margin: 12px 0; }
+.field-hint { display: block; margin-top: 2px; font-size: 13px; font-weight: 400; color: var(--muted); }
+.char-count { display: block; margin-top: 6px; font-size: 13px; font-weight: 400; color: var(--muted); text-align: right; }
+.char-count.done { color: var(--green-700); }
+.team-applied { margin-top: 18px; }
+@media (max-width: 600px) { .team-actions { width: 100%; } .team-actions > * { flex: 1 1 100%; } }
 .matching { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 24px; align-items: start; }
 .matching > * { min-width: 0; }
 .match-form { padding: 24px; }
@@ -326,15 +336,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .shift-empty { margin-top: 12px; }
 .shifts ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
 .shifts li { display: grid; gap: 2px; padding: 10px 12px; background: var(--green-50); border-radius: 10px; font-size: 14px; color: var(--ink); }
-.saved { display: flex; align-items: center; gap: 16px; padding: 20px; margin-bottom: 12px; }
-.saved > div { flex: 1; min-width: 0; }
-.saved h3 { margin-bottom: 8px; }
-.requests { margin-top: 32px; }
-.requests > p { margin: 4px 0 14px; }
-.request { display: flex; align-items: flex-start; gap: 16px; padding: 18px 20px; margin-bottom: 10px; }
-.request > div:first-child { flex: 1; min-width: 0; }
-.request p { font-size: 14px; margin: 4px 0; }
-.request .actions { display: flex; gap: 8px; flex: none; }
 
 /* ---------- Sermon Notes ---------- */
 /* A reader: the sermon picker is the header, the transcript gets the full width. */
@@ -583,6 +584,12 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .give-trip-actions, .give-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .give-apply { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line); }
 .give-apply .field { margin: 12px 0; }
+.volunteer-kinds { margin-bottom: 4px; }
+.give-app-source { color: var(--muted); }
+.field-error { display: block; margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--danger); }
+.field input[aria-invalid] { border-color: var(--danger); }
+.stat-link { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.stat-link:hover { border-color: var(--green-200); }
 .give-applied { display: flex; align-items: flex-start; gap: 10px; margin: 8px 0; padding: 12px 14px; border-radius: var(--r); background: var(--green-50); border: 1px solid var(--green-100); color: var(--green-700); }
 .give-applied b { color: var(--ink); }
 .give-applied p { font-size: 14px; margin-top: 2px; }
@@ -762,9 +769,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .search input { width: 100%; }
   .placeholder { min-height: 0; padding: 32px 20px; }
   .leaders { padding: 24px 20px; border-radius: var(--r-lg); }
-  .saved, .request { flex-wrap: wrap; }
-  .request .actions { width: 100%; }
-  .request .actions > * { flex: 1; }
   .pn-ask { flex-direction: column; align-items: stretch; }
   /* Phones: picker full width with Add as an icon, reading controls on one compact row. */
   .pn { gap: 12px; }
