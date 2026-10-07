@@ -230,6 +230,21 @@ def _norm(text):
     return re.sub(r'\s+', ' ', str(text or '')).strip().lower()
 
 
+OCCASION_RE = re.compile(
+    r'\b(january|february|march|april|june|july|august|september|sept|october|november|december|easter|christmas|'
+    r'thanksgiving|halloween|new year\'?s?|independence day|fourth of july|4th of july|memorial day|labor day|'
+    r'mother\'?s day|father\'?s day|palm sunday|good friday|advent|lent|pentecost|summer|fall|autumn|winter|spring|'
+    r'annual(?:ly)?|once a year|each year|every year|yearly)\b', re.I)
+WEEKLY_RE = re.compile(r'\b(weekly|every week|each week|(?:sun|mon|tues|wednes|thurs|fri|satur)days\b|'
+                       r'(?:every|each)\s+(?:sun|mon|tues|wednes|thurs|fri|satur)day)\b', re.I)
+
+
+def occasion(when):
+    """True when a ministry's `when` names a month, holiday or season and no weekly meeting: a yearly event
+    ("Saturday before Easter", "last full week of June", "October 31st"), not a group."""
+    return bool(when) and bool(OCCASION_RE.search(when)) and not WEEKLY_RE.search(when)
+
+
 def check(name, raw, source, today=None):
     """Validated items for one specialist answer, in the builder_structured item shape. Bad items are dropped."""
     from .builder import grounded
@@ -279,6 +294,11 @@ def check(name, raw, source, today=None):
         collection = spec['collection']
         if name == 'ministries':
             collection = 'groups' if value.pop('kind') == 'group' else 'ministries'
+            if occasion(value.get('when', '')):
+                # "Every Spring, the Saturday before Easter": a yearly event, not a group that meets.
+                collection = 'events'
+                value = {'name': value['name'], 'when': value['when'], 'location': value.get('where', ''),
+                         'description': value.get('description', '')}
         out.append({'collection': collection, 'value': {k: v for k, v in value.items() if v not in ('', None)},
                     'quote': ' '.join(item.quote.split()), 'source_id': source['id'], 'method': 'ai'})
     if dropped:

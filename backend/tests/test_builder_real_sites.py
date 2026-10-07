@@ -257,5 +257,33 @@ class PodcastTests(unittest.TestCase):
         self.assertTrue(session['file_check']['valid'], session['file_check'])
 
 
+class OccasionTests(unittest.TestCase):
+    """Forest Baptist's Children page lists its yearly events (Easter Eggstravaganza, Vacation Bible School, Fall
+    Festival); the ministries reader called them groups."""
+
+    def test_yearly_occasions_become_events(self):
+        page = source('forest-baptist', 'ministries/children')
+        answer = {'items': [
+            {'name': 'Easter Eggstravaganza', 'kind': 'group', 'when': 'Every Spring, the Saturday before Easter',
+             'quote': 'Every Spring, the Saturday before Easter, we host an Easter egg hunt'},
+            {'name': 'Vacation Bible School', 'kind': 'ministry', 'when': 'Last full week of June',
+             'quote': 'Each Summer, during the mornings of last full week of June, we have Vacation Bible School (Lifeway)'},
+            {'name': 'Fall Festival', 'kind': 'group', 'when': 'October 31st', 'where': '',
+             'quote': 'Our annual Fall Festival takes place every October 31st.'},
+            {'name': 'Children', 'kind': 'ministry', 'when': 'Wednesdays 6:30p',
+             'quote': 'Wednesdays: 6:30p (Adult, Children, and Youth activities)'},
+        ]}
+        found = {i['value']['name']: (i['collection'], i['value'].get('when')) for i in builder_agents.check('ministries', answer, page)}
+        self.assertEqual(found['Easter Eggstravaganza'], ('events', 'Every Spring, the Saturday before Easter'))
+        self.assertEqual(found['Vacation Bible School'], ('events', 'Last full week of June'))
+        self.assertEqual(found['Fall Festival'], ('events', 'October 31st'))
+
+    def test_weekly_meetings_stay_groups(self):
+        for when in ('Wednesdays 6:30p', 'Every Sunday in October', 'Tuesdays, September through May', ''):
+            self.assertFalse(builder_agents.occasion(when), when)
+        for when in ('Every Spring, the Saturday before Easter', 'Last full week of June', 'October 31st', 'Each Christmas Eve'):
+            self.assertTrue(builder_agents.occasion(when), when)
+
+
 if __name__ == '__main__':
     unittest.main()
