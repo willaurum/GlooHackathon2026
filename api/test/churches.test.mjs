@@ -206,7 +206,7 @@ test('a rejected staff session is flagged so the browser drops it; no session se
 test('drafts are public; apply and all unknown builder routes stay staff only', () => {
   for (const demo of [true, false]) {
     assert.equal(access('POST', '/api/builder/drafts', demo), 'public');
-    for (const action of ['blank', 'upload']) {
+    for (const action of ['blank', 'upload', 'json']) {
       assert.equal(access('POST', `/api/builder/drafts/${action}`, demo), 'public');
       for (const method of ['PUT', 'PATCH', 'DELETE'])
         assert.equal(access(method, `/api/builder/drafts/${action}`, demo), 'staff');
