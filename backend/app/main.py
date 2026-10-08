@@ -336,6 +336,20 @@ def visits_queue():
     return {'waiting': db.list_visits(['arrived', 'on_the_way']), 'planned': db.list_planned_visits()}
 
 
+class WalkInRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=100)
+    party_size: int = Field(default=1, ge=1, le=20)
+
+
+# Declared before /api/visits/{visit_id}/checkin so "new" is not read as a visit id. Staff only in the Worker
+# (api/churches.ts STAFF_WORK_ROUTES covers /api/visits/<id>/checkin for any id).
+@app.post('/api/visits/new/checkin', status_code=201)
+def check_in_walk_in(body: WalkInRequest):
+    """A guest the welcome team types in at the door who never signed up."""
+    return db.check_in_walk_in(' '.join(body.name.split()), body.party_size)
+
+
 @app.post('/api/visits/{visit_id}/checkin')
 def check_in_visit(visit_id: int):
     visit = db.check_in_visit(visit_id)

@@ -62,6 +62,15 @@ test('other spellings of an id stay staff only (the container reads +1, 01 and 1
   assert.equal(access('POST', '/api/visits/abcDEF_123/arrive', false), 'public');
 });
 
+test('checking in a guest by name at the door (a walk-in) is staff only, on every church', async () => {
+  for (const demo of [true, false]) assert.equal(access('POST', '/api/visits/new/checkin', demo), 'staff');
+  assert.equal(access('POST', churchPath('/api/churches/hope-chapel/visits/new/checkin').path, false), 'staff');
+  // A visitor, or staff of another church, is turned away before the container.
+  assert.equal((await requireStaff(new Request('https://api.test/api/visits/new/checkin', { method: 'POST' }), env, 'hope-chapel')).status, 401);
+  assert.equal((await requireStaff(asStaff('b'.repeat(32)), env, 'hope-chapel')).status, 401);
+  assert.equal(await requireStaff(asStaff('a'.repeat(32)), env, 'hope-chapel'), null);
+});
+
 test('trailing and doubled slashes are refused, so /api/visits/ cannot be read as an unknown route', () => {
   // The container redirects these to the staff-only /api/visits, /api/requests and /api/church/content.
   for (const p of ['/api/visits/', '/api/visits//', '/api/churches/hope-chapel/requests/', '/api/church/content/', '/api//visits', '/api/churches/hope-chapel//visits', '/api/'])

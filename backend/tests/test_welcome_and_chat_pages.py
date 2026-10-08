@@ -26,6 +26,26 @@ class WelcomeCheckInTests(ChurchTestCase):
         self.assertEqual(self.client.post(f"/api/visits/{visit['visit_id']}/claim", json={'host': 'Bob'}).json()['status'], 'on_the_way')
         self.assertEqual(self.client.post(f"/api/visits/{visit['visit_id']}/met").json()['status'], 'met')
 
+    def test_a_guest_who_never_signed_up_is_checked_in_by_name(self):
+        checked = self.client.post('/api/visits/new/checkin', json={'name': '  Sam   Newcomer '})
+        self.assertEqual(checked.status_code, 201, checked.text)
+        visit = checked.json()
+        self.assertEqual((visit['name'], visit['status'], visit['service'], visit['party_size']),
+                         ('Sam Newcomer', 'arrived', 'Walk-in', 1))
+        self.assertTrue(visit['arrived_at'])
+        self.assertNotIn('token', visit)
+        # It persists: the walk-in is in the waiting queue, ready to be claimed, and not on the planned list.
+        queue = self.client.get('/api/visits').json()
+        self.assertIn(visit['visit_id'], [v['visit_id'] for v in queue['waiting']])
+        self.assertNotIn(visit['visit_id'], [v['visit_id'] for v in queue['planned']])
+        self.assertEqual(self.client.post(f"/api/visits/{visit['visit_id']}/claim", json={'host': 'Bob'}).json()['status'], 'on_the_way')
+        self.assertEqual(self.client.post('/api/visits/new/checkin', json={'name': 'Kim', 'party_size': 3}).json()['party_size'], 3)
+
+    def test_a_walk_in_needs_a_name(self):
+        for body in ({}, {'name': ''}, {'name': '   '}, {'name': 'x' * 101}, {'name': 'Kim', 'party_size': 0}):
+            self.assertEqual(self.client.post('/api/visits/new/checkin', json=body).status_code, 422, body)
+        self.assertEqual(self.client.get('/api/visits').json()['waiting'], [])
+
 
 class ImportedPageSuggestionTests(ChurchTestCase):
     def test_suggest_an_imported_page_by_its_slug(self):
