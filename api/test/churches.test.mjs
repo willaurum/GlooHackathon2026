@@ -55,7 +55,7 @@ test('percent-encoded paths are refused, so a route cannot be checked as one thi
 test('other spellings of an id stay staff only (the container reads +1, 01 and 1_0 as numbers)', () => {
   for (const id of ['+1', '01', '1_0', ' 1', '1.0', 'abc']) {
     for (const [m, p] of [['PUT', `/api/volunteers/${id}`], ['PATCH', `/api/requests/${id}`], ['DELETE', `/api/requests/${id}`], ['DELETE', `/api/connections/${id}`],
-      ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`]])
+      ['POST', `/api/visits/${id}/checkin`], ['POST', `/api/visits/${id}/claim`], ['POST', `/api/visits/${id}/met`], ['POST', `/api/events/${id}/summarize`]])
       for (const demo of [true, false]) assert.equal(access(m, p, demo), 'staff', `${m} ${p}`);
   }
   // A guest's own visit token and "I'm here" stay public.
@@ -102,7 +102,7 @@ test('who may call what', () => {
     assert.equal(access(m, p, true), 'public', m + ' ' + p);
   }
   // Staff work requires a session, including on the demo church.
-  for (const [m, p] of [['GET', '/api/visits'], ['POST', '/api/visits/3/claim'], ['POST', '/api/visits/3/met'], ['GET', '/api/requests'], ['PATCH', '/api/requests/2'], ['GET', '/api/connections'], ['DELETE', '/api/connections/4'], ['DELETE', '/api/requests/5'], ['POST', '/api/events'], ['GET', '/api/volunteers'], ['PUT', '/api/volunteers/7']]) {
+  for (const [m, p] of [['GET', '/api/visits'], ['POST', '/api/visits/3/checkin'], ['POST', '/api/visits/3/claim'], ['POST', '/api/visits/3/met'], ['GET', '/api/requests'], ['PATCH', '/api/requests/2'], ['GET', '/api/connections'], ['DELETE', '/api/connections/4'], ['DELETE', '/api/requests/5'], ['POST', '/api/events'], ['GET', '/api/volunteers'], ['PUT', '/api/volunteers/7']]) {
     assert.equal(access(m, p, true), 'staff', m + ' ' + p);
     assert.equal(access(m, p, false), 'staff', m + ' ' + p);
   }
