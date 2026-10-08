@@ -34,7 +34,7 @@ async function call(method, path, body, token, ip = '10.0.0.' + Math.floor(Math.
 const stripeLog = async () => (await fetch(STRIPE + '/__log')).json();
 async function fixtureChurch(body) {
   const url = process.env.FIXTURE_API;
-  if (!url || new URL(url).hostname !== '127.0.0.1') throw new Error('Set FIXTURE_API to the localhost fixture endpoint from test/local-worker.mjs. Public church signup is disabled.');
+  if (!url || new URL(url).hostname !== '127.0.0.1') throw new Error('Set FIXTURE_API to the localhost fixture endpoint from test/local-worker.mjs.');
   const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) throw new Error('Local church fixture could not be initialized.');
@@ -42,15 +42,16 @@ async function fixtureChurch(body) {
 }
 
 const suffix = Date.now().toString(36).slice(-4);
-console.log('public registration disabled; internal test fixtures');
+console.log('public registration validation; internal test fixtures');
 let r = await call('POST', '/api/churches', { name: 'Hope Chapel ' + suffix, city: 'Austin', currency: 'usd', password: 'short' });
-check(r.status === 403, 'public registration is disabled', r.data);
+check(r.status === 400, 'public registration checks required Owner details', r.data);
 r = await fixtureChurch({ name: 'Hope Chapel ' + suffix, city: 'Austin', currency: 'usd', password: 'correct horse battery' });
 check(r.status === 201 && r.data.token && r.data.slug, 'creates church', r.data);
 const slug = r.data.slug; let token = r.data.token;
 const C = '/api/churches/' + slug;
 r = await call('POST', '/api/churches', { name: 'Forbidden Church ' + suffix, password: 'fixture password 1', ownerName: 'Forbidden Owner', ownerEmail: 'forbidden@example.org' }, token);
-check(r.status === 403, 'a church Owner cannot create another church through the public endpoint', r.data);
+check(r.status === 201 && r.data.slug !== slug && r.data.token !== token,
+  'a new church gets a separate Owner session through public signup');
 
 r = await fixtureChurch({ name: 'Hope Chapel ' + suffix, city: 'Dallas', password: 'another password 1' });
 check(r.status === 201 && r.data.slug !== slug, 'same name gets a different slug', r.data);
@@ -204,7 +205,7 @@ const portalSessId = r.data.url && r.data.url.split('/portal/')[1];
 s = (await stripeLog()).accounts; acct = Object.values(s)[0];
 const ps = acct.portalSessions.find((x) => x.id === portalSessId);
 check(ps && ps.customer === stripeSess3.customer && ps.configuration === portalCfg.id, "portal session is for that checkout's own customer, with the church's configuration", { ps, customer: stripeSess3.customer });
-check(ps && ps.return_url === ORIGIN + '/#/give', 'portal returns to the Give page', ps);
+check(ps && ps.return_url === ORIGIN + '/#/c/' + slug + '/give', 'portal returns to its own church Give page', ps);
 r = await call('POST', C + '/portal', { session: sess1 });
 check(r.status === 400, 'no portal for a one-time gift', r.data);
 r = await call('POST', C + '/portal', { session: 'cs_test_doesnotexist' });
