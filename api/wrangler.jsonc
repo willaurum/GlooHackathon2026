@@ -34,7 +34,7 @@
   "vars": {
     // Comma-separated frontend origins; the first is the default.
     "ALLOWED_ORIGIN": "https://gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-frontend-gloo-hackathon2026.jaronwilson2025.workers.dev,https://preview-pastor-notes-gloo-hackathon2026.jaronwilson2025.workers.dev",
-    // Once churches have subdomains, add "BASE_DOMAIN": "belong.example.org" so https://<slug>.belong.example.org is allowed too.
+    // Once churches have subdomains, add "BASE_DOMAIN": "tekton.example.org" so https://<slug>.tekton.example.org is allowed too.
     // Sermon highlights fall back to this Workers AI model only for a window Gloo could not tag.
     "NOTES_LLM_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8",
     // Similarity floor; a passage must also share a topic word with the question.
