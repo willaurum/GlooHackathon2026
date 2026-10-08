@@ -1,0 +1,21 @@
+Tekton build documentation
+Copyright (c) 2026 Isaac Smith, Ben Peterson, Will Cook, Jaron Wilson, Isaiah Mellace and Erik Ellis.
+
+The documents in this folder (build-docs/) are licensed under the Creative Commons Attribution 4.0
+International License (CC BY 4.0).
+
+You are free to share (copy and redistribute the material in any medium or format) and adapt
+(remix, transform and build upon the material) for any purpose, even commercially, as long as you
+give appropriate credit, provide a link to the license, and indicate if changes were made. You may
+do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your
+use.
+
+Suggested credit: "Tekton build documentation by Isaac Smith, Ben Peterson, Will Cook, Jaron Wilson,
+Isaiah Mellace and Erik Ellis, licensed under CC BY 4.0."
+
+Summary:   https://creativecommons.org/licenses/by/4.0/
+Full text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+This license covers only the documentation in this folder. The Tekton software itself is not
+licensed under CC BY 4.0; all rights in it are reserved (see the LICENSE file at the repository
+root).

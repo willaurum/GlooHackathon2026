@@ -1,6 +1,7 @@
 {
   "name": "gloo-hackathon2026-api-donate-giving",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --outdir dist",
