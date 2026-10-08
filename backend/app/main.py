@@ -336,6 +336,14 @@ def visits_queue():
     return {'waiting': db.list_visits(['arrived', 'on_the_way']), 'planned': db.list_planned_visits()}
 
 
+@app.post('/api/visits/{visit_id}/checkin')
+def check_in_visit(visit_id: int):
+    visit = db.check_in_visit(visit_id)
+    if visit is None:
+        raise HTTPException(status_code=409, detail='This guest is not on the planned list')
+    return visit
+
+
 @app.post('/api/visits/{visit_id}/claim')
 def claim_visit(visit_id: int, body: ClaimRequest):
     visit = db.set_visit_host(visit_id, body.host)
