@@ -111,6 +111,32 @@ export function tooLarge(request: Request, max = MAX_JSON_BYTES): Response | nul
 	return length > max ? detail('Request body too large', 413) : null;
 }
 
+/** The body read in full, counting the bytes as they arrive: a 413 once it goes over `max`, whatever Content-Length
+ *  said (a chunked body has none). null when there is no body. */
+export async function cappedBody(request: Request, max = MAX_JSON_BYTES): Promise<Uint8Array | null | Response> {
+	if (!request.body) return null;
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		size += value.byteLength;
+		if (size > max) {
+			await reader.cancel().catch(() => {});
+			return detail('Request body too large', 413);
+		}
+		chunks.push(value);
+	}
+	const body = new Uint8Array(size);
+	let at = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, at);
+		at += chunk.byteLength;
+	}
+	return body;
+}
+
 async function readJson(request: Request): Promise<any> {
 	const text = await request.text();
 	if (text.length > MAX_JSON_BYTES) throw new Error('too large');

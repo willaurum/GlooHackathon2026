@@ -1439,8 +1439,23 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .editor-status strong { color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
 .editor-status span { color: var(--muted); font-size: 12px; }
 .editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.editor-actions > button { min-height: 36px; padding: 0 12px; font-size: 13px; }
-.editor-actions .count { margin-left: 2px; }
+.editor-actions > button, .editor-more > button { position: relative; min-height: 36px; padding: 0 12px; font-size: 13px; }
+/* A badge sits on the button's corner, so a count coming or going never moves the row. */
+.editor-actions .count { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px; margin: 0; background: var(--info); font-size: 11px; box-shadow: 0 0 0 2px var(--card); }
+.editor-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 6px; color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; }
+.editor-toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--green-700); }
+.editor-actions .narrow-only { display: none; }
+.editor-more { position: relative; }
+.editor-more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; display: grid; min-width: 220px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); box-shadow: var(--shadow-lg); }
+.editor-more-menu button { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; border-radius: var(--r-sm); background: none; color: var(--ink); font-size: 14px; font-weight: 600; text-align: left; }
+.editor-more-menu button:hover:not(:disabled), .editor-more-menu button:focus-visible { background: var(--green-50); }
+.editor-more-menu button:disabled { color: var(--faint); }
+.editor-check { display: inline-grid; place-items: center; width: 16px; height: 16px; border: 1.5px solid var(--green-700); border-radius: 4px; color: var(--green-700); }
+.editor-info { margin-top: 8px; color: var(--green-800); font-size: 13px; }
+.site-staff.editing { display: inline-flex; align-items: center; color: var(--green-700); font-weight: 600; }
+.church-name .church-staff.editing { color: var(--green-700); }
+/* Site buttons that do nothing while editing ("I'm coming"): shown, but plainly not working. */
+.site-editing .editor-inert { opacity: .6; cursor: not-allowed; }
 .editor-message { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 4px 4px 4px 12px; border: 1px solid #efcfc6; border-radius: var(--r-sm); background: var(--danger-50); color: var(--danger); font-size: 13px; }
 .editor-message.info { border-color: var(--line); background: var(--green-50); color: var(--green-800); }
 .editor-message span { flex: 1; }
@@ -1493,27 +1508,38 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .editor-previous, .editor-published ul { display: grid; gap: 4px; margin: 10px 0; padding-left: 18px; list-style: disc; }
 .editor-published p { color: var(--ink); }
 
-/* Text staff can change: outlined on hover, highlighted once changed or suggested by Tekton. */
+/* Text staff can change: a light dotted outline while "Show outlines" is on (so it can be found without hovering, on a
+   phone too), a stronger one on hover or focus, highlighted once changed or suggested by Tekton. */
 .site-editing .editable { cursor: text; border-radius: 4px; outline: 2px dashed transparent; outline-offset: 3px; transition: outline-color .15s; }
-.site-editing .editable:hover, .site-editing .editable:focus-visible { outline-color: var(--green-600); }
-.site-editing .leaders .editable:hover, .site-editing .leaders .editable:focus-visible { outline-color: var(--sage); }
+.site-editing.editor-outlines .editable:not(.editing) { outline: 1px dotted rgb(58 122 92 / .55); }
+.site-editing .editable:not(.editing):hover, .site-editing .editable:not(.editing):focus-visible { outline: 2px dashed var(--green-600); }
+.site-editing.editor-outlines .leaders .editable:not(.editing) { outline-color: rgb(255 255 255 / .45); }
+.site-editing .leaders .editable:not(.editing):hover, .site-editing .leaders .editable:not(.editing):focus-visible { outline: 2px dashed var(--sage); }
 .site-editing .editable.editing { outline: 2px solid var(--green-600); white-space: pre-wrap; }
+.site-editing .leaders .editable.editing { outline-color: #fff; }
 .site-editing .editable:not(.editing):empty::before { content: 'Add text'; color: var(--faint); font-style: italic; }
 .site-editing .editable-changed { background: rgb(255 214 102 / .3); box-shadow: 0 0 0 3px rgb(255 214 102 / .3); }
 .site-editing .editable-suggested { background: rgb(49 84 163 / .12); box-shadow: 0 0 0 3px rgb(49 84 163 / .12); outline: 2px dashed var(--info); }
+/* On the dark "For church leaders" band a yellow wash would muddy the white text: a solid outline marks it instead. */
+.site-editing .leaders .editable-changed { background: rgb(255 214 102 / .14); box-shadow: 0 0 0 3px rgb(255 214 102 / .14); }
+.site-editing.editor-outlines .leaders .editable-changed:not(.editing), .site-editing .leaders .editable-changed:not(.editing) { outline: 2px solid #f3cf6a; }
+.site-editing .leaders .editable-suggested { background: rgb(255 255 255 / .1); box-shadow: 0 0 0 3px rgb(255 255 255 / .1); outline: 2px dashed #c5d3f2; }
 /* Facts Church setup owns. */
 .site-editing .editable-fact { position: relative; cursor: help; border-radius: 4px; }
 .site-editing .editable-fact:hover { outline: 2px dotted var(--faint); outline-offset: 3px; }
 .editor-note { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: max-content; max-width: 260px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--ink); color: #fff; box-shadow: var(--shadow); font: 600 13px/1.4 var(--font); letter-spacing: 0; text-transform: none; white-space: normal; cursor: default; }
 .editor-note a { color: #cfe3d4; }
-/* Home and Plan your visit sections: a chip opens Move up, Move down and Hide. */
-.editor-section { position: relative; border-radius: var(--r-lg); outline: 1px dashed transparent; outline-offset: 6px; }
-.editor-section:hover { outline-color: var(--line-strong); }
+/* Home and Plan your visit sections: a chip opens Move up, Move down and Hide. It sits in a strip of its own above the
+   section, so it never covers the section's eyebrow or heading, and below the sticky site header (z-index 20), so it
+   slides under the header when scrolled. */
+.editor-section { position: relative; padding-top: 34px; border-radius: var(--r-lg); outline: 1px dashed transparent; outline-offset: 6px; }
+.site-editing.editor-outlines .editor-section { outline-color: var(--line-strong); }
+.editor-section:hover { outline-color: var(--green-200); }
 .editor-section.editable-changed { background: none; box-shadow: none; outline: 2px solid #e8c25a; }
 .editor-section.editable-suggested { background: none; box-shadow: none; }
-.editor-section-bar { position: absolute; top: -12px; left: 12px; z-index: 20; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
-.editor-chip { min-height: 24px; padding: 0 10px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 600; opacity: .55; transition: opacity .15s; }
-.editor-section:hover .editor-chip, .editor-chip:focus-visible, .editor-chip[aria-expanded=true] { opacity: 1; }
+.editor-section-bar { position: absolute; top: 2px; left: 0; z-index: 5; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+.editor-chip { min-height: 26px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--card); color: var(--ink); font-size: 12px; font-weight: 600; box-shadow: var(--shadow-sm); transition: border-color .15s, background .15s; }
+.editor-section:hover .editor-chip, .editor-chip:focus-visible, .editor-chip[aria-expanded=true] { border-color: var(--green-600); background: var(--green-50); }
 .editor-section-menu { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); box-shadow: var(--shadow); }
 .editor-section-menu button, .editor-hidden-section button { min-height: 32px; padding: 0 12px; font-size: 13px; }
 .editor-hidden-section { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 20px 0; padding: 14px 16px; border: 1px dashed var(--line-strong); border-radius: var(--r-lg); background: rgb(255 255 255 / .5); color: var(--muted); font-size: 14px; }
@@ -1522,5 +1548,16 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
   .editor-actions > button { flex: 1 1 auto; }
   .editor-panel { right: 12px; left: 12px; width: auto; }
   .editor-backdrop.drawer .editor-dialog { max-width: none; }
-  .editor-chip { opacity: 1; }
+}
+/* Phones: one row with the title and status, Review and publish, and More for everything else. */
+@media (max-width: 640px) {
+  .editor-toolbar { min-height: 0; }
+  .editor-bar { flex-wrap: nowrap; gap: 8px; }
+  .editor-status { flex: 1 1 auto; }
+  .editor-status strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .editor-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .editor-actions { flex: none; flex-wrap: nowrap; gap: 6px; }
+  .editor-actions > button { flex: none; padding: 0 10px; }
+  .editor-actions .wide-only { display: none; }
+  .editor-actions .narrow-only { display: flex; }
 }

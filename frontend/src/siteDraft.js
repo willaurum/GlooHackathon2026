@@ -32,6 +32,9 @@ export const STYLE_LABELS = { primary: 'Main color', accent: 'Button color', bac
   text: 'Text color', heading_font: 'Heading font', body_font: 'Body font', heading_scale: 'Heading size',
   hero_scale: 'Headline size' };
 
+// What Home shows while the church has no headline or text of its own (backend site_editor.INFO_DEFAULTS).
+export const INFO_DEFAULTS = { tagline: 'A place to belong, grow and give.',
+  about: 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.' };
 const INFO_FIELDS = {
   tagline: { max: 160, label: 'Home: headline' },
   about: { max: 4000, multiline: true, label: 'Home: text under the headline' },
@@ -44,8 +47,10 @@ const FAQ_FIELDS = { question: { max: 300, required: true }, answer: { max: 4000
 /** Text as the server stores it: plain, one line or tidy paragraphs. Returns { value } or { error }. */
 export function cleanText(value, { max = 4000, multiline = false, required = false } = {}) {
   if (typeof value !== 'string') return { error: 'Use plain text.' };
-  // Control characters go (a tab becomes a space); line breaks stay for multiline text.
-  let text = value.replace(/\r\n/g, '\n').replace(/\t/g, ' ').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '');
+  // Control and format characters go (bidi controls, zero-width spaces and joiners: Unicode Cf), a tab becomes a
+  // space, and line and paragraph separators are line breaks, which stay for multiline text.
+  let text = value.replace(/\r\n?|[\u2028\u2029]/g, '\n').replace(/\t/g, ' ')
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, '');
   if (multiline) {
     text = text.split('\n').map(line => line.replace(/\s+$/, '')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
   } else {
@@ -71,11 +76,12 @@ export function parsePath(path) {
   }
   m = /^pages\.([a-z0-9][a-z0-9-]{0,79})\.title$/.exec(path);
   if (m) return { kind: 'page', slug: m[1], field: 'title', ...PAGE_FIELDS.title };
-  m = /^pages\.([a-z0-9][a-z0-9-]{0,79})\.sections\.(\d{1,3})\.(heading|text)$/.exec(path);
+  // Numbers are written the one way, without leading zeros (backend site_editor.TEXT_PATHS).
+  m = /^pages\.([a-z0-9][a-z0-9-]{0,79})\.sections\.(0|[1-9][0-9]{0,2})\.(heading|text)$/.exec(path);
   if (m) return { kind: 'section', slug: m[1], index: Number(m[2]), field: m[3], ...PAGE_FIELDS[m[3]] };
-  m = /^staff\.(\d{1,9})\.(name|role|bio)$/.exec(path);
+  m = /^staff\.(0|[1-9][0-9]{0,8})\.(name|role|bio)$/.exec(path);
   if (m) return { kind: 'staff', id: m[1], field: m[2], ...STAFF_FIELDS[m[2]] };
-  m = /^faqs\.(\d{1,9})\.(question|answer)$/.exec(path);
+  m = /^faqs\.(0|[1-9][0-9]{0,8})\.(question|answer)$/.exec(path);
   if (m) return { kind: 'faq', id: m[1], field: m[2], ...FAQ_FIELDS[m[2]] };
   return null;
 }
@@ -146,7 +152,9 @@ export function checkOp(content, op) {
       if (token === 'primary' || token === 'accent') {
         const readable = readableOnWhite(value);
         if (!readable) return { error: 'That color is too light for buttons with white text. Try a darker shade.' };
-        return { op: { ...op, value: readable } };
+        // Darkened to read: say so, rather than quietly showing another color.
+        return { op: { ...op, value: readable }, ...(readable !== value
+          ? { note: `That color is too light for buttons with white text, so it was darkened to ${readable}.` } : {}) };
       }
       if (token === 'background' && luminance(value) < 0.6) return { error: 'Your site uses a light page background so text stays readable. Try a lighter color.' };
       const text = token === 'text' ? value : theme.text, background = token === 'background' ? value : theme.background;
@@ -186,11 +194,13 @@ export function checkOp(content, op) {
   return { error: 'That change is not one the editor can make.' };
 }
 
-// What two ops change, when a later one replaces an earlier one (the same text or the same style).
-const target = op => op.op === 'set_text' ? 'text:' + op.path : op.op === 'set_style' ? 'style:' + op.token : '';
+// What two ops change, when a later one replaces an earlier one (the same text or style, or hiding or showing the
+// same section or page). Moves add up.
+const target = op => op.op === 'set_text' ? 'text:' + op.path : op.op === 'set_style' ? 'style:' + op.token
+  : /^(hide|show)_section$/.test(op.op) ? `section:${op.page}:${op.section}` : /^(hide|show)_page$/.test(op.op) ? 'page:' + op.page : '';
 
-/** A new op for a draft: an accepted one replaces an earlier accepted change to the same text or style and goes
- *  after the other accepted ones; Tekton's suggestions (pending) wait at the end and never replace anything. */
+/** A new op for a draft: an accepted one replaces an earlier accepted change to the same text, style, section or page
+ *  and goes after the other accepted ones; Tekton's suggestions (pending) wait at the end and never replace anything. */
 export function addOp(ops, op) {
   const key = target(op);
   if (op.pending) return [...ops, op];
@@ -207,6 +217,32 @@ export function acceptOp(ops, id) {
   if (!found) return ops;
   const { pending, ...accepted } = found;
   return addOp(removeOp(ops, id), { ...accepted, pending: false });
+}
+
+const sameText = (content, published, path) => readPath(content, path) === readPath(published, path);
+function sameStyle(content, published, token) {
+  if (SCALES[token]) return (content?.site?.style?.[token] ?? 1) === (published?.site?.style?.[token] ?? 1);
+  return (content?.site?.theme?.[token] || '') === (published?.site?.theme?.[token] || '');
+}
+
+/** The draft without accepted ops that change nothing: hiding then showing a section, moving it back, or text and
+ *  styles put back to what is live all cancel out (backend site_editor.settle). Suggestions stay until answered. */
+export function settle(published, ops) {
+  const live = published || {};
+  const { content } = applyOps(live, ops, { pending: false });
+  const layout = cleanLayout(content.site?.layout), before = cleanLayout(live.site?.layout);
+  const unchanged = op => {
+    if (op.op === 'set_text') return readPath(content, op.path) !== undefined && sameText(content, live, op.path);
+    if (op.op === 'set_style') return sameStyle(content, live, op.token);
+    if (op.op === 'hide_section' || op.op === 'show_section') {
+      const tag = op.page + ':' + op.section;
+      return layout.hidden.includes(tag) === before.hidden.includes(tag);
+    }
+    if (op.op === 'hide_page' || op.op === 'show_page') return layout.hidden_pages.includes(op.page) === before.hidden_pages.includes(op.page);
+    if (op.op === 'move_section') return (layout[op.page] || []).join() === (before[op.page] || []).join();
+    return false;
+  };
+  return (ops || []).filter(op => op.pending || !unchanged(op));
 }
 
 /** Every known section once, stored order first; hidden ones as 'page:section' (backend builder_edit.clean_layout),
@@ -325,9 +361,11 @@ export function describeChanges(published, ops) {
     const base = { id: op.id, op: op.op, source: op.source || 'staff', pending: !!op.pending, stale };
     let change;
     if (op.op === 'set_text') {
-      const before = readPath(live, op.path);
+      // What a visitor sees: a copy key's or Home's default while the field is empty.
       const where = parsePath(op.path);
-      const after = where?.kind === 'copy' && !op.value ? CATALOG[where.key].default.replaceAll('{name}', live.info?.name || 'our church') : op.value;
+      const fallback = where?.kind === 'info' ? INFO_DEFAULTS[where.field] || '' : '';
+      const before = readPath(live, op.path) || fallback;
+      const after = where?.kind === 'copy' && !op.value ? CATALOG[where.key].default.replaceAll('{name}', live.info?.name || 'our church') : op.value || fallback;
       change = { ...base, label: pathLabel(live, op.path), before: before ?? '', after: typeof after === 'string' ? after : '', path: op.path };
     } else if (op.op === 'set_style') {
       const value = checked.op?.value ?? op.value;
