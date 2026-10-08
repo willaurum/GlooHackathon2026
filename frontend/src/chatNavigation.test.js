@@ -13,9 +13,9 @@ test('suggestions navigate to existing pages only when followed', () => {
 
 test('page keys map to app routes, including the home page', () => {
   const navigated = [];
-  for (const page of ['home', 'plan-visit', 'saved-connections', 'prayer-map'])
+  for (const page of ['home', 'plan-visit', 'find-place', 'prayer-map'])
     followSuggestion({ tool: 'suggest_page', page }, route => navigated.push(route));
-  assert.deepEqual(navigated, ['', 'guests/plan', 'serve/saved', 'prayer']);
+  assert.deepEqual(navigated, ['', 'guests/plan', 'serve/find', 'prayer']);
 });
 
 test('unknown pages, external URLs, and request actions cannot navigate', () => {

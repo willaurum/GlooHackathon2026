@@ -3,6 +3,8 @@ import { api, whenCapabilitiesKnown } from './api.js';
 import { setStaffToken } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { churchApi, friendly, givingCapabilities, signOutStaff, staffApi } from './giving.js';
+import { EMAIL_HINT, PHONE_HINT, isEmail, isPhone } from './contact.js';
+import ContactInput from './ContactInput.jsx';
 import Icon from './Icon.jsx';
 import ChurchLink from './ChurchLink.jsx';
 import { PageHeader } from './Layout.jsx';
@@ -56,7 +58,7 @@ export function StaffSignIn() {
     <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Staff sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password. This sign-in also works in Church staff.</p></div></div>
     {ready === false && <div className="banner demo" role="status"><Icon name="sparkle" /><span>Staff sign-in opens as soon as the updated service is deployed.</span></div>}
     {church.demo && <p className="form-note">This is the shared demo church, so anything you change here is visible to everyone.</p>}
-    <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
+    <label className="field">Email<ContactInput kind="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
     <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
     {err && <div className="banner error" role="alert">{err}</div>}
     <button className="primary wide" disabled={busy || !password || ready === false}>{busy ? 'Signing in…' : 'Sign in'}</button>
@@ -145,6 +147,8 @@ function Details({ info, save }) {
   async function onSave() {
     const name = f.name.trim(), city = f.city.trim();
     if (name.length < 3) throw new Error('Type the name of your church.');
+    if (f.phone.trim() && !isPhone(f.phone)) throw new Error('Church phone: ' + PHONE_HINT);
+    if (f.email.trim() && !isEmail(f.email)) throw new Error('Church email: ' + EMAIL_HINT);
     const saved = await save({ info: { ...info, ...Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.trim()])) } });
     // The church list (and the sign-in) uses the name kept by the giving service; keep them the same.
     if (name !== info.name || city !== (info.city || '')) {
@@ -156,7 +160,7 @@ function Details({ info, save }) {
   return <Part id="setup-details" icon="home" title="Your church" text="Your name, where you meet and how to reach you." onSave={onSave}>
     <div className="form-row">{DETAIL_FIELDS.slice(0, 2).map(([k, label, ph, max]) => <label key={k} className="field">{label}<input value={f[k]} maxLength={max} placeholder={ph} onChange={set(k)} /></label>)}</div>
     {DETAIL_FIELDS.slice(2, 3).map(([k, label, ph, max]) => <label key={k} className="field">{label}<input value={f[k]} maxLength={max} placeholder={ph} onChange={set(k)} /></label>)}
-    <div className="form-row">{DETAIL_FIELDS.slice(3, 5).map(([k, label, ph, max]) => <label key={k} className="field">{label} <small>Optional</small><input value={f[k]} maxLength={max} placeholder={ph} onChange={set(k)} /></label>)}</div>
+    <div className="form-row">{DETAIL_FIELDS.slice(3, 5).map(([k, label, ph, max]) => <label key={k} className="field">{label} <small>Optional</small><ContactInput kind={k} value={f[k]} maxLength={max} placeholder={ph} onChange={set(k)} /></label>)}</div>
     {DETAIL_FIELDS.slice(5).map(([k, label, ph, max]) => <label key={k} className="field">{label} <small>Optional</small><input value={f[k]} maxLength={max} placeholder={ph} onChange={set(k)} /></label>)}
     <label className="field">About your church <small>A few sentences for the home page</small><textarea rows={3} maxLength={2000} value={f.about} placeholder="Who you are and what a Sunday is like." onChange={set('about')} /></label>
     <label className="field">What to expect on a first visit <small>Optional</small><textarea rows={3} maxLength={2000} value={f.first_visit} placeholder="How long services last, what people wear, where to go with kids." onChange={set('first_visit')} /></label>
@@ -207,6 +211,8 @@ function Teams({ ministries, save }) {
     const kept = rows.map(r => ({ ...r, name: r.name.trim(), description: (r.description || '').trim(), day: (r.day || '').trim(), head: (r.head || '').trim(), email: (r.email || '').trim() }))
       .filter(r => r.name || r.description);
     if (kept.some(r => !r.name)) throw new Error('Each team needs a name. Fill it in, or remove the team.');
+    const badEmail = kept.find(r => r.email && !isEmail(r.email));
+    if (badEmail) throw new Error(`${badEmail.name} leader email: ${EMAIL_HINT}`);
     return save({ ministries: kept.map(r => ({ ...r, total: Math.max(0, parseInt(r.total, 10) || 0), filled: Math.min(r.filled || 0, Math.max(0, parseInt(r.total, 10) || 0)) })) });
   }
   return <Part id="setup-teams" icon="users" title="Serving teams" text="The teams people can join, who leads them and how many helpers you need." onSave={onSave}>
@@ -218,7 +224,7 @@ function Teams({ ministries, save }) {
       <label className="field">What the team does<textarea rows={2} value={r.description || ''} maxLength={2000} placeholder="e.g. Welcome people at the door and help guests find their way." onChange={set(i, 'description')} /></label>
       <div className="form-row">
         <label className="field">Team leader <small>Optional</small><input value={r.head || ''} maxLength={120} placeholder="e.g. Pat Lee" onChange={set(i, 'head')} /></label>
-        <label className="field">Leader email <small>Optional</small><input type="email" value={r.email || ''} maxLength={200} placeholder="e.g. pat@yourchurch.org" onChange={set(i, 'email')} /></label>
+        <label className="field">Leader email <small>Optional</small><ContactInput kind="email" value={r.email || ''} maxLength={200} placeholder="e.g. pat@yourchurch.org" onChange={set(i, 'email')} /></label>
       </div>
       {r.shifts?.length
         ? <p className="form-note">Helpers needed: {r.total}, from this team schedule.</p>
@@ -260,11 +266,16 @@ function ListPart({ list, items, save }) {
     if (kept.some(r => !r[required])) throw new Error(`Each ${list.item} needs a ${list.fields[0][1].toLowerCase()}. Fill it in, or remove it.`);
     if (list.kind === 'sermons' && kept.some(r => r.date && !/^\d{4}-\d{2}-\d{2}$/.test(r.date))) throw new Error('Write sermon dates as YYYY-MM-DD.');
     if (list.kind === 'sermons' && kept.some(r => r.url && !/^https?:\/\/\S+$/.test(r.url))) throw new Error('Sermon links must start with https://');
+    const badEmail = kept.find(r => r.email && !isEmail(r.email)), badPhone = kept.find(r => r.phone && !isPhone(r.phone));
+    if (badEmail) throw new Error(`${badEmail[required]} email: ${EMAIL_HINT}`);
+    if (badPhone) throw new Error(`${badPhone[required]} phone: ${PHONE_HINT}`);
     return save({ [list.kind]: kept });
   }
   return <Part id={list.id} icon={list.icon} title={list.title} text={list.text} onSave={onSave}>
     {rows.map((r, i) => <div key={r.id ?? 'new-' + i} className="setup-item">
-      <div className="form-row">{list.fields.filter(f => !f[4]).map(([key, label, ph, max]) => <label key={key} className="field">{label}<input value={r[key] || ''} maxLength={max} placeholder={ph} onChange={set(i, key)} /></label>)}</div>
+      <div className="form-row">{list.fields.filter(f => !f[4]).map(([key, label, ph, max]) => <label key={key} className="field">{label}{key === 'email' || key === 'phone'
+        ? <ContactInput kind={key} value={r[key] || ''} maxLength={max} placeholder={ph || (key === 'phone' ? 'e.g. (555) 010-0140' : '')} onChange={set(i, key)} />
+        : <input value={r[key] || ''} maxLength={max} placeholder={ph} onChange={set(i, key)} />}</label>)}</div>
       {list.fields.filter(f => f[4]).map(([key, label, ph, max]) => <label key={key} className="field">{label} <small>Optional</small><textarea rows={2} value={r[key] || ''} maxLength={max} placeholder={ph} onChange={set(i, key)} /></label>)}
       <button type="button" className="ghost" onClick={() => setRows(x => x.filter((_, j) => j !== i))}><Icon name="x" size={16} />Remove this {list.item}</button>
     </div>)}

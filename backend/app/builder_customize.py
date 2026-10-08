@@ -259,7 +259,6 @@ def _clean_layout(layout):
 # The words people use for each part of the site, most specific first (Layout.hidden_pages keys).
 SITE_PAGES = [
     ('serve/find', 'Find a place', r'find a place(?: to serve)?'),
-    ('serve/saved', 'Saved connections', r'saved(?: connections| list)?'),
     ('give/trips', 'Mission trips', r'mission trips?|trips?'),
     ('guests/welcome', 'Welcome team', r'welcome team|greeters?(?: screen)?'),
     ('about/beliefs', 'Beliefs', r'beliefs?|what we believe|statement of faith'),

@@ -47,6 +47,8 @@ const MIN_GIFT = 100;
 const MAX_GIFT = 99_999_900;
 const SESSION_TTL = 12 * 60 * 60 * 1000;
 const PBKDF2_ITERATIONS = 100_000;
+// A mission trip application's message (frontend Give.jsx uses the same limits).
+const APPLICATION_MIN = 100, APPLICATION_MAX = 1000;
 
 // Staff roles. An owner can do everything, including adding and removing staff accounts; a site admin can do
 // everything except manage staff accounts.
@@ -186,7 +188,14 @@ function isoDate(v: unknown): string {
   const s = str(v, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
 }
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// Email and phone shapes, the same as frontend/src/contact.js and backend/app/contact.py:
+// name@domain.tld, and digits with the usual + ( ) - . and spaces: 10 (a US number with its area code)
+// to 15 (the international maximum), so +44 20 7946 0958 works and a 9-digit number does not.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$/;
+function isPhone(value: string): boolean {
+  const digits = value.replace(/\D/g, '').length;
+  return /^\+?[\d\s().-]+$/.test(value) && digits >= 10 && digits <= 15;
+}
 
 function slugify(name: string): string {
   return name.toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').replace(/[_\s-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '') || 'church';
@@ -844,9 +853,13 @@ export class GivingDO extends DurableObject<GivingEnv> {
     const name = str(body.name, 120);
     const email = str(body.email, 200);
     const phone = str(body.phone, 40);
-    const message = str(body.message, 2000);
+    // Why they want to go, in their own words: APPLICATION_MIN to APPLICATION_MAX characters (not cut short).
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
     if (!name) return json({ error: 'Please add your name.' }, 400);
-    if (!EMAIL_RE.test(email)) return json({ error: 'Please add a valid email so the team can reach you.' }, 400);
+    if (!EMAIL_RE.test(email)) return json({ error: 'Please add a valid email so the team can reach you, like name@example.com.' }, 400);
+    if (phone && !isPhone(phone)) return json({ error: 'Please enter a phone number with at least 10 digits, like (555) 010-0140, or leave it blank.' }, 400);
+    if (message.length < APPLICATION_MIN || message.length > APPLICATION_MAX)
+      return json({ error: `Tell the trip team why you want to go in ${APPLICATION_MIN} to ${APPLICATION_MAX} characters.` }, 400);
     const ip = request.headers.get('cf-connecting-ip') || 'anon';
     if (!this.#rateOk('apply:' + ip, 5, 10 * 60_000)) return json({ error: 'Too many applications from here. Please try again later.' }, 429);
     const total = Number(this.#sql.exec('SELECT COUNT(*) AS n FROM applications').toArray()[0].n);
@@ -1483,6 +1496,8 @@ export class GivingDO extends DurableObject<GivingEnv> {
     if (!row) return json({ error: 'Application not found.' }, 404);
     const status = ['new', 'accepted', 'waitlisted', 'declined'].includes(body.status) ? body.status : String(row.status);
     const note = Object.prototype.hasOwnProperty.call(body, 'note') ? str(body.note, 1000) : String(row.note);
+    // Every decision is explained: changing the status needs a note with it.
+    if (status !== String(row.status) && !str(body.note, 1000).trim()) return json({ error: 'Add a note explaining why you are changing this application.' }, 400);
     this.#sql.exec('UPDATE applications SET status = ?, note = ?, updated_at = ? WHERE id = ?', status, note, new Date().toISOString(), id);
     return this.#applications();
   }

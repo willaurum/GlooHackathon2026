@@ -313,7 +313,7 @@ class Asset(Strict):
 
 
 # The parts of the church site Layout.hidden_pages may hide (frontend routes; Layout.jsx SECTIONS).
-HIDEABLE_PAGES = ('serve', 'serve/find', 'serve/saved', 'notes', 'calendar', 'give', 'give/trips', 'prayer',
+HIDEABLE_PAGES = ('serve', 'serve/find', 'notes', 'calendar', 'give', 'give/trips', 'prayer',
                   'guests/welcome', 'about/beliefs', 'about/news', 'about/directory', 'about/connect')
 
 
