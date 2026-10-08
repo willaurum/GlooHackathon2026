@@ -1,0 +1,11 @@
+Name of Test Case,Category,Name of Page,Action to Take,Expected Outcome,Outcome/Result,Pass/Fail
+Hero CTA: Find a place to serve button,Navigation & User Flow,Home,Click 'Find a place to serve' primary button on the hero banner.,Application navigates directly to '#/serve/find' volunteer matching page.,,Unknown
+Hero CTA: Planning your first visit button,Navigation & User Flow,Home,Click 'Planning your first visit?' secondary button on the hero banner.,Application navigates directly to '#/guests/plan' first-time guest page.,,Unknown
+Hero CTA: Ask Tekton chat launcher,AI Assistant Integration,Home,Click 'Ask Tekton' button with chat icon in the hero banner.,Sitewide chat assistant drawer slides open from right with greeting message.,,Unknown
+Serve feature card navigation,Feature Card Routing,Home,Click 'Serve' feature card in the main features grid.,Navigates to '#/serve' ministries directory overview page.,,Unknown
+Sermon Notes feature card navigation,Feature Card Routing,Home,Click 'Sermon Notes' feature card in the main features grid.,Navigates to '#/notes' sermon notes transcript archive.,,Unknown
+Give feature card goal progress bar display,Fundraising Goal Tracking,Home,Inspect Give feature card when a church fund has an active fundraising goal.,"Card displays fund name, raised amount, goal amount, and accurately styled visual percentage progress bar.",,Unknown
+Get to know us directory quick button,Quick Links Navigation,Home,Click 'Contact directory' button in the 'Get to know us' section.,Navigates directly to '#/about/directory' staff contact listing.,,Unknown
+Service times and address card rendering,Visitor Information,Home,Inspect 'Service times' block on the Home page.,Displays weekly gathering schedule (e.g. 'Sunday 9:00 AM & 11:00 AM') and church physical address with location pin icon.,,Unknown
+Watch Live external link when livestream is unconfigured,Livestream Integration,Home,Click 'Watch live' hero action button when church has no active livestream URL configured.,Displays friendly popup indicating no active broadcast is currently streaming.,,Unknown
+Hero about text rendering on new unconfigured church,Tenant Onboarding Display,Home,Open Home page for newly provisioned church with no about description provided.,Displays elegant onboarding prompt guiding visitors and staff to add story.,,Unknown

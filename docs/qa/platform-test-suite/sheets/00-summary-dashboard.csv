@@ -1,0 +1,26 @@
+Tekton Platform & Agentic Builder - QA Test Suite,,,,,,,
+Interactive Manual QA Dashboard — Live Dynamic Formulas Linked Across All Page Sheets,,,,,,,
+,,,,,,,
+TOTAL TEST CASES,,PASSED,FAILED,UNKNOWN / UNTESTED,,OVERALL % SUCCESS,
+180,,16,4,160,,0.8,
+,,,,,,,
+Test Execution Breakdown by Page & Feature (Formulas Connected to Page Sheets),,,,,,,
+Feature / Page Area,Target Route,Total Test Cases,Passed,Failed,Unknown / Untested,% Success (Pass Rate),Primary Scope / Capabilities Verified
+Agentic Builder,#/new,20,16,4,0,0.8,"Natural language editing, URL crawl, PDF/OCR vision extraction, conflict reconciliation, grounding, undo"
+Home,#/,10,0,0,10,0,"Hero CTAs, feature navigation, giving progress bar, ministries list, recent sermons, contact block"
+Plan Your Visit,#/guests/plan,10,0,0,10,0,"RSVP form submission, validation, campus parking map selection, arrival flow, FAQ accordion"
+Welcome Team,#/guests/welcome,10,0,0,10,0,"Staff-only arrival queue, host claiming, notifications, arrival time metrics, live polling"
+Serve,#/serve,10,0,0,10,0,"Keyword search, urgent needs filter, AI matching recommendations, bookmarking, staff request queue"
+Sermon Notes,#/notes,10,0,0,10,0,"Transcript browsing, AI sermon Q&A with timestamps, media playback sync, YouVersion verse lookup, upload"
+Calendar,#/calendar,10,0,0,10,0,"Monthly grid & list views, category filter, keyword search, month navigation, staff event CRUD"
+Give,#/give,10,0,0,10,0,"Donation presets, custom amounts, fund selector, recurring monthly toggle, Stripe checkout, trips"
+Prayer Map,#/prayer,10,0,0,10,0,"Leaflet world map, country prayer beacons, verified news pins, sensitive country anonymization"
+About - Our Story,#/about,10,0,0,10,0,"Mission statement, narrative story, core value cards, visit block, provenance quote inspect"
+About - Beliefs,#/about/beliefs,10,0,0,10,0,"Doctrinal preamble, numbered belief articles, custom imported beliefs, sub-navigation"
+About - News,#/about/news,10,0,0,10,0,"Updates vs articles filter, taxonomy tags, AI 3-bullet summary, staff post publishing & moderation"
+About - Directory,#/about/directory,10,0,0,10,0,"Staff search, role filtering, click-to-call, click-to-email, office hours, ministry leaders"
+About - Connect,#/about/connect,10,0,0,10,0,"Next step pathways, small groups directory, imported external forms, email inquiry mailto generator"
+Admin - Staff,#/staff,10,0,0,10,0,"Staff sign-in, Stripe onboarding, funds management, trip applications review, donor gifts ledger"
+Admin - Setup,#/setup,10,0,0,10,0,"Church branding, contact details, service times management, FAQs CRUD, ministries provisioning"
+Sitewide Chat,Global Widget,10,0,0,10,0,"Chat launcher, starter pills, scheduled event queries, volunteer inquiry, prayer request handoff"
+Suite Total / Rollup,All 17 Areas,180,16,4,160,0.8,Dynamic rollup tracking user-tested execution progress across all 17 page sheets
