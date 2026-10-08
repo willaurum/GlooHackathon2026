@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { useChurch } from './ChurchContext.js';
 import { StaffOnly } from './ChurchStates.jsx';
+import Icon from './Icon.jsx';
+import { MAX_GUEST_NAME, checkInChoices, enterAction } from './welcomeCheckIn.js';
 
 const HOST_KEY = 'belong.hostName';
 
@@ -46,6 +48,8 @@ function WelcomeQueue() {
     [busy, setBusy] = useState(false),
     [hostName, setHostName] = useState(readHostName),
     [permission, setPermission] = useState(readPermission),
+    [guestName, setGuestName] = useState(''),
+    [checkedIn, setCheckedIn] = useState(''),
     seen = useRef(null);
 
   async function load() {
@@ -71,11 +75,25 @@ function WelcomeQueue() {
     try { setPermission(await Notification.requestPermission()); } catch { setPermission(readPermission()); }
   }
 
-  async function checkIn(visitId) {
-    setBusy(true);
-    try { await api(`/visits/${visitId}/checkin`, { method: 'POST' }); await load(); }
+  // A planned guest (visit) or, with no visit, the typed name as a new guest. Both land in Guests waiting.
+  async function checkIn(visit, newName = '') {
+    setBusy(true); setError(''); setCheckedIn('');
+    try {
+      const done = visit
+        ? await api(`/visits/${visit.visit_id}/checkin`, { method: 'POST' })
+        : await api('/visits/new/checkin', { method: 'POST', body: JSON.stringify({ name: newName }) });
+      setCheckedIn(done.name); setGuestName('');
+      await load();
+    }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
+  }
+
+  const choices = checkInChoices(planned, guestName, waiting);
+  function submitGuest(e) {
+    e.preventDefault();
+    const action = busy ? null : enterAction(choices);
+    if (action) checkIn(action.visit, action.newGuest ? choices.name : '');
   }
 
   async function claim(visitId) {
@@ -103,6 +121,34 @@ function WelcomeQueue() {
       </label>
     </section>
 
+    <section className="card visit-section welcome-checkin">
+      <div className="eyebrow">CHECK IN</div>
+      <h2>Check in a guest</h2>
+      <form onSubmit={submitGuest}>
+        <label className="field">Guest name
+          <input maxLength={MAX_GUEST_NAME} value={guestName} autoComplete="off"
+            onChange={e => { setGuestName(e.target.value); setCheckedIn(''); }} placeholder="Type a guest's name" />
+        </label>
+      </form>
+      {checkedIn && <div className="give-applied" role="status"><Icon name="check" size={20} /><div><b>{checkedIn} is checked in.</b><p>They&rsquo;re in Guests waiting below.</p></div></div>}
+      {choices.name && <>
+        {choices.matches.length > 0 && <div className="guest-list">
+          {choices.matches.map(v => <article className="card guest-card" key={v.visit_id}>
+            <h3>{v.name} <small>· party of {v.party_size}</small></h3>
+            <p>Signed up for {v.service}{v.kids && ' · ' + v.kids}</p>
+            <button className="btn primary" disabled={busy} onClick={() => checkIn(v)}>Check in {v.name}</button>
+          </article>)}
+        </div>}
+        {choices.here.map(v => <p key={v.visit_id}><b>{v.name}</b> is already checked in.</p>)}
+        {choices.offerNew && <>
+          {!choices.matches.length && <p>No one who signed up matches &ldquo;{choices.name}&rdquo;.</p>}
+          <button className={'btn ' + (choices.matches.length ? 'secondary' : 'primary')} disabled={busy} onClick={() => checkIn(null, choices.name)}>
+            Check in &ldquo;{choices.name}&rdquo; as a new guest
+          </button>
+        </>}
+      </>}
+    </section>
+
     <section className="card visit-section">
       <div className="eyebrow">ARRIVAL ALERTS</div>
       {permission === 'granted' && <p>● Alerts are on. You'll get a notification when a guest taps "I'm here". Keep this page open.</p>}
@@ -117,7 +163,7 @@ function WelcomeQueue() {
     <section className="card visit-section">
       <div className="eyebrow">GUESTS WAITING</div>
       <h2 aria-live="polite">Guests waiting {waiting.length > 0 && <span className="badge urgent">{waiting.length}</span>}</h2>
-      {!waiting.length ? <div className="empty">No one is waiting right now. Guests show up here when they tap “I’m here” on their phone, or when you check them in below.</div> : <div className="guest-list">
+      {!waiting.length ? <div className="empty">No one is waiting right now. Guests show up here when they tap “I’m here” on their phone, or when you check them in above or below.</div> : <div className="guest-list">
         {waiting.map(v => <article className={'card guest-card' + (v.status === 'arrived' ? ' just-arrived' : '')} key={v.visit_id}>
           <div className="card-top">
             <span className="tag">{v.status === 'arrived' ? '● Just arrived' : 'On the way'}</span>
@@ -142,7 +188,7 @@ function WelcomeQueue() {
           <h3>{v.name} <small>· party of {v.party_size}</small></h3>
           <p>{v.service}{v.kids && ' · ' + v.kids}</p>
           {/* A guest at the door without their phone: a greeter checks them in. */}
-          <button className="btn secondary" disabled={busy} onClick={() => checkIn(v.visit_id)}>They&rsquo;re here</button>
+          <button className="btn secondary" disabled={busy} onClick={() => checkIn(v)}>They&rsquo;re here</button>
         </article>)}
       </div>}
     </section>

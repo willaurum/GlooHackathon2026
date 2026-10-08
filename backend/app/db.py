@@ -951,6 +951,17 @@ def check_in_visit(visit_id):
         RETURNING {STAFF_VISIT_COLUMNS}""", (visit_id,))
 
 
+WALK_IN_SERVICE = 'Walk-in'
+
+
+def check_in_walk_in(name, party_size=1):
+    """Staff check in a guest who never signed up: a new visit that has already arrived."""
+    token = secrets.token_urlsafe(16)
+    return one(f"""INSERT INTO visits (token, name, service, party_size, status, arrived_at)
+        VALUES (?, ?, ?, ?, 'arrived', {NOW})
+        RETURNING {STAFF_VISIT_COLUMNS}""", (token, name, WALK_IN_SERVICE, party_size))
+
+
 def set_visit_host(visit_id, host):
     return one(f"""UPDATE visits SET status = 'on_the_way', host = ?
         WHERE visit_id = ? AND status = 'arrived'

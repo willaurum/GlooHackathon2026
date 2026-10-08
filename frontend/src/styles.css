@@ -1035,6 +1035,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .guest-card h3 small{font-size:10px;color:var(--faint);font-weight:400}
 .guest-card p{font-size:11px;margin-top:6px}
 .guest-card button{margin-top:12px}
+.welcome-checkin form{margin-top:14px}
+.welcome-checkin>.btn,.welcome-checkin>.give-applied{margin-top:12px}
 @media(max-width:850px){.service-cards{grid-template-columns:1fr}.guest-list{grid-template-columns:1fr}.find-your-way{grid-template-columns:1fr}.church-map{order:-1}}
 @media(max-width:600px){.visit-section{padding:20px}.church-map{height:300px}.map-links{flex-direction:column;align-items:stretch}.map-links a{text-align:center}}
 
