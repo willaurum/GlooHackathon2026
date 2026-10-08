@@ -1,0 +1,45 @@
+Sheet row ID (zero-based),Case,Review status,Evidence / limitation
+0,Ask AI to change pastor name,Automated coverage,test_builder_customize: staff edit and church-name guard; exact wording not sent to a live model
+1,Reorder sections: Put service times above ministries,Automated coverage,test_builder_customize/test_builder_demo: checked Home section moves
+2,Hide specific ministry: Hide the youth ministry,Fixed and tested,#115 group/ministry fallback; test_qa_cases_youth_group_and_no_written_wording
+3,Move section to top: Move what to expect to the top,Automated coverage,test_builder_demo: layout operations; Plan your visit is the section context
+4,Update church phone number via plain text command,Automated coverage,test_rules_change_theme_layout_and_details_and_undo_one_step_at_a_time
+5,Undo previous edit operation,Browser + automated,Preview headline change/download/undo; phone undo test
+6,Import website from live URL (Happy path crawl),Offline fixture coverage,"test_builder_deep/site/demo; local static inputs, not a new live crawl"
+7,Detect conflicting service times from messy site,Offline fixture coverage,test_builder.py conflicts and demo-site service conflict
+8,Resolve service time conflict by picking candidate card,Automated coverage,test_answers_confirm_and_build_valid_content; provenance route tests
+9,Prompt for missing required address and accept manual input,Automated coverage,"Missing-field questions, typed answers and validation in test_builder.py"
+10,Ingest PDF church bulletin and extract facts,Automated coverage,test_generated_pdf_is_read_by_content; upload source quotes
+11,Ingest church flyer image via Vision AI OCR,Simulated vision,Image/scanned-PDF reader tests use fake vision; no live OCR run
+12,Reject file upload exceeding 10 MB total size limit,Automated coverage,Upload count/per-file/total byte caps in test_builder.py
+13,Enforce robots.txt Disallow and Crawl-delay rules,Automated coverage,test_builder_robots: Disallow and actual Crawl-delay spacing
+14,Reject private IP and localhost URLs (SSRF Guard),Automated coverage,Private URL refusals in builder and Worker builderfetch tests
+15,Request theme color change via natural language prompt,Rules + simulated AI,Navy/gold checked-operation tests; free-form exact wording needs live provider
+16,Request subjective marketing / theological copy generation,Fixed; expectation mismatch,#115 refuses AI-authored prose; requested copy generation is outside the design
+17,Ingest scanned bulletin PDF without Vision AI configured,Expectation mismatch,"Without vision, scanned PDFs are skipped with notes; test_images_and_scanned_pdf_without_vision_are_skipped_with_notes"
+18,Crawl website with 500 server error on robots.txt,Expectation mismatch,5xx robots stops import; test_an_unreadable_robots_file_stops_the_import
+19,Publish live production church without invite code,Browser + API,"Owner signup without invite code; church-specific link, not custom-domain registration"
+20,Hide a whole part of the site,Automated coverage,test_hide_and_show_whole_parts_of_the_site; frontend hidden-page routing checks
+21,Show a hidden part again,Automated coverage,Same hide/show tests; menu route visibility
+22,Refuse to hide Home,Automated coverage,Hide Home refused in customization tests
+23,Change the Home headline (quoted old and new text),Browser + automated,Quoted replacement in test_the_headline_at_the_top_of_home; browser headline edit
+24,Change pastor name with a typo in the request,Automated coverage,test_changing_a_person_never_renames_the_church uses the typo request
+25,AI cannot rename the church from a request about a person,Simulated AI,"Person request cannot rename church, including fake AI plan"
+26,Free-form theme request (AI),Live provider not retested,Free-form autumn palette requires an AI model; checked AI theme operations tested with a stub
+27,Refuse an unreadable background,Automated coverage,test_unreadable_colors_and_unknown_changes_are_refused
+28,Vague color request asks a question,Automated coverage,Vague colors ask a question in customization tests
+29,Section move uses the page being viewed,Automated coverage,Plan your visit context in rules/layout test
+30,Add an FAQ from the request,Rules + simulated AI,FAQ changes and checked supplied wording in customization tests
+31,Remove an event,Fixed and tested,Event highlight/calendar removal; export and undo regression
+32,Refuse to edit built-in template wording,Automated coverage,test_the_headline_at_the_top_of_home refuses built-in template wording
+33,Preview chat answers only about the imported church,Automated coverage,"test_builder_chat: imported facts, provider failures and isolation"
+34,Preview chat never files real requests,Automated coverage,test_builder_chat: no preview requests/contact collection or database writes
+35,Give page in preview has no demo church,Browser,Give and trips show preview messaging; no demo church data
+36,Map for a made-up address,Automated coverage,visitMap.test.js: city fallback is approximate; native map/provider not separately verified
+37,Demo site: bulletin conflicts with website service time,Offline fixture coverage,test_builder_demo_site: website/bulletin conflict with exact quotes
+38,Demo site: Youth Group is not a worship service,Offline fixture coverage,test_youth_group_is_not_a_service_time
+39,Demo site: beliefs page under construction,Offline fixture coverage,Beliefs placeholder/human handoff tests in test_builder_demo
+40,"Demo site: old events dropped, bulletin event kept",Offline fixture coverage,Old-event filtering and demo Fall Festival coverage
+41,Demo site: bulletin-only group,Offline fixture coverage,Demo-site bulletin group extraction; no new live model call
+42,Start from JSON files,Browser + API,"JSON upload, preview, Owner signup/apply and launch"
+43,Download church.json and site.json,Browser + API,"Headline download, JSON/schema/export tests; sources/calendar metadata preserved"

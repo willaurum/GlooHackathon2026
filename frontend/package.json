@@ -1,6 +1,7 @@
 {
   "name": "gloo-frontend",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "test": "node --test src/*.test.js",

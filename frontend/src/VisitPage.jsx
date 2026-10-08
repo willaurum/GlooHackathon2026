@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from './api.js';
 import ChurchMap from './ChurchMap.jsx';
+import ContactInput from './ContactInput.jsx';
 import { useChurch } from './ChurchContext.js';
 import { directionsHref, nextSteps as pickNextSteps, orderedSections } from './churchSite.js';
 import Sourced from './Sourced.jsx';
@@ -228,7 +229,7 @@ export default function VisitPage() {
               <input required maxLength={100} value={name} onChange={e => setName(e.target.value)} placeholder="Jamie Parker" />
             </label>
             <label className="field">Email or phone <small>Optional</small>
-              <input maxLength={200} value={contact} onChange={e => setContact(e.target.value)} placeholder="jamie@example.com" />
+              <ContactInput kind="email-or-phone" maxLength={200} value={contact} onChange={e => setContact(e.target.value)} placeholder="jamie@example.com or (555) 010-0140" />
             </label>
             <label className="field">Service
               <select value={service} onChange={e => setService(e.target.value)}>

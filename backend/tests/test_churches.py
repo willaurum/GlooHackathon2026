@@ -13,7 +13,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from backend.app import church_content, db, main
+from backend.app import church_content, db, main, ratelimit
 
 APP = Path(__file__).resolve().parents[1] / 'app'
 
@@ -192,6 +192,129 @@ class HttpScopeTests(ChurchTestCase):
         self.assertEqual(put.status_code, 200)
         self.assertEqual(self.client.get('/api/church/content', headers=self.hope()).json()['faqs'][0]['answer'], 'Free lot.')
         self.assertEqual(self.client.put('/api/church/content', headers=self.hope(), json={'faqs': [{'answer': 'x'}]}).status_code, 422)
+
+
+class VolunteerApplicationTests(ChurchTestCase):
+    """Applying to serve on a team (Serve) and staff reviewing it (Church staff → Volunteers).
+    An application is contact details plus the person's own explanation (250 to 1000 characters)."""
+
+    ABOUT = ("I'm Sam, a nurse who moved to town last spring and started coming on Sundays in June. "
+             "I'd love to help in the kids' rooms, ideally the 9:00am service, since I already lead a small "
+             "after-school reading club. Serving feels like the best way to get to know people here and give back.")
+
+    def setUp(self):
+        super().setUp()
+        self.client = TestClient(main.app)
+        for limit in (main.APPLY_PER_VISITOR, main.APPLY_PER_CHURCH):
+            limit.clear()
+            self.addCleanup(limit.clear)
+
+    def apply(self, ministry_id=0, headers=None, **fields):
+        body = {'name': 'Sam Rivera', 'email': 'sam@example.com', 'message': self.ABOUT, **fields}
+        return self.client.post(f'/api/ministries/{ministry_id}/apply', json=body, headers=headers or {})
+
+    def test_applying_is_rate_limited_per_visitor(self):
+        visitor = {'CF-Connecting-IP': '203.0.113.7'}
+        for n in range(main.APPLY_PER_VISITOR.limit):
+            self.assertEqual(self.apply(email=f'sam{n}@example.com', headers=visitor).status_code, 201)
+        refused = self.apply(email='sam9@example.com', headers=visitor)
+        self.assertEqual(refused.status_code, 429)
+        self.assertEqual(refused.json()['detail'], main.TOO_MANY_APPLICATIONS)
+        # Someone else, or the same address on another church, is not held up.
+        self.assertEqual(self.apply(email='pat@example.com', headers={'CF-Connecting-IP': '203.0.113.8'}).status_code, 201)
+        hope = {**visitor, 'X-Church': 'hope-chapel', 'X-Church-Name': 'Hope%20Chapel'}
+        self.assertEqual(self.apply(headers=hope).status_code, 404)  # Hope Chapel has no teams; it got past the limit
+
+    def test_a_church_has_a_ceiling_across_visitors(self):
+        main.APPLY_PER_CHURCH.limit, limit = 3, main.APPLY_PER_CHURCH.limit
+        self.addCleanup(setattr, main.APPLY_PER_CHURCH, 'limit', limit)
+        codes = [self.apply(email=f'p{n}@example.com', headers={'CF-Connecting-IP': f'198.51.100.{n}'}).status_code for n in range(4)]
+        self.assertEqual(codes, [201, 201, 201, 429])
+
+    def test_the_window_slides(self):
+        limit = ratelimit.RateLimit(limit=2, window=60)
+        self.assertEqual([limit.allow('a', now=t) for t in (0, 1, 2)], [True, True, False])
+        self.assertTrue(limit.allow('a', now=61))
+
+    def test_an_application_keeps_only_what_the_team_needs(self):
+        response = self.apply(phone='555-010-0100')
+        self.assertEqual(response.status_code, 201)
+        # The applicant only hears it was received.
+        self.assertEqual(set(response.json()), {'id', 'team', 'status'})
+        self.assertEqual(response.json()['team'], 'Kids & families')
+        [saved] = self.client.get('/api/volunteers').json()['applications']
+        self.assertEqual((saved['name'], saved['email'], saved['phone'], saved['message'], saved['status'], saved['source']),
+                         ('Sam Rivera', 'sam@example.com', '555-010-0100', self.ABOUT, 'new', 'website'))
+        self.assertEqual(set(saved), {'id', 'ministry_id', 'ministry_name', 'name', 'email', 'phone', 'message',
+                                      'status', 'note', 'source', 'created_at'})
+
+    def test_the_explanation_is_250_to_1000_characters(self):
+        self.assertEqual(self.apply(message='x' * 249).status_code, 422)
+        self.assertEqual(self.apply(message='').status_code, 422)
+        self.assertEqual(self.apply(message='x' * 1001).status_code, 422)
+        # Surrounding spaces don't count toward the minimum.
+        self.assertEqual(self.apply(message=' ' * 10 + 'x' * 245).status_code, 422)
+        self.assertEqual(self.apply(message='x' * 250).status_code, 201)
+        self.assertEqual(self.apply(1, email='pat@example.com', message='x' * 1000).status_code, 201)
+
+    def test_email_and_phone_must_look_right(self):
+        for email in ('not-an-email', 'sam@example', 'sam @example.com', 'sam@example.c'):
+            self.assertEqual(self.apply(email=email).status_code, 422, email)
+        for phone in ('call me', '555', '555-0100', '555-010-014', '555-010-0100 ext 2'):
+            self.assertEqual(self.apply(phone=phone).status_code, 422, phone)
+        self.assertEqual(self.apply(phone='+1 (555) 010-0140').status_code, 201)
+        self.assertEqual(self.apply(phone='+44 20 7946 0958', email='uk@example.com').status_code, 201)
+
+    def test_a_visit_contact_is_an_email_or_a_phone(self):
+        content = {'info': {'name': 'Grace Community Church', 'services': [{'day': 'Sunday', 'time': '9:00am'}]}}
+        self.client.put('/api/church/content', json=content)
+        visit = lambda contact: self.client.post('/api/visits', json={'name': 'Sam', 'service': 'Sunday 9:00am', 'party_size': 1, 'contact': contact}).status_code
+        self.assertEqual([visit(c) for c in ('', 'sam@example.com', '(555) 010-0140', 'next week', 'sam@example')], [201, 201, 201, 422, 422])
+
+    def test_bad_applications_are_refused(self):
+        self.assertEqual(self.apply(email='not-an-email').status_code, 422)
+        self.assertEqual(self.apply(name='').status_code, 422)
+        self.assertEqual(self.apply(99).status_code, 404)
+        self.assertEqual(self.client.get('/api/volunteers').json()['applications'], [])
+
+    def test_applying_twice_keeps_one_open_application(self):
+        first, second = self.apply().json(), self.apply(email='SAM@example.com').json()
+        self.assertEqual(first['id'], second['id'])
+        self.assertEqual(len(self.client.get('/api/volunteers').json()['applications']), 1)
+
+    def test_staff_review_with_a_status_and_a_private_note(self):
+        application = self.apply().json()
+        url = f"/api/volunteers/{application['id']}"
+        # A status change needs a note; a blank one doesn't count (whitespace is stripped).
+        for body in ({'status': 'accepted'}, {'status': 'accepted', 'note': '   '}):
+            refused = self.client.put(url, json=body)
+            self.assertEqual(refused.status_code, 400)
+            self.assertIn('note', refused.json()['detail'])
+        # A note alone, or the same status again, needs nothing more.
+        self.assertEqual(self.client.put(url, json={'note': 'Left a voicemail'}).status_code, 200)
+        self.assertEqual(self.client.put(url, json={'status': 'new'}).status_code, 200)
+        response = self.client.put(url, json={'status': 'accepted', 'note': 'Called Tuesday'})
+        [saved] = response.json()['applications']
+        self.assertEqual((saved['status'], saved['note']), ('accepted', 'Called Tuesday'))
+        self.assertEqual(self.client.put(f"/api/volunteers/{application['id']}", json={'status': 'maybe'}).status_code, 422)
+        self.assertEqual(self.client.put('/api/volunteers/999', json={'status': 'declined'}).status_code, 404)
+        # Once accepted, the same person can apply again (it is no longer open).
+        self.assertNotEqual(self.apply().json()['id'], application['id'])
+
+    def test_applications_stay_with_their_church(self):
+        self.apply()
+        hope = {'X-Church': 'hope-chapel', 'X-Church-Name': 'Hope%20Chapel'}
+        self.assertEqual(self.client.get('/api/volunteers', headers=hope).json()['applications'], [])
+
+    def test_old_chat_team_requests_move_over_once(self):
+        db.create_request('connection', 'Pat Lee', 'pat@example.com', 'Loves kids', 0)
+        db.create_request('prayer', 'Pat Lee', '', 'Please pray', None)
+        for _ in range(2):
+            db._ready.clear()
+            db.initialize()
+        [moved] = db.list_volunteer_applications()
+        self.assertEqual((moved['name'], moved['email'], moved['ministry_name'], moved['status'], moved['source']),
+                         ('Pat Lee', 'pat@example.com', 'Kids & families', 'new', 'chat'))
 
 
 if __name__ == '__main__':

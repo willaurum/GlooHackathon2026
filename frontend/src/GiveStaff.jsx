@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useChurch } from './ChurchContext.js';
-import { fmt, whenCapabilitiesKnown } from './api.js';
+import { api, fmt, whenCapabilitiesKnown } from './api.js';
 import { rotateStaffToken, shareLink } from './church.js';
+import ContactInput from './ContactInput.jsx';
 import Icon from './Icon.jsx';
 import GiveChurchBar from './GiveChurchBar.jsx';
 import { churchApi, friendly, getStaffToken, givingCapabilities, percent, revokeStaffToken, setStaffToken, signOutStaff, staffApi, tripDates } from './giving.js';
 
-const VIEWS = [['overview', 'Overview'], ['funds', 'Funds & trips'], ['applications', 'Applications'], ['gifts', 'Gifts'], ['team', 'Team']];
+// Volunteers: applications to serve on a team (church API) and to go on a mission trip (giving API).
+// Care requests: what the website chat passed to staff (pastoral care, prayer, crisis).
+const VIEWS = [['overview', 'Overview'], ['funds', 'Funds & trips'], ['volunteers', 'Volunteers'], ['care', 'Care requests'], ['gifts', 'Gifts'], ['team', 'Team']];
 
 export default function GiveStaff({ slug, church, go, onPickChurch, onChanged }) {
   const { staff } = useChurch();
@@ -59,7 +62,7 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
     <GiveChurchBar church={church} slug={slug} onPick={onPickChurch} label="Staff sign-in for" />
     <form className="card give-pad" onSubmit={submit}>
       <div className="form-title"><span className="icon color2"><Icon name="lock" size={22} /></span><div><h2>Sign in</h2><p>Use your staff email and password. Leave email blank for the demo or a church still using its shared password.</p></div></div>
-      <label className="field">Email<input type="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
+      <label className="field">Email<ContactInput kind="email" value={email} maxLength={200} autoComplete="username" onChange={e => setEmail(e.target.value)} /></label>
       <label className="field">Staff password<input type="password" value={password} maxLength={200} autoComplete="current-password" onChange={e => setPassword(e.target.value)} /></label>
       {err && <div className="banner error" role="alert">{err}</div>}
       <button className="primary wide" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
@@ -71,9 +74,19 @@ function SignIn({ slug, church, go, onPickChurch, onSignedIn }) {
 
 function Dashboard({ slug, go, onChanged }) {
   const [data, setData] = useState(null), [err, setErr] = useState(''), [view, setView] = useState('overview'), [signingOut, setSigningOut] = useState(false), [signOutError, setSignOutError] = useState('');
+  // Waiting on staff in the church API: new team applications and open chat care requests.
+  const [waiting, setWaiting] = useState({ teams: 0, care: 0 });
   function fail(e) { if (e.status !== 401) setErr(friendly(e)); }
   useEffect(() => { staffApi(slug, '').then(setData).catch(fail); }, [slug]);
+  function countWaiting() {
+    Promise.all([api('/volunteers'), api('/requests')]).then(([v, r]) => setWaiting({
+      teams: v.applications.filter(a => a.status === 'new').length,
+      care: r.filter(x => x.kind !== 'connection' && x.status === 'pending').length,
+    })).catch(() => {});
+  }
+  useEffect(countWaiting, [slug]);
   function update(next) { setData(next); onChanged(); }
+  const badges = { volunteers: (data?.newApplications || 0) + waiting.teams, care: waiting.care };
   async function signOut() {
     setSigningOut(true); setSignOutError('');
     try { await signOutStaff(slug); }
@@ -91,18 +104,19 @@ function Dashboard({ slug, go, onChanged }) {
     {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
     <div className="filters give-views" role="tablist" aria-label="Staff sections">
       {VIEWS.map(([v, label]) => <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'selected' : ''} onClick={() => setView(v)}>
-        {label}{v === 'applications' && data.newApplications > 0 && <b className="count">{data.newApplications}</b>}
+        {label}{badges[v] > 0 && <b className="count">{badges[v]}</b>}
       </button>)}
     </div>
-    {view === 'overview' && <Overview slug={slug} data={data} update={update} go={go} fail={fail} setView={setView} />}
+    {view === 'overview' && <Overview slug={slug} data={data} update={update} go={go} fail={fail} setView={setView} newVolunteers={badges.volunteers} />}
     {view === 'funds' && <Funds slug={slug} data={data} update={update} fail={fail} />}
-    {view === 'applications' && <Applications slug={slug} fail={fail} onChanged={() => staffApi(slug, '').then(update).catch(() => {})} />}
+    {view === 'volunteers' && <Volunteers slug={slug} fail={fail} onChanged={() => { staffApi(slug, '').then(update).catch(() => {}); countWaiting(); }} />}
+    {view === 'care' && <CareRequests onChanged={countWaiting} />}
     {view === 'gifts' && <Gifts slug={slug} fail={fail} canAnonymize={!!data.church.demo && data.me?.role === 'owner'} />}
     {view === 'team' && <Team slug={slug} />}
   </div>;
 }
 
-function Overview({ slug, data, update, go, fail, setView }) {
+function Overview({ slug, data, update, go, fail, setView, newVolunteers }) {
   const { church, stripe } = data;
   const link = shareLink(church.slug, 'give');
   const [copied, setCopied] = useState(false);
@@ -117,7 +131,7 @@ function Overview({ slug, data, update, go, fail, setView }) {
     <div className="stats">
       <div className="card stat"><div>Raised<Icon name="heart" size={18} /></div><strong>{fmt(data.public.totals.raised, church.currency)}</strong><small>{stripe.mode === 'demo' ? 'Includes simulated gifts' : 'Completed gifts'}</small></div>
       <div className="card stat"><div>Gifts<Icon name="check" size={18} /></div><strong>{data.public.totals.gifts}</strong><small>All funds</small></div>
-      <div className="card stat"><div>New applications<Icon name="users" size={18} /></div><strong>{data.newApplications}</strong><small>Waiting for review</small></div>
+      <button type="button" className="card stat stat-link" onClick={() => setView('volunteers')}><div>New volunteers<Icon name="users" size={18} /></div><strong>{newVolunteers}</strong><small>Teams and trips, waiting for review</small></button>
     </div>
     <div className="give-overview">
       <div className="give-col">
@@ -279,7 +293,7 @@ function Team({ slug }) {
       {data.canManage && <form className="card give-pad" onSubmit={add}>
         <h3>Add staff</h3>
         <label className="field">Name<input required minLength={2} maxLength={80} value={f.name} autoComplete="name" onChange={set('name')} /></label>
-        <label className="field">Email<input required type="email" maxLength={200} value={f.email} autoComplete="off" onChange={set('email')} /></label>
+        <label className="field">Email<ContactInput kind="email" required maxLength={200} value={f.email} autoComplete="off" onChange={set('email')} /></label>
         <label className="field">Role<select value={f.role} onChange={set('role')} disabled={!data.users.length}><option value="owner">Owner</option><option value="site_admin">Site admin</option></select></label>
         <label className="field">Temporary password <small>10 or more characters</small><input required type="password" minLength={10} maxLength={200} value={f.password} autoComplete="new-password" onChange={set('password')} /></label>
         <p className="form-note">Share the temporary password privately. Staff can change their own password in Overview.</p>
@@ -379,50 +393,142 @@ function FundForm({ kind, fund, currency, onSave, onCancel, fail }) {
 }
 
 const STATUSES = [['new', 'New'], ['accepted', 'Accepted'], ['waitlisted', 'Waitlisted'], ['declined', 'Declined']];
+const KINDS = [['teams', 'Serving teams', 'users'], ['trips', 'Mission trips', 'compass']];
 
+function Volunteers({ slug, fail, onChanged }) {
+  const [kind, setKind] = useState('teams');
+  return <div className="give-apps">
+    <div className="subnav volunteer-kinds" role="tablist" aria-label="Kind of volunteer">
+      {KINDS.map(([k, label, icon]) => <button key={k} role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>
+        <Icon name={icon} size={16} />{label}</button>)}
+    </div>
+    {kind === 'teams' ? <TeamApplications fail={fail} onChanged={onChanged} /> : <Applications slug={slug} fail={fail} onChanged={onChanged} />}
+  </div>;
+}
+
+// The status filter shared by both kinds of application.
+function StatusFilter({ list, filter, setFilter }) {
+  return <div className="chips" role="group" aria-label="Filter applications">
+    {[['all', 'All'], ...STATUSES].map(([v, label]) => <button key={v} className={filter === v ? 'chosen' : ''} aria-pressed={filter === v} onClick={() => setFilter(v)}>
+      {label} <small>{v === 'all' ? list.length : list.filter(a => a.status === v).length}</small>
+    </button>)}
+  </div>;
+}
+
+// Applications to serve on a team, from the team's page on Serve or from the website chat.
+function TeamApplications({ fail, onChanged }) {
+  const [list, setList] = useState(null), [filter, setFilter] = useState('all'), [err, setErr] = useState('');
+  useEffect(() => { api('/volunteers').then(d => setList(d.applications)).catch(e => (e.status === 401 ? fail(e) : setErr(e.message))); }, []);
+  async function review(id, body) {
+    setErr('');
+    try { setList((await api('/volunteers/' + id, { method: 'PUT', body: JSON.stringify(body) })).applications); onChanged(); return true; }
+    catch (e) { if (e.status === 401) fail(e); else setErr(e.message); return false; }
+  }
+  if (err && !list) return <div className="banner error" role="alert">{err}</div>;
+  if (!list) return <div className="card give-pad"><p role="status">Loading applications…</p></div>;
+  const shown = filter === 'all' ? list : list.filter(a => a.status === filter);
+  return <>
+    <StatusFilter list={list} filter={filter} setFilter={setFilter} />
+    {err && <div className="banner error" role="alert">{err}</div>}
+    {!shown.length && <div className="card give-pad empty"><Icon name="users" size={32} /><p>{list.length ? 'Nothing here with that status.' : 'No applications yet. They appear here when someone applies to serve on a team.'}</p></div>}
+    {shown.map(a => <ApplicationCard key={a.id} a={{ ...a, trip: a.ministry_name, createdAt: a.created_at }} onReview={body => review(a.id, body)}>
+      {a.source === 'chat' && <small className="give-app-source">Filed through the website chat.</small>}
+    </ApplicationCard>)}
+  </>;
+}
+
+// Mission trip applications (giving API).
 function Applications({ slug, fail, onChanged }) {
   const [list, setList] = useState(null), [filter, setFilter] = useState('all'), [err, setErr] = useState('');
   useEffect(() => { staffApi(slug, '/applications').then(d => setList(d.applications)).catch(fail); }, [slug]);
   async function review(id, body) {
     setErr('');
-    try { setList((await staffApi(slug, '/applications/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) })).applications); onChanged(); }
-    catch (e) { if (e.status === 401) fail(e); else setErr(friendly(e)); }
+    try { setList((await staffApi(slug, '/applications/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) })).applications); onChanged(); return true; }
+    catch (e) { if (e.status === 401) fail(e); else setErr(friendly(e)); return false; }
   }
   if (!list) return <div className="card give-pad"><p role="status">Loading applications…</p></div>;
   const shown = filter === 'all' ? list : list.filter(a => a.status === filter);
-  return <div className="give-apps">
-    <div className="chips" role="group" aria-label="Filter applications">
-      {[['all', 'All'], ...STATUSES].map(([v, label]) => <button key={v} className={filter === v ? 'chosen' : ''} aria-pressed={filter === v} onClick={() => setFilter(v)}>
-        {label} <small>{v === 'all' ? list.length : list.filter(a => a.status === v).length}</small>
-      </button>)}
-    </div>
+  return <>
+    <StatusFilter list={list} filter={filter} setFilter={setFilter} />
     {err && <div className="banner error" role="alert">{err}</div>}
     {!shown.length && <div className="card give-pad empty"><Icon name="users" size={32} /><p>{list.length ? 'Nothing here with that status.' : 'No applications yet. They appear here when someone applies to a trip.'}</p></div>}
     {shown.map(a => <ApplicationCard key={a.id} a={a} onReview={body => review(a.id, body)} />)}
-  </div>;
+  </>;
 }
 
-function ApplicationCard({ a, onReview }) {
-  const [note, setNote] = useState(a.note || '');
+const DECIDE = { accepted: 'Accept', waitlisted: 'Waitlist', declined: 'Decline' };
+
+// One application, team or trip: who, how to reach them, what they shared, the decision and a private note.
+// The staff note is required to change the status (both APIs refuse a change without one) and is saved with it.
+function ApplicationCard({ a, onReview, children }) {
+  const [note, setNote] = useState(a.note || ''), [missing, setMissing] = useState(false);
+  const noteId = 'staff-note-' + a.id;
+  function decide(status) {
+    if (status === a.status) return;
+    if (!note.trim()) { setMissing(true); document.getElementById(noteId)?.focus(); return; }
+    onReview({ status, note: note.trim() });
+  }
   return <article className="card give-app">
     <div className="give-app-head">
       <div><div className="category">{a.trip}</div><h3>{a.name}</h3></div>
       <span className={'tag ' + (a.status === 'declined' ? 'done' : a.status === 'new' ? 'crisis' : '')}>{STATUSES.find(([v]) => v === a.status)?.[1] || a.status}</span>
     </div>
     <div className="give-app-contact">
-      <a href={'mailto:' + a.email}><Icon name="mail" size={16} />{a.email}</a>
+      {a.email && <a href={'mailto:' + a.email}><Icon name="mail" size={16} />{a.email}</a>}
       {a.phone && <a href={'tel:' + a.phone.replace(/[^\d+]/g, '')}>{a.phone}</a>}
       <small>Applied {new Date(a.createdAt).toLocaleDateString()}</small>
     </div>
+    {children}
     {a.message && <p className="give-app-message">{a.message}</p>}
-    <div className="give-row">
-      {STATUSES.filter(([v]) => v !== 'new').map(([v, label]) => <button key={v} className={a.status === v ? 'primary' : 'secondary'} aria-pressed={a.status === v} onClick={() => onReview({ status: v })}>{label === 'Accepted' ? 'Accept' : label === 'Waitlisted' ? 'Waitlist' : 'Decline'}</button>)}
-    </div>
+    {/* The note comes first: it is required before the status buttons below will change anything. */}
     <form className="give-note" onSubmit={e => { e.preventDefault(); onReview({ note }); }}>
-      <label className="field">Staff note <small>Private</small><input value={note} maxLength={1000} onChange={e => setNote(e.target.value)} placeholder="e.g. Called on Tuesday" /></label>
+      <label className="field">Staff note <small>Private · required to change the status</small>
+        <input id={noteId} value={note} maxLength={1000} required aria-invalid={missing || undefined} aria-describedby={missing ? noteId + '-error' : undefined}
+          onChange={e => { setNote(e.target.value); setMissing(false); }} placeholder="e.g. Great fit; starts on the 9:00am rotation" />
+        {missing && <span className="field-error" id={noteId + '-error'} role="alert">Write a staff note before changing the status.</span>}
+      </label>
       <button className="ghost" disabled={note === (a.note || '')}>Save note</button>
     </form>
+    <div className="give-row">
+      {Object.entries(DECIDE).map(([v, label]) => <button key={v} className={a.status === v ? 'primary' : 'secondary'} aria-pressed={a.status === v}
+        onClick={() => decide(v)}>{label}</button>)}
+    </div>
   </article>;
+}
+
+const CARE_LABELS = { pastoral_care: 'Pastoral care', prayer: 'Prayer', crisis: 'Crisis', other: 'Question' };
+
+// What the website chat passed to staff. Nothing is sent to anyone automatically; staff reach out themselves.
+function CareRequests({ onChanged }) {
+  const [list, setList] = useState(null), [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const load = () => api('/requests').then(r => setList(r.filter(x => x.kind !== 'connection'))).catch(e => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  async function act(request, method, body) {
+    setBusy(true); setErr('');
+    try { await api('/requests/' + request.request_id, { method, ...(body && { body: JSON.stringify(body) }) }); await load(); onChanged(); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+  if (!list) return err ? <div className="banner error" role="alert">{err}</div> : <div className="card give-pad"><p role="status">Loading care requests…</p></div>;
+  return <div className="give-apps">
+    <p className="form-note">Requests the website chat passed to staff. No one is notified automatically, so reach out to the person yourself, then mark it handled.</p>
+    {err && <div className="banner error" role="alert">{err}</div>}
+    {!list.length && <div className="card give-pad empty"><Icon name="heart" size={32} /><p>No care requests. They appear here when someone asks the chat for prayer, care or help.</p></div>}
+    {list.map(r => <article className="card give-app" key={r.request_id}>
+      <div className="give-app-head">
+        <div><div className="category">{CARE_LABELS[r.kind] || r.kind}</div><h3>{r.name}</h3></div>
+        <span className={'tag ' + (r.status !== 'pending' ? 'done' : r.kind === 'crisis' ? 'crisis' : '')}>{r.status === 'pending' ? 'Open' : r.status === 'approved' ? 'Handled' : 'Dismissed'}</span>
+      </div>
+      <div className="give-app-contact"><span>{r.contact || 'No contact shared'}</span><small>{new Date(r.created_at).toLocaleString()}</small></div>
+      {r.details && <p className="give-app-message">{r.details}</p>}
+      <div className="give-row">
+        {r.status === 'pending' ? <>
+          <button className="primary" disabled={busy} onClick={() => act(r, 'PATCH', { status: 'approved' })}>Mark handled</button>
+          <button className="secondary" disabled={busy} onClick={() => act(r, 'PATCH', { status: 'declined' })}>Dismiss</button>
+        </> : <button className="secondary" disabled={busy} onClick={() => act(r, 'DELETE')}>Remove</button>}
+      </div>
+    </article>)}
+  </div>;
 }
 
 // Stripe Checkout asks for the donor's name and email; they arrive when the payment completes.

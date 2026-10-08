@@ -19,8 +19,9 @@ class ChatTests(unittest.TestCase):
             'list_events': {'return_value': []},
             'list_ministries': {'return_value': self.ministries},
             'get_ministry': {'side_effect': lambda key: next((m for m in self.ministries if m['id'] == key), None)},
-            'find_pending_request': {'return_value': None},
             'create_request': {'return_value': {'request_id': 42}},
+            'find_open_application': {'return_value': None},
+            'create_volunteer_application': {'return_value': {'id': 7}},
             'log_chat': {},
         }
         self.mocks = {}
@@ -60,8 +61,7 @@ class ChatTests(unittest.TestCase):
         self.assertIn('Trunk or treat', self.reply('What upcoming events are there?'))
 
     def test_demo_navigation_and_events(self):
-        for question, page in [('Browse ministries', 'ministries'), ('Show my saved connections', 'saved-connections'),
-                               ('Take me to the home page', 'home'), ('How do I plan my visit?', 'plan-visit'),
+        for question, page in [('Browse ministries', 'ministries'), ('Take me to the home page', 'home'), ('How do I plan my visit?', 'plan-visit'),
                                ('Show the church calendar', 'calendar'), ('Can I give online?', 'give'),
                                ('Where is the prayer map?', 'prayer-map'),
                                ('Can you recommend a ministry for me?', 'find-place')]:
@@ -124,8 +124,10 @@ class ChatTests(unittest.TestCase):
     def test_care_and_connection_take_precedence(self):
         self.assertIn('saved', self.reply('Help me, I am struggling').lower())
         self.assertEqual(self.mocks['create_request'].call_args.args[0], 'pastoral_care')
-        self.assertIn('saved', self.reply('Connect me to Worship collective. My name is Jamie. jamie@example.com'))
-        self.assertEqual(self.mocks['create_request'].call_args.args[0], 'connection')
+        self.assertIn('application to Worship collective', self.reply('Connect me to Worship collective. My name is Jamie. jamie@example.com'))
+        application = self.mocks['create_volunteer_application'].call_args
+        self.assertEqual((application.args[0]['name'], application.args[1]), ('Worship collective', 'Jamie'))
+        self.assertEqual((application.kwargs['email'], application.kwargs['source']), ('jamie@example.com', 'chat'))
         self.assertIn('Saved', self.reply('I have a prayer request'))
         self.assertEqual(self.mocks['create_request'].call_args.args[0], 'prayer')
 
@@ -137,30 +139,34 @@ class ChatTests(unittest.TestCase):
         second = 'My name is jamie parker'
         prompt = self.reply(second, history)
         self.assertEqual(prompt, chat.CONNECTION_PROMPT)
-        self.mocks['create_request'].assert_not_called()
+        self.mocks['create_volunteer_application'].assert_not_called()
         history.extend([{'role': 'user', 'content': second}, {'role': 'assistant', 'content': prompt}])
         self.assertIn('saved', self.reply('jamie@example.com', history))
-        args = self.mocks['create_request'].call_args.args
-        self.assertEqual(args[:3], ('connection', 'jamie parker', 'jamie@example.com'))
-        self.assertEqual(args[-1], 1)
+        application = self.mocks['create_volunteer_application'].call_args
+        self.assertEqual((application.args[0]['id'], application.args[1], application.kwargs['email']), (1, 'jamie parker', 'jamie@example.com'))
 
     def test_connection_requires_a_name(self):
         self.assertEqual(self.reply('Connect me to Welcome team at jamie@example.com'), chat.CONNECTION_PROMPT)
-        self.mocks['create_request'].assert_not_called()
+        self.mocks['create_volunteer_application'].assert_not_called()
+
+    def test_an_open_application_is_not_filed_twice(self):
+        self.mocks['find_open_application'].return_value = {'id': 3}
+        self.assertIn('already has an application open', self.reply('Connect me to Welcome team. My name is Jamie. jamie@example.com'))
+        self.mocks['create_volunteer_application'].assert_not_called()
 
     def test_canceled_or_completed_flow_does_not_replay(self):
-        for last_reply in ('Okay, I will not save a connection request.', 'Your request is saved for staff review.'):
+        for last_reply in ('Okay, I will not file an application.', 'Your application is saved for staff review.'):
             history = [{'role': 'user', 'content': 'Connect me to Welcome team. My name is Jamie'},
                        {'role': 'assistant', 'content': last_reply}]
             self.reply('jamie@example.com', history)
-        self.mocks['create_request'].assert_not_called()
+        self.mocks['create_volunteer_application'].assert_not_called()
 
     def test_cancel_and_topic_change_while_collecting(self):
         history = [{'role': 'user', 'content': 'Connect me to Welcome team'},
                    {'role': 'assistant', 'content': chat.CONNECTION_PROMPT}]
-        self.assertIn('will not save', self.reply('cancel', history))
+        self.assertIn('will not file', self.reply('cancel', history))
         self.assertIn('9:00am', self.reply('When are services?', history))
-        self.mocks['create_request'].assert_not_called()
+        self.mocks['create_volunteer_application'].assert_not_called()
 
     def test_crisis_guidance_survives_storage_failure(self):
         self.mocks['create_request'].side_effect = RuntimeError('database unavailable')

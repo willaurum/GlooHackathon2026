@@ -11,7 +11,7 @@ import { siteMenu } from './site.js';
 export const SECTIONS = [
   { route: '', label: 'Home', icon: 'home', tab: true },
   { route: 'guests', label: 'Guests', short: 'Guests', icon: 'pin', tab: true, children: [['guests/plan', 'Plan your visit'], ['guests/welcome', 'Welcome team']] },
-  { route: 'serve', label: 'Serve', icon: 'users', tab: true, children: [['serve', 'Ministries'], ['serve/find', 'Find a place'], ['serve/saved', 'Saved']] },
+  { route: 'serve', label: 'Serve', icon: 'users', tab: true, children: [['serve', 'Ministries'], ['serve/find', 'Find a place']] },
   { route: 'notes', label: 'Sermon Notes', short: 'Notes', icon: 'book', tab: true },
   { route: 'calendar', label: 'Calendar', short: 'Calendar', icon: 'calendar' },
   { route: 'give', label: 'Give', icon: 'heart', children: [['give', 'Give'], ['give/trips', 'Mission trips']] },
@@ -53,7 +53,7 @@ const flatMenu = items => items.flatMap(item => [item, ...flatMenu(item.children
 // Desktop top bar, pinned while scrolling: the church in place of a site logo, the main navigation,
 // and staff sign-in. A section with sub-pages opens them in a dropdown on hover or keyboard focus;
 // the section itself still opens its first page.
-export function SiteNav({ route, go, savedCount }) {
+export function SiteNav({ route, go }) {
   const church = useChurch();
   const { demo, staff, pages } = church;
   const current = sectionOf(route);
@@ -70,12 +70,11 @@ export function SiteNav({ route, go, savedCount }) {
             aria-haspopup={kids.length > 1 ? 'true' : undefined} onClick={e => pick(e, s.route)}>
             {/* Narrower screens use the short label (Notes, Prayer) so the bar stays one row. */}
             <span className="label-full">{s.label}</span><span className="label-short">{s.short ?? s.label}</span>
-            {s.route === 'serve' && savedCount > 0 && <b className="count">{savedCount}</b>}
             {kids.length > 1 && <svg className="caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}
           </button>
           {kids.length > 1 && <div className="site-nav-menu">
             {kids.map(([r, label]) => <button key={r} className={route === r ? 'active' : ''} aria-current={route === r ? 'page' : undefined} onClick={e => pick(e, r)}>
-              {label}{r === 'serve/saved' && savedCount > 0 && <b className="count">{savedCount}</b>}
+              {label}
             </button>)}
           </div>}
         </div>;
@@ -162,7 +161,7 @@ export function FirstVisit({ route, go }) {
   </div>;
 }
 
-export function TabBar({ route, go, chatOpen, savedCount }) {
+export function TabBar({ route, go, chatOpen }) {
   const { demo, staff, pages, site } = useChurch();
   const [menuOpen, setMenuOpen] = useState(false);
   const tabs = SECTIONS.filter(s => s.tab && !pageHidden(site, s.route));
@@ -195,7 +194,7 @@ export function TabBar({ route, go, chatOpen, savedCount }) {
     </div>}
     <nav className="tabbar" aria-label="Main">
       {tabs.map(s => <button key={s.route} className={!chatOpen && !menuOpen && current === s.route ? 'active' : ''} onClick={() => open(s.route)}>
-        <span className="tab-icon"><Icon name={s.icon} size={22} />{s.route === 'serve' && savedCount > 0 && <b className="dot" />}</span>{s.short ?? s.label}
+        <span className="tab-icon"><Icon name={s.icon} size={22} /></span>{s.short ?? s.label}
       </button>)}
       <button className={menuOpen || (!chatOpen && inMenu) ? 'active' : ''} aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen(o => !o)}>
         <span className="tab-icon"><Icon name={menuOpen ? 'x' : 'menu'} size={22} /></span>Menu

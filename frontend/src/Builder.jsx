@@ -4,6 +4,7 @@ import { BUILDER_LABELS, BUILDER_LISTS, SITE_PARTS, builderEvidence, builderImpo
 import { paragraphs, safeHref } from './site.js';
 import { useChurch } from './ChurchContext.js';
 import { hashFor } from './church.js';
+import ContactInput from './ContactInput.jsx';
 import { PageHeader } from './Layout.jsx';
 import { evidenceLink } from './sourceLink.js';
 import TektonEdit from './TektonEdit.jsx';
@@ -274,7 +275,7 @@ function CreateAccount({ session, draftId, created, onCreated, onSuccess, onBack
       <label className="field">Church name<input required minLength={3} maxLength={80} value={name} disabled={disabled} onChange={e => setName(e.target.value)} /></label>
       <label className="field">Town or city<input required maxLength={80} value={city} disabled={disabled} onChange={e => setCity(e.target.value)} /></label>
       <label className="field">Your name<input required minLength={2} maxLength={120} autoComplete="name" value={ownerName} disabled={disabled} onChange={e => setOwnerName(e.target.value)} /></label>
-      <label className="field">Your email<input required type="email" maxLength={200} autoComplete="email" value={ownerEmail} disabled={disabled} onChange={e => setOwnerEmail(e.target.value)} /></label>
+      <label className="field">Your email<ContactInput kind="email" required maxLength={200} autoComplete="email" value={ownerEmail} disabled={disabled} onChange={e => setOwnerEmail(e.target.value)} /></label>
       <label className="field">Password (10+ characters)<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={password} disabled={disabled} onChange={e => setPassword(e.target.value)} /></label>
       <label className="field">Confirm password<input required type="password" minLength={10} maxLength={200} autoComplete="new-password" value={confirm} disabled={disabled} onChange={e => setConfirm(e.target.value)} /></label>
     </>}
@@ -433,7 +434,9 @@ function AnswerInput({ field, label, value, setValue, disabled, question }) {
   return <label className="field">{label}
     {field === 'about' || field === 'first_visit'
       ? <textarea aria-label={question} rows={3} value={value} disabled={disabled} onChange={e => setValue(e.target.value)} />
-      : <input aria-label={question} value={value} inputMode={field === 'phone' ? 'tel' : field === 'email' ? 'email' : undefined} placeholder={hint} disabled={disabled} onChange={e => setValue(e.target.value)} />}
+      : field === 'phone' || field === 'email'
+        ? <ContactInput kind={field} aria-label={question} value={value} disabled={disabled} onChange={e => setValue(e.target.value)} />
+        : <input aria-label={question} value={value} placeholder={hint} disabled={disabled} onChange={e => setValue(e.target.value)} />}
   </label>;
 }
 

@@ -5,12 +5,13 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, recommendations
+from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, ratelimit, recommendations
+from . import contact as contacts
 from .church_scope import ChurchScope
 
 log = logging.getLogger(__name__)
@@ -92,6 +93,78 @@ def matches(body: MatchRequest):
     except recommendations.Unavailable:
         # Every model failed or timed out: show the fitting teams instead of an error.
         return recommendations.browse_fallback(ministries, preferences)
+
+
+APPLICATION_MIN, APPLICATION_MAX = 250, 1000
+
+
+class VolunteerApplication(BaseModel):
+    """Only what the team needs: how to reach the person, and in their own words who they are,
+    what they would like to do and why."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=120)
+    email: str = Field(max_length=200)
+    phone: str = Field(default='', max_length=40)
+    message: str = Field(min_length=APPLICATION_MIN, max_length=APPLICATION_MAX)
+
+    @field_validator('email')
+    @classmethod
+    def email_shape(cls, value):
+        if not contacts.is_email(value):
+            raise ValueError(contacts.EMAIL_HINT)
+        return value
+
+    @field_validator('phone')
+    @classmethod
+    def phone_shape(cls, value):
+        if value and not contacts.is_phone(value):
+            raise ValueError(contacts.PHONE_HINT)
+        return value
+
+
+class VolunteerReview(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    status: Literal['new', 'accepted', 'waitlisted', 'declined'] | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+# Applying is public, so it is rate limited: a few applications per visitor, and a ceiling per church
+# in case many addresses are used at once.
+APPLY_PER_VISITOR = ratelimit.RateLimit(limit=5, window=10 * 60)
+APPLY_PER_CHURCH = ratelimit.RateLimit(limit=100, window=60 * 60)
+TOO_MANY_APPLICATIONS = 'Too many applications in a short time. Please try again in a few minutes.'
+
+
+@app.post('/api/ministries/{ministry_id}/apply', status_code=201)
+def apply_to_serve(ministry_id: int, body: VolunteerApplication, request: Request):
+    church = db.current_church()
+    if not APPLY_PER_VISITOR.allow((church, ratelimit.client_ip(request))) or not APPLY_PER_CHURCH.allow(church):
+        raise HTTPException(status_code=429, detail=TOO_MANY_APPLICATIONS)
+    ministry = db.get_ministry(ministry_id)
+    if ministry is None:
+        raise HTTPException(status_code=404, detail='That team is not listed any more.')
+    # Applying twice while the first is still open keeps the first.
+    application = db.find_open_application(ministry_id, email=body.email) or db.create_volunteer_application(
+        ministry, body.name, email=body.email, phone=body.phone, message=body.message)
+    # The applicant only learns it was received; what staff record stays with staff.
+    return {'id': application['id'], 'team': application['ministry_name'], 'status': 'received'}
+
+
+@app.get('/api/volunteers')
+def volunteer_applications():
+    return {'applications': db.list_volunteer_applications()}
+
+
+@app.put('/api/volunteers/{application_id}')
+def review_volunteer_application(application_id: int, body: VolunteerReview):
+    current = db.review_volunteer_application(application_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail='Application not found')
+    # Every decision is explained: changing the status needs a note with it.
+    if body.status and body.status != current['status'] and not body.note:
+        raise HTTPException(status_code=400, detail='Add a note explaining why you are changing this application.')
+    db.review_volunteer_application(application_id, status=body.status, note=body.note)
+    return {'applications': db.list_volunteer_applications()}
 
 
 @app.get('/api/connections')
@@ -207,6 +280,14 @@ class VisitRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     contact: str = Field(default='', max_length=200)
     service: str
+
+    @field_validator('contact')
+    @classmethod
+    def contact_shape(cls, value):
+        # Optional, but when given it is an email or a phone number the welcome team can use.
+        if value and not contacts.is_email_or_phone(value):
+            raise ValueError(contacts.EMAIL_OR_PHONE_HINT)
+        return value
     party_size: int = Field(ge=1, le=20)
     kids: str = Field(default='', max_length=200)
     wants_host: bool = True

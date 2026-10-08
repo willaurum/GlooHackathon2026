@@ -3078,6 +3078,9 @@ def customize(draft_id: str, body: CustomizeBody, request: Request):
     stored, changes, refused = [], [], []
     about_person = builder_customize.PERSON_RE.search(body.request)
     for op in ops:
+        if method == 'ai' and builder_customize.written_by_ai(op, body.request):
+            refused.append(builder_customize.NOT_WRITTEN)
+            continue
         if about_person and op.get('op') == 'set_detail' and op.get('field') == 'name':
             refused.append('That sounds like a person, so Tekton did not rename the church. Try “Change the pastor '
                            'to Dr. Lee Brown”.')

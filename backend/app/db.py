@@ -315,6 +315,23 @@ def _create_tables(seed=True):
             status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL DEFAULT {NOW}
         )""", ()),
+        # Applications to serve on a team, from the team's page or the chat. Staff review each one
+        # (new → accepted, waitlisted or declined) in Church staff → Volunteers. Only what that team
+        # needs is kept: contact details, and in their own words who they are, what they'd like to do and why.
+        (f"""CREATE TABLE IF NOT EXISTS volunteer_applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ministry_id INTEGER NOT NULL,
+            ministry_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'new',
+            note TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'website',
+            legacy_request_id INTEGER UNIQUE,
+            created_at TEXT NOT NULL DEFAULT {NOW}
+        )""", ()),
         # Audit log of every chat turn and tool call.
         (f"""CREATE TABLE IF NOT EXISTS chat_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -441,6 +458,7 @@ def _create_tables(seed=True):
                        "SELECT 'Build something on top of it', 0 WHERE NOT EXISTS (SELECT 1 FROM items)", ()))
     run(*(s for s in statements if seed or not s[0].lstrip().upper().startswith('INSERT')))
     _move_testimonies_to_updates()
+    _move_connection_requests_to_applications()
     if not seed:
         return
     if live_news:
@@ -663,6 +681,42 @@ def remove_connection(connection_id):
 
 def remove_request(request_id):
     return run(("DELETE FROM requests WHERE request_id = ?", (request_id,)))[0]['rowsWritten'] > 0
+
+
+# --- Volunteer applications (Church staff → Volunteers → Serving teams) ---
+
+VOLUNTEER_STATUSES = ('new', 'accepted', 'waitlisted', 'declined')
+
+
+APPLICATION_COLUMNS = 'id, ministry_id, ministry_name, name, email, phone, message, status, note, source, created_at'
+
+
+def create_volunteer_application(ministry, name, email='', phone='', message='', source='website'):
+    return one(f"""INSERT INTO volunteer_applications (ministry_id, ministry_name, name, email, phone, message, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING {APPLICATION_COLUMNS}""",
+        (ministry['id'], ministry['name'], name, email, phone, message, source))
+
+
+def find_open_application(ministry_id, email='', phone=''):
+    """A new or waitlisted application from the same person for the same team, so it isn't filed twice."""
+    return one(f"""SELECT {APPLICATION_COLUMNS} FROM volunteer_applications WHERE ministry_id = ? AND status IN ('new', 'waitlisted')
+        AND ((? != '' AND lower(email) = lower(?)) OR (? != '' AND phone = ?))""", (ministry_id, email, email, phone, phone))
+
+
+def list_volunteer_applications():
+    return query(f"SELECT {APPLICATION_COLUMNS} FROM volunteer_applications ORDER BY id DESC")
+
+
+def review_volunteer_application(application_id, status=None, note=None):
+    """Staff set the status and/or a private note. Returns None when there is no such application."""
+    sets, params = [], []
+    if status is not None:
+        sets.append('status = ?'); params.append(status)
+    if note is not None:
+        sets.append('note = ?'); params.append(note)
+    if not sets:
+        return one(f"SELECT {APPLICATION_COLUMNS} FROM volunteer_applications WHERE id = ?", (application_id,))
+    return one(f"UPDATE volunteer_applications SET {', '.join(sets)} WHERE id = ? RETURNING {APPLICATION_COLUMNS}", (*params, application_id))
 
 
 def _item(row):
@@ -903,6 +957,20 @@ def list_regions():
 
 def get_region(region_id):
     return next((r for r in list_regions() if r['id'] == region_id), None)
+
+
+def _move_connection_requests_to_applications():
+    """Team requests the chat filed for the old Serve > Saved inbox become volunteer applications, once
+    (legacy_request_id is unique), so staff still review them in Church staff → Volunteers."""
+    run(("""INSERT OR IGNORE INTO volunteer_applications
+            (ministry_id, ministry_name, name, email, phone, message, status, source, legacy_request_id, created_at)
+        SELECT r.ministry_id, COALESCE(json_extract(m.data, '$.name'), 'A serving team'), r.name,
+            CASE WHEN instr(r.contact, '@') THEN r.contact ELSE '' END,
+            CASE WHEN instr(r.contact, '@') THEN '' ELSE r.contact END,
+            r.details, CASE r.status WHEN 'approved' THEN 'accepted' WHEN 'declined' THEN 'declined' ELSE 'new' END,
+            'chat', r.request_id, r.created_at
+        FROM requests r LEFT JOIN ministries m ON m.id = r.ministry_id
+        WHERE r.kind = 'connection' AND r.ministry_id IS NOT NULL""", ()))
 
 
 def _move_testimonies_to_updates():

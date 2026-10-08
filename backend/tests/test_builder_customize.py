@@ -79,13 +79,13 @@ class CustomizeTests(ChurchTestCase):
 
         with mock.patch.object(builder, '_completer', return_value=complete), \
              mock.patch.object(builder, '_ai_available', return_value=True):
-            made = self.ask('make it feel more like a forest, and tell people where to park')
+            made = self.ask('make it feel more like a forest, and tell people to park in the lot behind the building')
             self.assertEqual(made.status_code, 200, made.text)
             self.assertEqual(len(made.json()['changes']), 2)
             self.assertEqual(len(made.json()['refused']), 2)
             asked = self.ask('and the buttons too')
             self.assertTrue(asked.json()['asking'])
-        self.assertIn('make it feel more like a forest, and tell people where to park', [m['content'] for m in seen[1]])
+        self.assertIn('make it feel more like a forest, and tell people to park in the lot behind the building', [m['content'] for m in seen[1]])
         site = self.site()
         self.assertEqual(site['church']['site']['theme']['heading_font'], 'Georgia')
         self.assertIn('Where do I park?', [f['question'] for f in site['church']['faqs']])
@@ -106,6 +106,31 @@ class CustomizeTests(ChurchTestCase):
         self.assertEqual(self.site()['church']['site']['layout']['hidden_pages'], ['prayer'])
         files = self.client.get(self.base + '/site.json').json()
         self.assertEqual(files['site']['layout']['hidden_pages'], ['prayer'])
+
+    def test_removing_an_event_removes_its_calendar_entries_and_undo_restores_them(self):
+        with builder._draft_lock:
+            draft = builder._load(self.base.rsplit('/', 1)[-1])
+            draft['json_content']['events'] = [{'name': 'Choir Practice', 'when': 'Wednesday 7 PM'}]
+            draft['json_content']['calendar'] = [
+                {'title': 'Choir Practice', 'date': '2026-10-14', 'time': '7:00 PM'},
+                {'title': 'Choir Practice', 'date': '2026-10-21', 'time': '7:00 PM'},
+                {'title': 'Family Lunch', 'date': '2026-10-18', 'time': '12:00 PM'},
+            ]
+            builder._save(draft)
+        before = self.site()
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            removed = self.ask('Remove Choir Practice')
+        self.assertEqual(removed.status_code, 200, removed.text)
+        after = self.site()
+        self.assertEqual(after['church']['events'], [])
+        self.assertEqual([event['title'] for event in after['events']], ['Family Lunch'])
+        downloaded = self.client.get(self.base + '/church.json').json()
+        self.assertEqual(downloaded['events'], [])
+        self.assertEqual([event['title'] for event in downloaded['calendar']], ['Family Lunch'])
+        self.assertEqual(self.client.post(self.base + '/customize/undo').status_code, 200)
+        restored = self.site()
+        self.assertEqual(restored['church']['events'], before['church']['events'])
+        self.assertEqual(restored['events'], before['events'])
 
     def test_the_headline_at_the_top_of_home(self):
         # Ben's test case: the wording to replace contains "to", and the new wording is the last quoted part.
@@ -138,6 +163,25 @@ class CustomizeTests(ChurchTestCase):
         self.assertEqual(wrong.status_code, 400)
         self.assertIn('sounds like a person', wrong.json()['detail'])
         self.assertEqual(self.site()['info']['name'], church)
+
+    def test_qa_cases_youth_group_and_no_written_wording(self):
+        """Ben's QA sheet: "Hide the youth ministry" finds a group, and the AI cannot write the church's prose."""
+        with mock.patch.object(builder, '_ai_available', return_value=False):
+            hid = self.ask('Hide the Lantern group')
+        self.assertEqual(hid.status_code, 200, hid.text)
+        self.assertNotIn('Lantern group', [g['name'] for g in self.site()['church']['groups']])
+        plan = {'reply': 'Done.', 'operations': [
+            {'op': 'set_detail', 'field': 'about', 'value': 'We are a Reformed congregation rooted in grace, '
+                                                             'committed to Scripture and warm fellowship for all.'}]}
+        with mock.patch.object(builder, '_completer', return_value=lambda messages, tools: plan), \
+             mock.patch.object(builder, '_ai_available', return_value=True):
+            wrote = self.ask('Write a 3-paragraph welcome message emphasizing Reformed doctrine and warm fellowship')
+            self.assertEqual(wrote.status_code, 400)
+            self.assertIn('does not write new wording', wrote.json()['detail'])
+            plan['operations'][0]['value'] = 'We are a small church that loves our town.'
+            given = self.ask('Change the about text to: We are a small church that loves our town.')
+        self.assertEqual(given.status_code, 200, given.text)
+        self.assertEqual(self.site()['info']['about'], 'We are a small church that loves our town.')
 
     def test_stored_changes_that_no_longer_fit_are_skipped(self):
         content = {'info': {'name': 'Example Chapel'}, 'faqs': [{'question': 'Kids?', 'answer': 'Yes.'}]}

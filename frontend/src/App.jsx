@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, churchCapabilities, gapi, setApiChurch, startApiPreview, stopApiPreview, whenCapabilitiesKnown } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
-import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, needsChurchInHash, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isLanding, isSlug, needsChurchInHash, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import Builder from './Builder.jsx';
 import { draftApi } from './builderApi.js';
@@ -29,7 +29,7 @@ import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
 import TektonAgent from './TektonAgent.jsx';
 
-const ROUTES = ['', 'serve', 'serve/find', 'serve/saved', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
+const ROUTES = ['', 'serve', 'serve/find', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
 const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
@@ -78,12 +78,16 @@ function readLocation() {
       route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) || PAGE_ROUTE.test(route) ? route : '', false) };
   }
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
+  // The bare address is Tekton's landing page, the site builder (a checkout return on /give still opens Give).
+  if (!onGivePath() && isLanding({ host: window.location.host, hash: window.location.hash })) return { ...where, route: 'new' };
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
-  // The blog became part of News, Church staff moved out of Give, and the prayer map lost its one sub-page;
-  // keep the old links (#/blog, #/about/blog, #/give/staff, #/start, #/prayer/map) working.
+  // The blog became part of News, Church staff moved out of Give, the prayer map lost its one sub-page and
+  // Serve's Saved tab became Church staff → Volunteers; keep the old links (#/blog, #/about/blog, #/give/staff,
+  // #/start, #/prayer/map, #/serve/saved) working.
   let route = ['start', 'give/start', 'give/staff'].includes(where.route) ? 'staff'
-    : ['blog', 'about/blog'].includes(where.route) ? 'about/news' : where.route === 'prayer/map' ? 'prayer' : where.route;
+    : ['blog', 'about/blog'].includes(where.route) ? 'about/news' : where.route === 'prayer/map' ? 'prayer'
+    : where.route === 'serve/saved' ? 'serve' : where.route;
   if ((ROUTES.includes(route) || SERMON_ROUTE.test(route) || GIVE_MANAGE.test(route) || PAGE_ROUTE.test(route)) && (route || !onGivePath())) route = withDefault(route, where.slug === DEMO_CHURCH);
   else route = onGivePath() ? 'give' : '';
   // A link that names a church becomes this browser's church, so plain links (#/serve) stay on it.
@@ -153,8 +157,6 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   const [showSources, setShowSources] = useState(true);
   const [where, setWhere] = useState(readLocation),
     [chatOpen, setChatOpen] = useState(false),
-    [requestsVersion, setRequestsVersion] = useState(0),
-    [savedCount, setSavedCount] = useState(0),
     [scrollTarget, setScrollTarget] = useState(null),
     [apiReady, setApiReady] = useState(null),
     [listing, setListing] = useState(snapshot?.info || null),
@@ -264,7 +266,6 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
       return;
     }
     window.history.pushState(null, '', '/' + hashFor(next, nextRoute));
-    setSavedCount(0);
     setWhere({ slug: next, source: next === DEMO_CHURCH ? 'saved' : 'link', route: nextRoute });
     setChatOpen(false);
     setScrollTarget({ id: null });
@@ -339,7 +340,7 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   else page = <>
     {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
-    {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} requestsVersion={requestsVersion} onCount={setSavedCount} /></div>}
+    {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} /></div>}
     {section === 'about' && <div className="page">
       <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]}
         text={ABOUT_PAGES[route]?.[2]?.replace('{name}', demo ? 'Grace Community Church' : name || 'our church')} />
@@ -384,7 +385,7 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
         {draft && <TektonAgent draftId={draft.id} steps={draft.custom_steps?.length || 0} viewing={viewingName(route)} lastResult={lastAsk} onChanged={(_, result) => onEdited?.(result)} />}
         <a href="#/new">Back to Tekton</a>
       </div>}
-      <SiteNav route={route} go={go} savedCount={savedCount} />
+      <SiteNav route={route} go={go} />
       <TopBar onAsk={() => setChatOpen(true)} />
       <div className="content">
         {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
@@ -401,9 +402,9 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
           </footer>
         </main>
       </div>
-      <TabBar route={route} go={go} chatOpen={chatOpen} savedCount={savedCount} />
+      <TabBar route={route} go={go} chatOpen={chatOpen} />
       <FirstVisit route={route} go={go} />
-      <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onRequestFiled={() => setRequestsVersion(v => v + 1)} onNavigate={go} />
+      <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onNavigate={go} />
     </div>
   </ChurchContext.Provider>;
 }

@@ -119,6 +119,8 @@ const PUBLIC_ROUTES: Route[] = [
 	['GET', /^\/api\/church\/pages\/[a-z0-9][a-z0-9-]{0,79}$/],
 	['POST', /^\/api\/(matches|connections|chat|visits)$/],
 	['POST', /^\/api\/visits\/[A-Za-z0-9_-]+\/arrive$/],
+	// Applying to serve on a team; staff review it under Volunteers.
+	['POST', /^\/api\/ministries\/\d+\/apply$/],
 ];
 
 // Staff-only ids match any segment, not just digits: the container also accepts forms like +1 or 01 for 1,
@@ -146,7 +148,8 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 
 // Staff work requires a church session, including on the demo church.
 const STAFF_WORK_ROUTES: Route[] = [
-	['GET', /^\/api\/(connections|requests|visits)$/],
+	['GET', /^\/api\/(connections|requests|visits|volunteers)$/],
+	['PUT', new RegExp(`^/api/volunteers/${ID}$`)],
 	['POST', new RegExp(`^/api/visits/${ID}/(claim|met)$`)],
 	['POST', /^\/api\/events$/],
 	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],

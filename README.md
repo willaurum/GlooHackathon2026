@@ -2,13 +2,13 @@
 
 Liberty University's Gloo Hackathon team repository.
 
-Tekton is the base church-site template for a future Agentic Website Builder. The Agentic Website Builder is not implemented yet, and this site has no public church registration. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
+Tekton builds church sites from a website, uploaded materials, saved JSON files or answers to questions. Open `#/new` to import, review, customize and preview a site, then create the church with an individual Owner account. **Grace Community Church** (fictional, `grace-community`) is the demo church with synthetic content, and it is what the site shows until someone picks another church. See [Churches](#churches) for how that works. Every church has these areas:
 
 - **Home**: service times, what's on this week, and links into every area.
 - **Guests**: *Plan your visit* (service times, what to expect, a parking and entrances map, and a "let us know you're coming" form) and the *Welcome team* screen greeters use on Sunday.
-- **Serve**: browse ministry teams, see where volunteers are needed, match a member to a team, and review requests from the website chat.
+- **Serve**: browse ministry teams, see where volunteers are needed, match a person to a team, and apply to join one (church staff review every application).
 - **Sermon Notes**: sermons are transcribed on Cloudflare and highlighted (Bible quotes, current events, stories), Bible references open the passage from YouVersion, and questions are answered only from the transcript, with timestamps.
-- **Calendar**: church events and services, with optional AI summaries.
+- **Calendar**: church events and services, with month, category and search filters.
 - **Give**: private giving to a church's funds and mission trips through Stripe Checkout, mission trip applications, and staff-managed Stripe setup.
 - **Prayer map**: the countries a church prays for, with dated updates from the field and real news.
 
@@ -65,7 +65,7 @@ is not implemented by these permission rules.
 
 | Path | What's in it |
 |---|---|
-| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/serve/saved`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/staff` (Church staff; shown in the nav only to signed-in staff), `#/prayer` (Prayer map), `#/about/news` (News), `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Older `#/give/staff`, `#/start` and `#/give/start` links open Church staff, `#/blog` and `#/about/blog` open News, and `#/prayer/map` opens the Prayer map. A section with sub-pages opens its first sub-page. |
+| `frontend/src/App.jsx` | Hash routing and the page shell. Routes: `#/`, `#/guests/plan`, `#/guests/welcome`, `#/serve`, `#/serve/find`, `#/notes`, `#/notes/<id>`, `#/calendar`, `#/give`, `#/give/trips`, `#/staff` (Church staff; shown in the nav only to signed-in staff), `#/prayer` (Prayer map), `#/about/news` (News), `#/setup` (Church setup) and `#/platform` (every church, for the platform team only; not in the navigation). Any route can be prefixed with a church, `#/c/<slug>/serve`; the older `#/give/c/<slug>` still works. Older `#/give/staff`, `#/start` and `#/give/start` links open Church staff, `#/blog` and `#/about/blog` open News, `#/prayer/map` opens the Prayer map, and `#/serve/saved` opens Serve. A section with sub-pages opens its first sub-page. |
 | `frontend/src/News.jsx` | News, which replaced the separate blog. Two kinds of post share one feed (`/api/blog`, table `blog_posts`): **updates**, short posts that point to a page on the site or another website and never get key takeaways, and **articles**, longer reads with AI key takeaways and an optional link. Staff write, delete and summarize posts; the demo church's updates are seeded from `backend/app/news_posts.json`. |
 | `frontend/src/church.js`, `ChurchContext.js` | Which church the site is showing (see [Churches](#churches)), shared links, and the staff session for this tab. Pages read the church with `useChurch()`. |
 | `frontend/src/ChurchName.jsx`, `ChurchLink.jsx`, `ChurchSetup.jsx`, `ChurchStates.jsx` | The church name in the desktop top bar and the phone top bar (with Staff sign in on phones), the church's own link with a Copy button, Church setup for staff, and the shared empty, staff-only, not-found and not-yet-deployed states. |
@@ -179,7 +179,7 @@ The first request for an existing church creates its tables. Only the demo churc
 | Routes | Demo church | Any other church |
 |---|---|---|
 | Info, church, ministries, events, matches, chat, guest sign-up and "I am here", viewing the prayer map, verse | public | public |
-| Welcome team queue, claim and met; saved connections; chat requests (read, review, delete); adding events and AI summaries | that church staff | that church staff |
+| Welcome team queue, claim and met; volunteer applications (read, review); care requests (read, review, delete); adding events and AI summaries | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
 | Staff accounts: `GET /api/churches/<slug>/admin/users` | that church staff | that church staff |
 | Add or remove staff: `POST /api/churches/<slug>/admin/users`, `DELETE /api/churches/<slug>/admin/users/<id>` | Owner only | Owner only |
@@ -270,7 +270,7 @@ node --test api/test/churches.test.mjs frontend/src/church.test.js
 node api/test/sitewide.e2e.mjs                        # both APIs running locally; see the comment at the top
 ```
 
-`api/test/sitewide.e2e.mjs` initializes two made-up churches through localhost-only internal fixtures and checks that public signup stays disabled, staff-only routes need that church session, one church cannot read or change another, and requests with no church still go to Grace Community. Run `api-giving/test/local-worker.mjs` from `api-giving/`, set `GIVING=http://127.0.0.1:8803` and `FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches`, and provide the church API at `API` with its `GIVING` binding connected to the adapter.
+`api/test/sitewide.e2e.mjs` checks public signup and required Owner details, then initializes two made-up churches through localhost-only internal fixtures and checks that staff-only routes need that church session, one church cannot read or change another, and requests with no church still go to Grace Community. Run `api-giving/test/local-worker.mjs` from `api-giving/`, set `GIVING=http://127.0.0.1:8803` and `FIXTURE_API=http://127.0.0.1:8803/__fixtures/churches`, and provide the church API at `API` with its `GIVING` binding connected to the adapter.
 
 ## Keys and access
 
@@ -328,21 +328,23 @@ Six fictional ministries, each with dated shifts, capacity, and onboarding requi
 
 - `GET /api/ministries`: departments, responsibilities, coverage, and sample contacts.
 - `POST /api/matches`: a `description` (optional, up to 4,000 characters) and optional structured `preferences`; returns up to three AI-recommended ministries with reasons, details to confirm, and database-sourced contacts. Empty answers return every team to browse.
-- `GET /api/connections`, `POST /api/connections`, `DELETE /api/connections/{connection_id}`: saved connections, deduplicated by ministry and member name.
-- `GET /api/requests`, `PATCH /api/requests/{request_id}`: requests filed by the chat; approving a connection request also saves the connection.
+- `POST /api/ministries/{id}/apply` (public): apply to serve on a team with only what it needs: name, email, optional phone, and a `message` of 250 to 1000 characters in their own words: who they are, what they'd like to do and why (422 otherwise). The applicant only gets back that it was received; a second open application from the same email to the same team is not filed twice. Rate limited (429): 5 per visitor in 10 minutes and 100 per church in an hour, counted in the container by `CF-Connecting-IP` (`backend/app/ratelimit.py`).
+- `GET /api/volunteers`, `PUT /api/volunteers/{id}` (staff): the applications, newest first, and a status (`new`, `accepted`, `waitlisted`, `declined`) and private note. Changing the status requires a note explaining it (400 otherwise), on trip applications too; that note becomes the staff note. Church staff → **Volunteers** shows them under **Serving teams**, next to **Mission trips** (the giving API's trip applications).
+- `GET /api/connections`, `POST /api/connections`, `DELETE /api/connections/{connection_id}`: legacy saved connections (the old Serve > Saved tab); the site no longer shows them.
+- `GET /api/requests`, `PATCH /api/requests/{request_id}`: care requests the chat passed to staff (pastoral care, prayer, crisis), shown in Church staff → **Care requests**. Team requests the chat filed before applications existed are moved to volunteer applications once.
 - `GET /api/info`: public church details (address, service times) for the home page.
 
-Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. On the demo church this is a shared demo workspace without login; on every other church, Saved (connections and chat requests) is for signed-in staff.
+Find a place filters shifts deterministically (`backend/app/eligibility.py`: availability, service, frequency, requirements, open capacity) before the AI sees the catalog, then uses the chat's configured provider (`backend/app/recommendations.py`). With no provider it returns 503; a provider failure or invalid AI response returns 502. It never substitutes rule-based recommendations. Coverage numbers are the totals of each ministry's shifts. On startup, shifts and requirements missing from existing database rows are backfilled from the seed without overwriting saved values. Sample contacts use example.com and no introductions are sent. Applications, like care requests, are for signed-in staff on every church, the demo church included.
 
 ### Website chat (Ask Tekton)
 
-The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file a connection request, or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
+The "Ask Tekton" chat (the Ask tab on phones, bottom-right button on desktop) talks to `POST /api/chat`, which runs a tool-calling loop against Gloo AI (`backend/app/chat.py`). The model can look up church info and FAQs, events, small groups, and ministries, file an application to a team (marked as from the chat; staff confirm its requirements when they reach out), or hand a conversation off to staff (pastoral care, prayer, crisis). Tool errors go back to the model so it can correct itself; the loop stops after 6 steps.
 
 - Set `GLOO_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) with `npx wrangler secret put` in `api/`; the Worker passes it into the container. Without a configured provider, the widget uses limited local demo replies for service times, events, groups, ministries, and requests, with a banner saying so. `GLOO_MODEL` defaults to `gloo-anthropic-claude-haiku-4.5`.
 - Synthetic church content lives in `backend/app/church.json` and is seeded into `church_content` on startup.
-- Nothing is sent to anyone automatically. Requests land in the `requests` table and appear under Serve > Saved; approving a connection request adds it to saved connections.
+- Nothing is sent to anyone automatically. Team applications appear in Church staff → Volunteers and care requests in Church staff → Care requests.
 - Every user message, tool call, and reply is written to `chat_log`. `GET /api/chat/log/{session_id}` returns one session for auditing (API key required).
-- The chat can suggest a page with a **Take me there** button: home, plan-visit, ministries, find-place, saved-connections, calendar, give, and prayer-map. A suggestion can also name a section to scroll to (home: service-times; plan-visit: service-times, what-to-expect, good-to-know, map, next-steps, sign-up), so "Where do I park?" lands on the parking card. The backend allowlists pages and sections (`SITE_PAGES` and `SITE_SECTIONS` in `chat.py`), and `frontend/src/chatNavigation.js` maps them to hash routes and element ids; the model cannot supply URLs or ids. To add a section, give the element an id and add it to both lists. For personalized serving suggestions, the chat points people to Find a place instead of ranking ministries itself.
+- The chat can suggest a page with a **Take me there** button: home, plan-visit, ministries, find-place, calendar, give, and prayer-map. A suggestion can also name a section to scroll to (home: service-times; plan-visit: service-times, what-to-expect, good-to-know, map, next-steps, sign-up), so "Where do I park?" lands on the parking card. The backend allowlists pages and sections (`SITE_PAGES` and `SITE_SECTIONS` in `chat.py`), and `frontend/src/chatNavigation.js` maps them to hash routes and element ids; the model cannot supply URLs or ids. To add a section, give the element an id and add it to both lists. For personalized serving suggestions, the chat points people to Find a place instead of ranking ministries itself.
 - Guardrails: the system prompt keeps the assistant to church and site topics and tells it to decline everything else, and obvious prompt-override attempts ("ignore previous instructions", "system prompt", "developer mode") get a fixed reply without calling the model. These reduce off-topic use; they are not a guarantee.
 - Replies may use **bold** and simple lists, rendered by `frontend/src/chatFormat.js` as React elements (never raw HTML).
 
@@ -636,7 +638,7 @@ Giving runs on its own Worker (`api-giving/`). Each church has its own SQLite Du
    - one customer portal configuration (found again by `metadata[belong_church]`), so donors can cancel a monthly gift themselves.
 
    Running setup again ("Re-run Stripe setup") reuses everything, so nothing is duplicated. It also adds any missing webhook events to an existing endpoint. A new fund or trip gets its own Product and Prices right away.
-3. **Mission trips**: staff create trips with dates, location, goal, team spots and an open/closed switch for applications. People apply (name, email, phone, message) or give toward a specific trip. Staff accept, waitlist or decline, and add private notes. The public page only shows "3 of 12 spots filled".
+3. **Mission trips**: staff create trips with dates, location, goal, team spots and an open/closed switch for applications. People apply (name, email, phone, and why they want to go in 100 to 1000 characters) or give toward a specific trip. Staff accept, waitlist or decline, and add private notes. The public page only shows "3 of 12 spots filled".
 4. **Staff area**: setup checklist, funds and trips, applications, a private gift list with CSV download, church details and password change.
 
 Staff sign in with their own email and password (stored hashed). Sign-in gives a 12-hour session token, stored only as a hash; attempts are rate limited per IP, and changing the password signs out other sessions. There is no password reset yet.
@@ -682,3 +684,10 @@ A world map of the countries a church prays for, with news headlines and dated u
 - `GET /api/regions` (each region carries its `updates`, newest first), `GET /api/news`. Updates live in the `field_updates` table; an older single `testimony` becomes the region's first update. Prayer points were removed. The demo church's news is the real headlines in `backend/app/news_live.json` when that snapshot exists, replaced on every backend start; the fictional `backend/app/news.json` is only the fallback.
 - `POST /api/news/refresh` (staff or API key): pulls live English stories for the region countries from NewsData.io (`NEWSDATA_API_KEY`), keeps each story's source link, and replaces that church's news. Answers 503 when `NEWSDATA_API_KEY` is not set.
 - To refresh the snapshot instead: `cd backend && python -m scripts.fetch_news` (needs `NEWSDATA_API_KEY`), then commit `backend/app/news_live.json`.
+
+## License
+
+Copyright (c) 2026 Isaac Smith, Ben Peterson, Will Cook, Jaron Wilson, Isaiah Mellace and Erik Ellis. **All rights reserved**; see [LICENSE](LICENSE). Licenses to use Tekton are available on request: ilsmith2@liberty.edu.
+
+- The build documentation in [build-docs/](build-docs/) is licensed under [CC BY 4.0](build-docs/LICENSE).
+- Third-party libraries, services and data keep their own licenses and terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
