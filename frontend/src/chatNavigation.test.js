@@ -39,3 +39,14 @@ test('sections scroll to an allowlisted element and unknown sections fall back t
   assert.equal(navigationPage({ tool: 'suggest_page', page: 'give', section: 'map' }), 'Give');
   assert.deepEqual(calls, [['guests/plan', 'visit-map'], ...Array(5).fill(['', undefined])]);
 });
+
+test('an imported page opens at its own route, and only a plain slug navigates', () => {
+  const navigated = [];
+  const action = { tool: 'suggest_page', page: 'imported', slug: 'our-story', title: 'Our Story' };
+  assert.equal(navigationPage(action), 'Our Story');
+  assert.equal(followSuggestion(action, route => navigated.push(route)), true);
+  assert.deepEqual(navigated, ['p/our-story']);
+  for (const slug of ['', '../setup', 'https://example.com', 'Our Story', undefined])
+    assert.equal(followSuggestion({ tool: 'suggest_page', page: 'imported', slug }, route => navigated.push(route)), false);
+  assert.deepEqual(navigated, ['p/our-story']);
+});

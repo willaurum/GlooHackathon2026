@@ -26,7 +26,12 @@ const sections = {
 const section = action => Object.hasOwn(sections, action.page) && Object.hasOwn(sections[action.page], action.section)
   ? sections[action.page][action.section] : null;
 
+// A page copied from the church's website opens at #/p/<slug>.
+const imported = action => action?.tool === 'suggest_page' && action.page === 'imported'
+  && /^[a-z0-9][a-z0-9-]{0,79}$/.test(action.slug || '');
+
 export function navigationPage(action) {
+  if (imported(action)) return String(action.title || 'Page');
   if (action?.tool !== 'suggest_page' || !Object.hasOwn(pages, action.page)) return null;
   const part = section(action);
   return pages[action.page][0] + (part ? ' · ' + part[0] : '');
@@ -34,6 +39,7 @@ export function navigationPage(action) {
 
 export function followSuggestion(action, onNavigate) {
   if (!navigationPage(action) || !onNavigate) return false;
+  if (imported(action)) { onNavigate('p/' + action.slug); return true; }
   onNavigate(pages[action.page][1], section(action)?.[1]);
   return true;
 }
