@@ -169,7 +169,7 @@ function Composer({ onClose, onPublished }) {
   const [title, setTitle] = useState(''), [content, setContent] = useState(''), [author, setAuthor] = useState('');
   const [categories, setCategories] = useState([]), [newCategory, setNewCategory] = useState('');
   const [linkPage, setLinkPage] = useState(''), [linkUrl, setLinkUrl] = useState(''), [linkLabel, setLinkLabel] = useState('');
-  const [summarize, setSummarize] = useState(true);
+  const [summarize, setSummarize] = useState(true), [suggested, setSuggested] = useState(false);
   const [busy, setBusy] = useState(''), [err, setErr] = useState('');
   const article = kind === 'article';
   const link = linkPage === 'web' ? linkUrl.trim() : linkPage;
@@ -185,6 +185,8 @@ function Composer({ onClose, onPublished }) {
     try {
       const res = await api('/blog/categorize', { method: 'POST', body: JSON.stringify({ title: title.trim(), content: content.trim() }) });
       (res?.categories || []).forEach(addCategory);
+      setSuggested(true);
+      return (res?.categories || []).length;
     } catch (e) { setErr(e.message || 'Could not suggest categories.'); }
     finally { setBusy(''); }
   }
@@ -192,11 +194,16 @@ function Composer({ onClose, onPublished }) {
   async function submit(e) {
     e.preventDefault();
     if (badWebLink) { setErr('A website link starts with http:// or https://.'); return; }
+    // Categories are the poster's call: with none chosen, suggest them first and let the poster review.
+    if (!categories.length && !suggested) {
+      const found = await suggest();
+      if (found) return;
+    }
     setErr(''); setBusy('publish');
     try {
       onPublished(await api('/blog', { method: 'POST', body: JSON.stringify({
         kind, title: title.trim(), content: content.trim(), author: author.trim() || 'Church Staff',
-        categories, auto_categorize: categories.length === 0, auto_summarize: article && summarize,
+        categories, auto_categorize: false, auto_summarize: article && summarize,
         link_url: link, link_label: link ? linkLabel.trim() : '',
       }) }));
     } catch (e2) { setErr(e2.message || 'Could not publish the post.'); setBusy(''); }
@@ -234,7 +241,8 @@ function Composer({ onClose, onPublished }) {
       <div className="field">
         <div className="news-cat-head">Categories<button type="button" className="link" disabled={busy === 'suggest' || !content.trim()} onClick={suggest}><Icon name="sparkle" size={14} />{busy === 'suggest' ? 'Suggesting…' : 'Suggest'}</button></div>
         <div className="news-cats">
-          {categories.length === 0 && <small>None yet. Leave this empty and categories are picked for you.</small>}
+          {categories.length === 0 && <small>None yet. When you publish, Tekton suggests some for you to review first.</small>}
+          {suggested && categories.length > 0 && <small className="news-cat-note" role="status">Tekton suggested these. Remove any that don&rsquo;t fit, then publish.</small>}
           {categories.map(c => <span key={c} className="badge">{c}<button type="button" aria-label={`Remove ${c}`} onClick={() => setCategories(cs => cs.filter(x => x !== c))}><Icon name="x" size={12} /></button></span>)}
         </div>
         <div className="news-cat-add">

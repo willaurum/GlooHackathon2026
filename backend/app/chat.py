@@ -112,7 +112,15 @@ SITE_SECTIONS = {
 SECTION_KEYS = sorted({key for sections in SITE_SECTIONS.values() for key in sections})
 
 
-def suggest_page(page, section=None):
+def suggest_page(page, section=None, slug=None, source=None):
+    if page == 'imported':
+        # A page copied from the church's old website, by the slug list_pages gave.
+        pages = (source.list_content('pages') if source is not None else db.list_content('pages')) or []
+        found = next((p for p in pages if p.get('slug') == slug), None)
+        if not found:
+            return {'error': 'Use the slug of a page from list_pages: ' + ', '.join(p.get('slug', '') for p in pages[:40])}
+        return {'page': 'imported', 'slug': found['slug'], 'title': found.get('title') or found['slug'],
+                'message': 'A page from the church website.'}
     if not isinstance(page, str) or page not in SITE_PAGES:
         return {'error': 'Choose an existing page: ' + ', '.join(SITE_PAGES)}
     title, description = SITE_PAGES[page]
@@ -127,7 +135,11 @@ def suggest_page(page, section=None):
 
 
 def collect_action(actions, tool, result):
-    if tool == 'suggest_page' and result.get('page') in SITE_PAGES:
+    if tool == 'suggest_page' and result.get('page') == 'imported' and result.get('slug'):
+        action = {'tool': tool, 'page': 'imported', 'slug': result['slug'], 'title': result['title']}
+        if action not in actions:
+            actions.append(action)
+    elif tool == 'suggest_page' and result.get('page') in SITE_PAGES:
         action = {'tool': tool, 'page': result['page'], 'title': SITE_PAGES[result['page']][0]}
         if result.get('section') in SITE_SECTIONS.get(result['page'], {}):
             action |= {'section': result['section'], 'section_title': SITE_SECTIONS[result['page']][result['section']]}
@@ -190,9 +202,10 @@ PAGES_NOTE = ("Copied from the church's old website and can be out of date. For 
 TOOLS = [
     {'type': 'function', 'function': {
         'name': 'suggest_page',
-        'description': 'Offer a clickable Take me there suggestion for an existing site page. Use find-place for personalized ministry recommendations, ministries for team browsing, plan-visit for first-time visitors, calendar for events, home for service times and the site overview, give for giving, prayer-map for missions prayer.',
+        'description': 'Offer a clickable Take me there suggestion for an existing site page. For a page copied from the church website (from list_pages), use page imported with its slug. Use find-place for personalized ministry recommendations, ministries for team browsing, plan-visit for first-time visitors, calendar for events, home for service times and the site overview, give for giving, prayer-map for missions prayer.',
         'parameters': {'type': 'object', 'properties': {
-            'page': {'type': 'string', 'enum': list(SITE_PAGES)},
+            'page': {'type': 'string', 'enum': [*SITE_PAGES, 'imported']},
+            'slug': {'type': 'string', 'description': 'With page imported: the slug of a page from list_pages.'},
             'section': {'type': 'string', 'enum': SECTION_KEYS, 'description': 'Optional part of the page to scroll to. Valid sections: ' + '; '.join(
                 f"{page}: {', '.join(sections)}" for page, sections in SITE_SECTIONS.items()) + '.'},
         }, 'required': ['page'], 'additionalProperties': False},
@@ -413,7 +426,7 @@ def call_tool(name, arguments, source=db):
         if isinstance(source, DraftContent) and name in ('request_connection', 'hand_off_to_staff'):
             return {'message': PREVIEW_REQUEST}
         if name == 'suggest_page':
-            return suggest_page(args.get('page'), args.get('section'))
+            return suggest_page(args.get('page'), args.get('section'), args.get('slug'), source)
         if name == 'get_church_info':
             return church_info(source)
         if name == 'list_events':
