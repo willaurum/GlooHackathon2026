@@ -61,7 +61,7 @@ function allowedOrigins(env: GivingEnv): string[] {
   return String(env.ALLOWED_ORIGIN).split(',').map((o) => o.trim()).filter(Boolean);
 }
 
-/** True for https://<base> and https://<one-label>.<base> when BASE_DOMAIN (e.g. belong.example.org) is set. */
+/** True for https://<base> and https://<one-label>.<base> when BASE_DOMAIN (e.g. tekton.example.org) is set. */
 function onBaseDomain(origin: string, base: string | undefined): boolean {
   const domain = String(base || '').trim().toLowerCase().replace(/^\.+|\.+$/g, '');
   if (!domain || !origin.startsWith('https://')) return false;

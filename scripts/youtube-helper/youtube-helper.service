@@ -1,7 +1,7 @@
 # systemd user unit for the YouTube helper. install.sh fills in @STATE@, @VENV@ and @NODE@
 # and writes it to ~/.config/systemd/user/youtube-helper.service.
 [Unit]
-Description=belong. YouTube helper (yt-dlp from a home connection for Sermon Notes)
+Description=Tekton YouTube helper (yt-dlp from a home connection for Sermon Notes)
 After=network-online.target
 
 [Service]

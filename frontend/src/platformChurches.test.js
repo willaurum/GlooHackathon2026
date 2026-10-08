@@ -24,5 +24,5 @@ test('search matches name, city or slug, any case, every word', () => {
 test('church links always name the church, the demo church too', () => {
   assert.equal(churchLink('grace-community'), '#/c/grace-community/');
   assert.equal(churchLink('hope-chapel', 'give'), '#/c/hope-chapel/give');
-  assert.equal(churchLink('hope-chapel', 'setup', { base: 'belong.example.org' }), 'https://hope-chapel.belong.example.org/#/setup');
+  assert.equal(churchLink('hope-chapel', 'setup', { base: 'tekton.example.org' }), 'https://hope-chapel.tekton.example.org/#/setup');
 });
