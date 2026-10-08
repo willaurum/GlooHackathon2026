@@ -573,13 +573,38 @@ def export_content():
             'calendar': list_events(), 'regions': list_regions()}
 
 
-def replace_content(content, also=()):
+# Every content write goes through replace_content under this lock, so a read-modify-write (the site editor's publish
+# and restore) never interleaves with another write in this process. Each write also bumps CONTENT_VERSION, which a
+# writer can require to be unchanged (`expect`), so a write from anywhere else in between is refused, not lost.
+content_lock = threading.RLock()
+CONTENT_VERSION = 'content_version'
+
+
+class ContentChanged(Exception):
+    """The content changed after the caller read it (replace_content `expect`); nothing was written."""
+
+
+def content_version():
+    return int(get_value(CONTENT_VERSION, 0) or 0)
+
+
+def replace_content(content, also=(), expect=None):
     """Replace the sections present in `content` (info, faqs, events, groups, staff, locations, sermons, ministries,
     calendar, regions)
     in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
     A ministry that saved connections or requests still point at is kept, so they stay readable.
-    `also` are more statements to run in the same transaction (the site editor's bookkeeping)."""
+    `also` are more statements to run in the same transaction (the site editor's bookkeeping). With `expect` (a
+    content_version() read earlier) the transaction first checks the version is still that, else ContentChanged."""
+    with content_lock:
+        return _replace_content(content, also, expect)
+
+
+def _replace_content(content, also, expect):
     statements = []
+    if expect is not None:
+        # A malformed json() call fails the whole batch, so nothing below is written when the version moved on.
+        statements.append(("SELECT CASE WHEN COALESCE((SELECT data FROM config WHERE key = ?), '0') = ? THEN 1 "
+                           "ELSE json('content changed') END", (CONTENT_VERSION, str(int(expect)))))
     if 'info' in content:
         statements += [
             ("INSERT INTO church_content VALUES ('info', 0, ?) ON CONFLICT (kind, id) DO UPDATE SET data = excluded.data",
@@ -617,8 +642,14 @@ def replace_content(content, also=()):
                             (u.get('id'), region['id'], u['date'], u['title'], u['body'], u['author']))
                            for u in region['updates']]
     statements += list(also)
-    if statements:
+    statements.append(("INSERT INTO config VALUES (?, '1') ON CONFLICT (key) DO UPDATE SET "
+                       "data = CAST(CAST(data AS INTEGER) + 1 AS TEXT)", (CONTENT_VERSION,)))
+    try:
         run(*statements)
+    except Exception:
+        if expect is not None and content_version() != int(expect):
+            raise ContentChanged() from None
+        raise
     return export_content()
 
 

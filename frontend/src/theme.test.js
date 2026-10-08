@@ -30,3 +30,21 @@ test('fonts load from one stylesheet; apply and undo', () => {
   assert.equal(props.get('--green-700'), '#2b6248');
   assert.equal(props.has('--green-50'), false);
 });
+
+test('background, text and button colors reach what the page draws with', () => {
+  const vars = themeVariables({ background: '#FDF3E1', text: '#1a2b4c', accent: '#99823d' });
+  // The page, and the Home hero over it, follow the background.
+  assert.equal(vars['--bg'], '#fdf3e1');
+  assert.equal(vars['--hero-from'], mix('#fdf3e1', '#2b6248', 0.06));
+  assert.equal(vars['--hero-to'], mix('#fdf3e1', '#2b6248', 0.12));
+  // Body text, headings and the softer text follow the text color.
+  assert.equal(vars['--text'], '#1a2b4c');
+  assert.equal(vars['--ink'], '#1a2b4c');
+  assert.equal(vars['--muted'], mix('#1a2b4c', '#fdf3e1', 0.2));
+  assert.equal(vars['--hero-text'], mix('#1a2b4c', '#fdf3e1', 0.12));
+  // The Button color fills the site's buttons.
+  assert.equal(vars['--button'], '#99823d');
+  assert.equal(vars['--button-hover'], mix('#99823d', '#000000', 0.15));
+  // A church with no background keeps the template's hero.
+  assert.equal(themeVariables({ primary: '#1f4e5f' })['--hero-from'], undefined);
+});

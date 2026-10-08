@@ -1,8 +1,8 @@
 import { Container, ContainerProxy, getContainer } from '@cloudflare/containers';
 import { DurableObject } from 'cloudflare:workers';
 import { handleVerse, handleVersions } from './verse';
-import { aiBridge, authorize, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
-import { DEMO_SLUG, STAFF_SESSION_INVALID, access, bodyLimit, churchHeaders, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
+import { aiBridge, authorize, cappedBody, churchDb, handleNotes, json, mediaBridge, notesBusy, tooLarge, type AppEnv } from './notes';
+import { DEMO_SLUG, STAFF_SESSION_INVALID, access, bodyLimit, churchHeaders, countsBody, churchPath, findChurch, isStaff, requireStaff, sentStaffToken, onBaseDomain, validSlug } from './churches';
 import { TEAM_AI_HOST, teamAiBridge, teamAiEnvVars } from './teamai';
 import { YT_HELPER_HOST, ytHelperBridge, ytHelperEnvVars } from './ythelper';
 import { BUILDER_FETCH_HOST, builderFetchBridge, builderFetchEnvVars } from './builderfetch';
@@ -199,7 +199,16 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 	const plain = new URL(url);
 	plain.pathname = path;
 	// A redirect from the container goes back to the browser, so its next request is authorized again here.
-	const forwarded = new Request(plain, { method: request.method, headers: churchHeaders(request.headers, church), body: request.body, redirect: 'manual' });
+	const headers = churchHeaders(request.headers, church);
+	let body: ReadableStream | Uint8Array | null = request.body;
+	if (countsBody(path)) {
+		// Counted as it arrives, so a body without a Content-Length cannot go over the limit either.
+		const read = await cappedBody(request, bodyLimit(request.method, path));
+		if (read instanceof Response) return read;
+		body = read;
+		headers.delete('Content-Length');
+	}
+	const forwarded = new Request(plain, { method: request.method, headers, body, redirect: 'manual' });
 	if (!church.demo && request.method === 'POST' && STARTS_NOTE.test(path)) {
 		await churchDb(env).rememberNotesChurch(church.slug).catch(() => {});
 	}
