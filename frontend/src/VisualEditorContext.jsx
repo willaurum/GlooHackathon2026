@@ -176,6 +176,16 @@ export function VisualEditorProvider({ children }) {
     recordChange(next);
   }
 
+  // Feature cards subtext (serve, notes, give)
+  function updateSiteFeatureText(key, text) {
+    if (!content) return;
+    const next = structuredClone(content);
+    next.site = next.site || {};
+    next.site.feature_text = next.site.feature_text || {};
+    next.site.feature_text[key] = text;
+    recordChange(next);
+  }
+
   // Staff updates
   function updateStaffMember(index, patch) {
     if (!content) return;
@@ -284,6 +294,14 @@ export function VisualEditorProvider({ children }) {
     if (JSON.stringify(origPages) !== JSON.stringify(currPages)) {
       list.push({ field: 'Page Content', from: 'Original Pages', to: 'Edited Pages' });
     }
+    // Check feature card subtext changes (serve, notes, give)
+    const origFeatures = originalContent.site?.feature_text || {};
+    const currFeatures = content.site?.feature_text || {};
+    for (const [key, val] of Object.entries(currFeatures)) {
+      if (origFeatures[key] !== val) {
+        list.push({ field: `${key.charAt(0).toUpperCase() + key.slice(1)} Section Text`, from: origFeatures[key] || '(default)', to: val });
+      }
+    }
     return list;
   }, [content, originalContent]);
 
@@ -317,6 +335,7 @@ export function VisualEditorProvider({ children }) {
     reorderHomeSections,
     toggleSectionVisibility,
     togglePageVisibility,
+    updateSiteFeatureText,
     updateStaffMember,
     addStaffMember,
     removeStaffMember,

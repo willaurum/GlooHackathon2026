@@ -50,7 +50,8 @@ export default function Home({ go, onAsk }) {
   }, []);
 
   const effectiveInfo = editor?.content?.info || info;
-  const currentLayout = editor?.content?.site?.layout || church.site?.layout;
+  const effectiveSite = editor?.content?.site || church.site;
+  const currentLayout = effectiveSite?.layout;
   const isEditing = editor?.isEditing && !editor?.isPreviewing;
 
   const live = livestreamLink(church.site);
@@ -143,25 +144,55 @@ export default function Home({ go, onAsk }) {
       )}
       {{
       features: <div className={`features ${isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}`}>
-        {!pageHidden(church.site, 'serve') && <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
+        {!pageHidden(church.site, 'serve') && <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); if (!isEditing) go('serve'); }}>
           <span className="icon color1"><Icon name="users" size={22} /></span>
           <h2>Serve</h2>
-          <p>Browse ministry teams, see where help is needed, and match members to a place that fits.</p>
+          {isEditing ? (
+            <EditableText
+              value={effectiveInfo?.feature_text?.serve || effectiveSite?.feature_text?.serve || ''}
+              placeholder="Browse ministry teams, see where help is needed, and match members to a place that fits."
+              onChange={val => editor?.updateSiteFeatureText('serve', val)}
+              tag="p"
+              multiline
+            />
+          ) : (
+            <p>{effectiveInfo?.feature_text?.serve || effectiveSite?.feature_text?.serve || 'Browse ministry teams, see where help is needed, and match members to a place that fits.'}</p>
+          )}
           <span className="link">Explore ministries<Icon name="arrow" size={16} /></span>
         </a>}
-        {!pageHidden(church.site, 'notes') && <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); go('notes'); }}>
+        {!pageHidden(church.site, 'notes') && <a className="card feature" href={hashFor(church.slug, 'notes')} onClick={e => { e.preventDefault(); if (!isEditing) go('notes'); }}>
           <span className="icon color3"><Icon name="book" size={22} /></span>
           <h2>Sermon Notes</h2>
-          <p>Read past sermons and ask questions. Answers quote the message with timestamps.</p>
+          {isEditing ? (
+            <EditableText
+              value={effectiveInfo?.feature_text?.notes || effectiveSite?.feature_text?.notes || ''}
+              placeholder="Read past sermons and ask questions. Answers quote the message with timestamps."
+              onChange={val => editor?.updateSiteFeatureText('notes', val)}
+              tag="p"
+              multiline
+            />
+          ) : (
+            <p>{effectiveInfo?.feature_text?.notes || effectiveSite?.feature_text?.notes || 'Read past sermons and ask questions. Answers quote the message with timestamps.'}</p>
+          )}
           <span className="link">Open sermon notes<Icon name="arrow" size={16} /></span>
         </a>}
-        {!pageHidden(church.site, 'give') && <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); go('give'); }}>
+        {!pageHidden(church.site, 'give') && <a className="card feature" href={hashFor(church.slug, 'give')} onClick={e => { e.preventDefault(); if (!isEditing) go('give'); }}>
           <span className="icon color0"><Icon name="heart" size={22} /></span>
           <h2>Give</h2>
           {goal ? <>
             <p>{goal.name}: <b>{fmt(goal.raised, giving.currency)}</b> of {fmt(goal.goal, giving.currency)}</p>
             <div className="progress" aria-hidden="true"><span style={{ width: percent(goal.raised, goal.goal) + '%' }} /></div>
-          </> : <p>Support the mission with a gift, in a couple of taps.</p>}
+          </> : isEditing ? (
+            <EditableText
+              value={effectiveInfo?.feature_text?.give || effectiveSite?.feature_text?.give || ''}
+              placeholder="Support the mission with a gift, in a couple of taps."
+              onChange={val => editor?.updateSiteFeatureText('give', val)}
+              tag="p"
+              multiline
+            />
+          ) : (
+            <p>{effectiveInfo?.feature_text?.give || effectiveSite?.feature_text?.give || 'Support the mission with a gift, in a couple of taps.'}</p>
+          )}
           <span className="link">Give online<Icon name="arrow" size={16} /></span>
         </a>}
       </div>,

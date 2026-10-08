@@ -5,6 +5,7 @@ import Icon from './Icon.jsx';
 
 const SUGGESTIONS = [
   'We had Pastor Bob leave, change the pastor name to Pastor John',
+  'Can you please change the serve section to say "serve with your community" instead of the current sub-text',
   'Hey that header doesn\'t look the right size, make it smaller',
   'Change the section at the bottom of the home page to ministries',
   'Make the main color navy and buttons gold',
@@ -170,7 +171,10 @@ export default function EditAssistant({ viewing = '', onClose }) {
             value={prompt}
             disabled={busy}
             placeholder="e.g. Change the pastor name to Pastor John Davis"
-            onChange={e => setPrompt(e.target.value)}
+            onChange={e => {
+              setPrompt(e.target.value);
+              if (error) setError('');
+            }}
           />
           <button
             type="submit"
