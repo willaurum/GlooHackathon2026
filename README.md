@@ -206,7 +206,7 @@ The full list, the optional model variables, and who keeps copies of each key ar
 | [docs/features.md](docs/features.md) | Guests, Serve, Ask Tekton and which AI does what, Sermon Notes, Give, Calendar, Prayer map, News, with their routes |
 | [docs/local-development.md](docs/local-development.md) | Running locally, Ollama, the HPC tunnel, the team AI bridge |
 | [docs/Agent-Build-Doc.md](docs/Agent-Build-Doc.md) | Draft outline of the agent build doc |
-| [docs/qa/](docs/qa/) | Builder QA cases and a website review |
+| [docs/qa/](docs/qa/) | Every test case and result from the team's Drive: the 44 builder cases and the 180-case platform suite, plus a website review |
 | [build-docs/](build-docs/) | The published build doc: [evaluation](build-docs/evaluation.md), [references](build-docs/references.md), [session logs](build-docs/session-logs/) |
 | [PREVIEWS.md](PREVIEWS.md) | How branch and PR previews work |
 | [test/synthetic-sites/README.md](test/synthetic-sites/README.md) | The made-up church websites |
