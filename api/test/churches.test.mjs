@@ -127,13 +127,13 @@ test('the container gets the church from the Worker, never from the browser', ()
 });
 
 test('church subdomains of BASE_DOMAIN are allowed origins', () => {
-  assert.equal(onBaseDomain('https://grace.belong.example.org', 'belong.example.org'), true);
-  assert.equal(onBaseDomain('https://belong.example.org', 'belong.example.org'), true);
-  assert.equal(onBaseDomain('http://grace.belong.example.org', 'belong.example.org'), false);
-  assert.equal(onBaseDomain('https://a.b.belong.example.org', 'belong.example.org'), false);
-  assert.equal(onBaseDomain('https://evilbelong.example.org', 'belong.example.org'), false);
-  assert.equal(onBaseDomain('https://grace.belong.example.org.evil.test', 'belong.example.org'), false);
-  assert.equal(onBaseDomain('https://grace.belong.example.org', ''), false);
+  assert.equal(onBaseDomain('https://grace.tekton.example.org', 'tekton.example.org'), true);
+  assert.equal(onBaseDomain('https://tekton.example.org', 'tekton.example.org'), true);
+  assert.equal(onBaseDomain('http://grace.tekton.example.org', 'tekton.example.org'), false);
+  assert.equal(onBaseDomain('https://a.b.tekton.example.org', 'tekton.example.org'), false);
+  assert.equal(onBaseDomain('https://eviltekton.example.org', 'tekton.example.org'), false);
+  assert.equal(onBaseDomain('https://grace.tekton.example.org.evil.test', 'tekton.example.org'), false);
+  assert.equal(onBaseDomain('https://grace.tekton.example.org', ''), false);
 });
 
 
