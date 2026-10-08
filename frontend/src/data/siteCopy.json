@@ -1,0 +1,415 @@
+{
+  "home.serve_title": {
+    "page": "",
+    "label": "Home: Serve card heading",
+    "default": "Serve",
+    "max": 60
+  },
+  "home.serve_text": {
+    "page": "",
+    "label": "Home: Serve card text",
+    "default": "Browse ministry teams, see where help is needed, and match members to a place that fits.",
+    "max": 300
+  },
+  "home.notes_title": {
+    "page": "",
+    "label": "Home: Sermon Notes card heading",
+    "default": "Sermon Notes",
+    "max": 60
+  },
+  "home.notes_text": {
+    "page": "",
+    "label": "Home: Sermon Notes card text",
+    "default": "Read past sermons and ask questions. Answers quote the message with timestamps.",
+    "max": 300
+  },
+  "home.give_title": {
+    "page": "",
+    "label": "Home: Give card heading",
+    "default": "Give",
+    "max": 60
+  },
+  "home.give_text": {
+    "page": "",
+    "label": "Home: Give card text",
+    "default": "Support the mission with a gift, in a couple of taps.",
+    "max": 300
+  },
+  "home.about_eyebrow": {
+    "page": "",
+    "label": "Home: \"Get to know us\" label",
+    "default": "Get to know us",
+    "max": 60
+  },
+  "home.ministries_eyebrow": {
+    "page": "",
+    "label": "Home: Ministries label",
+    "default": "Get involved",
+    "max": 60
+  },
+  "home.ministries_title": {
+    "page": "",
+    "label": "Home: Ministries heading",
+    "default": "Ministries",
+    "max": 120
+  },
+  "home.sermons_eyebrow": {
+    "page": "",
+    "label": "Home: Recent sermons label",
+    "default": "Watch & listen",
+    "max": 60
+  },
+  "home.sermons_title": {
+    "page": "",
+    "label": "Home: Recent sermons heading",
+    "default": "Recent sermons",
+    "max": 120
+  },
+  "home.services_eyebrow": {
+    "page": "",
+    "label": "Home: Service times label",
+    "default": "Join us",
+    "max": 60
+  },
+  "home.services_title": {
+    "page": "",
+    "label": "Home: Service times heading",
+    "default": "Service times",
+    "max": 120
+  },
+  "home.leaders_eyebrow": {
+    "page": "",
+    "label": "Home: bottom section label",
+    "default": "For church leaders",
+    "max": 60
+  },
+  "home.leaders_title": {
+    "page": "",
+    "label": "Home: bottom section heading",
+    "default": "A big church can still feel personal.",
+    "max": 160
+  },
+  "home.leaders_text": {
+    "page": "",
+    "label": "Home: bottom section text",
+    "default": "Tekton helps leaders turn a desire to serve into a real connection: see which teams need people, meet a member where they are, and hand off to the right ministry lead.",
+    "max": 600,
+    "multiline": true
+  },
+  "home.leaders_step1_title": {
+    "page": "",
+    "label": "Home: bottom section, step 1 heading",
+    "default": "See the need",
+    "max": 80
+  },
+  "home.leaders_step1_text": {
+    "page": "",
+    "label": "Home: bottom section, step 1 text",
+    "default": "A shared view of volunteer coverage and what each team does.",
+    "max": 300
+  },
+  "home.leaders_step2_title": {
+    "page": "",
+    "label": "Home: bottom section, step 2 heading",
+    "default": "Know the person",
+    "max": 80
+  },
+  "home.leaders_step2_text": {
+    "page": "",
+    "label": "Home: bottom section, step 2 text",
+    "default": "Start with their gifts, interests and time.",
+    "max": 300
+  },
+  "home.leaders_step3_title": {
+    "page": "",
+    "label": "Home: bottom section, step 3 heading",
+    "default": "Connect with care",
+    "max": 80
+  },
+  "home.leaders_step3_text": {
+    "page": "",
+    "label": "Home: bottom section, step 3 text",
+    "default": "The assistant suggests possibilities. People lead the relationship.",
+    "max": 300
+  },
+  "visit.services_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Service times label",
+    "default": "SERVICE TIMES",
+    "max": 60
+  },
+  "visit.services_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Service times heading",
+    "default": "Join us this week",
+    "max": 160
+  },
+  "visit.expect_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: What to expect label",
+    "default": "WHAT TO EXPECT",
+    "max": 60
+  },
+  "visit.expect_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: What to expect heading",
+    "default": "Before you arrive",
+    "max": 160
+  },
+  "visit.map_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Where we meet label",
+    "default": "FIND YOUR WAY",
+    "max": 60
+  },
+  "visit.map_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Where we meet heading",
+    "default": "Where we meet",
+    "max": 160
+  },
+  "visit.locations_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Campuses label",
+    "default": "OUR CAMPUSES",
+    "max": 60
+  },
+  "visit.locations_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Campuses heading",
+    "default": "Places we meet",
+    "max": 160
+  },
+  "visit.faqs_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Questions people ask label",
+    "default": "GOOD TO KNOW",
+    "max": 60
+  },
+  "visit.faqs_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Questions people ask heading",
+    "default": "Questions people ask",
+    "max": 160
+  },
+  "visit.next_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: A good place to start label",
+    "default": "YOUR NEXT STEP",
+    "max": 60
+  },
+  "visit.next_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: A good place to start heading",
+    "default": "A good place to start",
+    "max": 160
+  },
+  "visit.signup_eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Plan your visit form label",
+    "default": "LET US KNOW YOU'RE COMING",
+    "max": 60
+  },
+  "visit.signup_title": {
+    "page": "guests/plan",
+    "label": "Plan your visit: Plan your visit form heading",
+    "default": "Plan your visit",
+    "max": 160
+  },
+  "header.about.eyebrow": {
+    "page": "about",
+    "label": "Our story page: label",
+    "default": "About",
+    "max": 60
+  },
+  "header.about.title": {
+    "page": "about",
+    "label": "Our story page: heading",
+    "default": "Who we are.",
+    "max": 160
+  },
+  "header.about.text": {
+    "page": "about",
+    "label": "Our story page: introduction",
+    "default": "The story, the people and the heart behind {name}.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.about_beliefs.eyebrow": {
+    "page": "about/beliefs",
+    "label": "What we believe page: label",
+    "default": "About",
+    "max": 60
+  },
+  "header.about_beliefs.title": {
+    "page": "about/beliefs",
+    "label": "What we believe page: heading",
+    "default": "What we believe.",
+    "max": 160
+  },
+  "header.about_beliefs.text": {
+    "page": "about/beliefs",
+    "label": "What we believe page: introduction",
+    "default": "The convictions that shape our teaching and our life together.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.about_news.eyebrow": {
+    "page": "about/news",
+    "label": "News page: label",
+    "default": "News",
+    "max": 60
+  },
+  "header.about_news.title": {
+    "page": "about/news",
+    "label": "News page: heading",
+    "default": "What’s happening.",
+    "max": 160
+  },
+  "header.about_news.text": {
+    "page": "about/news",
+    "label": "News page: introduction",
+    "default": "Quick updates on what’s coming up, and longer articles from our pastors and ministry leaders.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.about_directory.eyebrow": {
+    "page": "about/directory",
+    "label": "Directory page: label",
+    "default": "About",
+    "max": 60
+  },
+  "header.about_directory.title": {
+    "page": "about/directory",
+    "label": "Directory page: heading",
+    "default": "Who to contact.",
+    "max": 160
+  },
+  "header.about_directory.text": {
+    "page": "about/directory",
+    "label": "Directory page: introduction",
+    "default": "Pastors, staff and ministry leaders, and how to reach them.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.about_connect.eyebrow": {
+    "page": "about/connect",
+    "label": "Connect page: label",
+    "default": "Connect",
+    "max": 60
+  },
+  "header.about_connect.title": {
+    "page": "about/connect",
+    "label": "Connect page: heading",
+    "default": "Let’s get you connected.",
+    "max": 160
+  },
+  "header.about_connect.text": {
+    "page": "about/connect",
+    "label": "Connect page: introduction",
+    "default": "Whether you are new, curious or ready to jump in, here are a few ways to take the next step.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.notes.eyebrow": {
+    "page": "notes",
+    "label": "Sermon Notes page: label",
+    "default": "Sermon Notes",
+    "max": 60
+  },
+  "header.notes.title": {
+    "page": "notes",
+    "label": "Sermon Notes page: heading",
+    "default": "Sermons you can ask.",
+    "max": 160
+  },
+  "header.notes.text": {
+    "page": "notes",
+    "label": "Sermon Notes page: introduction",
+    "default": "Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.calendar.eyebrow": {
+    "page": "calendar",
+    "label": "Calendar page: label",
+    "default": "Calendar",
+    "max": 60
+  },
+  "header.calendar.title": {
+    "page": "calendar",
+    "label": "Calendar page: heading",
+    "default": "Church Life & Gatherings.",
+    "max": 160
+  },
+  "header.calendar.text": {
+    "page": "calendar",
+    "label": "Calendar page: introduction",
+    "default": "Explore upcoming gatherings, services, and outreach.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.guests_plan.eyebrow": {
+    "page": "guests/plan",
+    "label": "Plan your visit page: label",
+    "default": "Guests",
+    "max": 60
+  },
+  "header.guests_plan.title": {
+    "page": "guests/plan",
+    "label": "Plan your visit page: heading",
+    "default": "Plan your visit.",
+    "max": 160
+  },
+  "header.guests_plan.text": {
+    "page": "guests/plan",
+    "label": "Plan your visit page: introduction",
+    "default": "Everything a first-time guest needs, and a way to let us know they’re coming.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.guests_welcome.eyebrow": {
+    "page": "guests/welcome",
+    "label": "Welcome team page: label",
+    "default": "Guests",
+    "max": 60
+  },
+  "header.guests_welcome.title": {
+    "page": "guests/welcome",
+    "label": "Welcome team page: heading",
+    "default": "Welcome team.",
+    "max": 160
+  },
+  "header.guests_welcome.text": {
+    "page": "guests/welcome",
+    "label": "Welcome team page: introduction",
+    "default": "See who has arrived and get them to the right person.",
+    "max": 400,
+    "multiline": true
+  },
+  "header.prayer.eyebrow": {
+    "page": "prayer",
+    "label": "Prayer map page: label",
+    "default": "Prayer map",
+    "max": 60
+  },
+  "header.prayer.title": {
+    "page": "prayer",
+    "label": "Prayer map page: heading",
+    "default": "Sharp facts. Soft people.",
+    "max": 160
+  },
+  "header.prayer.text": {
+    "page": "prayer",
+    "label": "Prayer map page: introduction",
+    "default": "Real news gets a real pin. People in sensitive places never do.",
+    "max": 400,
+    "multiline": true
+  },
+  "footer.tagline": {
+    "page": "*",
+    "label": "Footer: line after the church name",
+    "default": "Helping people find their people.",
+    "max": 160
+  }
+}

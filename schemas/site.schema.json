@@ -317,6 +317,21 @@
           "title": "Assets",
           "type": "array"
         },
+        "copy": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Copy"
+        },
         "forms": {
           "items": {
             "$ref": "#/$defs/SiteForm"
@@ -361,6 +376,21 @@
           "pattern": "^(https?://[^\\s<>\"]{1,490})?$",
           "title": "Source Url",
           "type": "string"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style"
         },
         "theme": {
           "$ref": "#/$defs/Theme"

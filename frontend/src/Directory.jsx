@@ -4,14 +4,16 @@ import { useChurch } from './ChurchContext.js';
 import Icon from './Icon.jsx';
 import STAFF from './data/staff.json';
 import Sourced from './Sourced.jsx';
+import { Editable, SetupFact } from './Editable.jsx';
 
 const telHref = phone => 'tel:' + (phone || '').replace(/[^\d+]/g, '');
 
-function Person({ name, role, email, note, sourced = false }) {
+// `path` (staff.<id>) lets staff change a person's name, role and about text in the site editor.
+function Person({ name, role, email, note, sourced = false, path = null }) {
   return <article className="card person">
-    <h3>{sourced ? <Sourced list="staff" name={name}>{name}</Sourced> : name}</h3>
-    <div className="person-role">{role}</div>
-    {note && <p>{note}</p>}
+    <Editable as="h3" path={path && path + '.name'}>{sourced ? <Sourced list="staff" name={name}>{name}</Sourced> : name}</Editable>
+    <Editable as="div" className="person-role" path={path && path + '.role'}>{role}</Editable>
+    {note && <Editable as="p" path={path && path + '.bio'}>{note}</Editable>}
     {email && <a className="link" href={'mailto:' + email}><Icon name="mail" size={16} />{email}</a>}
   </article>;
 }
@@ -36,13 +38,13 @@ export default function Directory() {
   return <div className="directory">
     {info && <section className="card about-block">
       <div className="eyebrow">Church office</div>
-      <h2>{info.name}</h2>
-      <div className="office">
+      <SetupFact as="h2">{info.name}</SetupFact>
+      <SetupFact as="div" className="office">
         {info.phone && <a className="link" href={telHref(info.phone)}><Icon name="phone" size={16} />{info.phone}</a>}
         {info.email && <a className="link" href={'mailto:' + info.email}><Icon name="mail" size={16} />{info.email}</a>}
         {info.address && <span className="link"><Icon name="pin" size={16} />{info.address}</span>}
         {info.office_hours && <span className="link"><Icon name="clock" size={16} />{info.office_hours}</span>}
-      </div>
+      </SetupFact>
     </section>}
 
     {((people || []).length > 0 || ministries.some(m => m.head)) && <label className="field dir-search">Search the directory
@@ -52,12 +54,12 @@ export default function Directory() {
 
     {staff.length > 0 && <section>
       <div className="eyebrow">Pastors &amp; staff</div>
-      <div className="people">{staff.map(s => <Person key={s.name} {...s} sourced />)}</div>
+      <div className="people">{staff.map(s => <Person key={s.name} {...s} sourced path={people !== STAFF && s.id != null ? 'staff.' + s.id : null} />)}</div>
     </section>}
 
     {leads.length > 0 && <section>
       <div className="eyebrow">Ministry leaders</div>
-      <div className="people">{leads.map(m => <Person key={m.id} name={m.head} role={'Leads ' + m.name} email={m.email} note={m.description} />)}</div>
+      <div className="people">{leads.map(m => <SetupFact block key={m.id}><Person name={m.head} role={'Leads ' + m.name} email={m.email} note={m.description} /></SetupFact>)}</div>
     </section>}
 
     {staff.length === 0 && leads.length === 0 && !error && people && <p className="muted">{needle ? <>No one matches “{q}”. Try a ministry name or a first name.</> : 'No staff are listed yet. The church office can point you to the right person.'}</p>}
