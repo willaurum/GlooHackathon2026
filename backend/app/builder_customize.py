@@ -165,6 +165,12 @@ def _remove_item(content, op):
         item = _find(content.get(name) or [], op.get('name'))
         if item:
             content[name].remove(item)
+            if name in ('events', 'calendar'):
+                # An event can appear both as a highlight and as dated calendar entries.
+                title = ' '.join(_name(item).lower().split())
+                for linked in ('events', 'calendar'):
+                    content[linked] = [entry for entry in content.get(linked, [])
+                                       if ' '.join(_name(entry).lower().split()) != title]
             op['list'] = name
             return
     raise Refused(f'Tekton could not find “{op.get("name")}” on your site.')
