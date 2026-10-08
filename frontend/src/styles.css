@@ -61,8 +61,8 @@ button:disabled { cursor: default; opacity: .55; }
 a { color: var(--green-700); }
 h1, h2, h3, p { margin: 0; }
 h1, h2, h3 { font-family: var(--display); color: var(--ink); letter-spacing: -.02em; }
-h1 { font-size: clamp(28px, 4vw, 38px); font-weight: 800; line-height: 1.15; }
-h2 { font-size: 20px; font-weight: 700; line-height: 1.3; }
+h1 { font-size: calc(clamp(28px, 4vw, 38px) * var(--heading-scale, 1)); font-weight: 800; line-height: 1.15; }
+h2 { font-size: calc(20px * var(--heading-scale, 1)); font-weight: 700; line-height: 1.3; }
 h3 { font-size: 17px; font-weight: 700; line-height: 1.35; }
 p { line-height: 1.65; color: var(--muted); }
 small { color: var(--faint); font-size: 13px; }
@@ -230,7 +230,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 /* ---------- Home ---------- */
 .home-hero { position: relative; overflow: hidden; padding: 48px 44px; border-radius: var(--r-xl); background: linear-gradient(135deg, #edf2e6 0%, #e3ecdf 100%); border: 1px solid #dbe5d3; }
 .home-hero > *:not(.hero-art) { position: relative; z-index: 1; max-width: 560px; }
-.home-hero h1 { font-size: clamp(32px, 5vw, 48px); color: var(--green-900); }
+.home-hero h1 { font-size: calc(clamp(32px, 5vw, 48px) * var(--hero-scale, 1)); color: var(--green-900); }
 .home-hero p { font-size: 17px; margin: 14px 0 24px; color: #56695e; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .hero-art { position: absolute; right: 6%; top: 50%; transform: translateY(-50%); width: 300px; height: 300px; display: grid; place-items: center; color: #7d9a67; }
@@ -254,7 +254,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .service p { font-size: 14px; margin-top: 6px; line-height: 1.55; }
 .leaders { display: grid; grid-template-columns: 1fr 1.2fr; gap: 32px; align-items: start; margin-top: 20px; padding: 32px; border-radius: var(--r-xl); background: var(--green-800); }
 .leaders .eyebrow { color: var(--sage); }
-.leaders h2 { color: #fff; font-size: 24px; }
+.leaders h2 { color: #fff; font-size: calc(24px * var(--heading-scale, 1)); }
 .leaders p { color: #c3d4c7; margin-top: 10px; }
 .steps { display: grid; gap: 12px; }
 .steps li { display: grid; grid-template-columns: 40px 1fr; column-gap: 12px; padding: 14px 16px; border-radius: var(--r); background: rgb(255 255 255 / .07); }
@@ -1378,8 +1378,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 /* The church's own website, recreated by the site builder (#/p/<slug>) */
 .site-page { max-width: 760px; }
 .site-section { margin-bottom: 28px; overflow-wrap: anywhere; }
-.site-section h2 { font-size: 22px; margin-bottom: 10px; }
-.site-section h3 { font-size: 18px; margin-bottom: 8px; }
+.site-section h2 { font-size: calc(22px * var(--heading-scale, 1)); margin-bottom: 10px; }
+.site-section h3 { font-size: calc(18px * var(--heading-scale, 1)); margin-bottom: 8px; }
 .site-section p { margin: 0 0 10px; line-height: 1.6; }
 .site-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .site-actions a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
@@ -1424,4 +1424,104 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 @media (max-width: 700px) {
   .home-hero.has-image { display: block; }
   .home-hero.has-image .hero-art { display: grid; margin-top: 24px; height: 220px; opacity: 1; }
+}
+
+/* ---------- Site editor (SiteEditor.jsx, Editable.jsx) ---------- */
+.edit-site-card { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; margin-bottom: 18px; }
+.edit-site-card .form-title { flex: 1 1 320px; margin: 0; }
+.edit-site-card .primary, .editor-dialog-actions a.primary { text-decoration: none; }
+.editor-gate main { display: grid; gap: 12px; }
+
+.editor-toolbar { display: block; padding: 8px 16px; background: var(--card); box-shadow: var(--shadow-sm); }
+/* The toolbar keeps its own sizes whatever heading sizes the church picks. */
+.editor-ui { --heading-scale: 1; --hero-scale: 1; }
+.editor-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.editor-status { display: grid; gap: 1px; min-width: 0; }
+.editor-status strong { color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
+.editor-status span { color: var(--muted); font-size: 12px; }
+.editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.editor-actions > button { min-height: 36px; padding: 0 12px; font-size: 13px; }
+.editor-actions .count { margin-left: 2px; }
+.editor-message { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 4px 4px 4px 12px; border: 1px solid #efcfc6; border-radius: var(--r-sm); background: var(--danger-50); color: var(--danger); font-size: 13px; }
+.editor-message.info { border-color: var(--line); background: var(--green-50); color: var(--green-800); }
+.editor-message span { flex: 1; }
+.editor-message .icon-btn { width: 30px; height: 30px; color: inherit; }
+
+.editor-panel { position: absolute; right: 16px; top: calc(100% + 8px); width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - var(--preview-height, 60px) - 24px); overflow-y: auto; padding: 16px; box-shadow: var(--shadow-lg); font-size: 14px; }
+.editor-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.editor-panel-head strong { color: var(--ink); font-size: 15px; }
+.editor-panel-head h2 { font-size: 20px; }
+.editor-panel-head .icon-btn { width: 34px; height: 34px; flex: none; }
+.editor-panel-head .secondary { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.editor-style-grid { display: grid; gap: 10px; }
+.editor-style-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; }
+.editor-style-row label, .editor-style-row > span { font-weight: 600; color: var(--ink); }
+.editor-style-row input[type=color] { width: 44px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: none; cursor: pointer; }
+.editor-style-row select { grid-column: span 2; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card); }
+.editor-style-row .ghost { min-height: 32px; font-size: 13px; }
+.editor-stepper { grid-column: span 2; display: flex; align-items: center; gap: 6px; }
+.editor-stepper button { width: 36px; min-height: 32px; padding: 0; }
+.editor-stepper output { min-width: 48px; text-align: center; font-weight: 600; color: var(--ink); }
+.editor-error { margin-top: 8px; color: var(--danger); font-size: 13px; }
+.editor-ask { display: flex; gap: 8px; }
+.editor-ask input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); }
+.editor-ask .primary { min-height: 40px; }
+.editor-panel .form-note { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.editor-reply { margin-top: 8px; color: var(--ink); }
+.editor-suggestions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+.editor-changes { display: grid; gap: 8px; margin: 12px 0; }
+.editor-changes li { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--card); }
+.editor-changes li.suggested { border-color: #c9d6f0; background: var(--info-50); }
+.editor-changes li.stale { opacity: .7; }
+.editor-change-label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.editor-change-label strong { color: var(--ink); font-size: 14px; }
+.editor-tag { padding: 2px 8px; border-radius: 999px; background: var(--info); color: #fff; font-size: 11px; font-weight: 700; }
+.editor-tag.stale { background: var(--faint); }
+.editor-diff { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 13px; }
+.editor-diff dt { color: var(--faint); font-weight: 600; }
+.editor-diff dd { max-height: 7.5em; margin: 0; overflow: auto; color: var(--text); white-space: pre-line; overflow-wrap: anywhere; }
+.editor-change-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.editor-change-actions button { min-height: 32px; padding: 0 12px; font-size: 13px; }
+
+.editor-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px; background: #172a2066; }
+/* Review sits at the side, so the page stays in view beside it. */
+.editor-backdrop.drawer { place-items: stretch end; padding: 0; background: #172a2020; }
+.editor-dialog { width: 100%; max-width: 520px; max-height: calc(100dvh - 40px); overflow-y: auto; padding: 22px 24px; box-shadow: var(--shadow-lg); font-size: 14px; }
+.editor-backdrop.drawer .editor-dialog { max-width: 480px; height: 100dvh; max-height: none; border-radius: 0; }
+.editor-dialog .field { margin: 8px 0 4px; }
+.editor-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.editor-previous, .editor-published ul { display: grid; gap: 4px; margin: 10px 0; padding-left: 18px; list-style: disc; }
+.editor-published p { color: var(--ink); }
+
+/* Text staff can change: outlined on hover, highlighted once changed or suggested by Tekton. */
+.site-editing .editable { cursor: text; border-radius: 4px; outline: 2px dashed transparent; outline-offset: 3px; transition: outline-color .15s; }
+.site-editing .editable:hover, .site-editing .editable:focus-visible { outline-color: var(--green-600); }
+.site-editing .leaders .editable:hover, .site-editing .leaders .editable:focus-visible { outline-color: var(--sage); }
+.site-editing .editable.editing { outline: 2px solid var(--green-600); white-space: pre-wrap; }
+.site-editing .editable:not(.editing):empty::before { content: 'Add text'; color: var(--faint); font-style: italic; }
+.site-editing .editable-changed { background: rgb(255 214 102 / .3); box-shadow: 0 0 0 3px rgb(255 214 102 / .3); }
+.site-editing .editable-suggested { background: rgb(49 84 163 / .12); box-shadow: 0 0 0 3px rgb(49 84 163 / .12); outline: 2px dashed var(--info); }
+/* Facts Church setup owns. */
+.site-editing .editable-fact { position: relative; cursor: help; border-radius: 4px; }
+.site-editing .editable-fact:hover { outline: 2px dotted var(--faint); outline-offset: 3px; }
+.editor-note { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: max-content; max-width: 260px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--ink); color: #fff; box-shadow: var(--shadow); font: 600 13px/1.4 var(--font); letter-spacing: 0; text-transform: none; white-space: normal; cursor: default; }
+.editor-note a { color: #cfe3d4; }
+/* Home and Plan your visit sections: a chip opens Move up, Move down and Hide. */
+.editor-section { position: relative; border-radius: var(--r-lg); outline: 1px dashed transparent; outline-offset: 6px; }
+.editor-section:hover { outline-color: var(--line-strong); }
+.editor-section.editable-changed { background: none; box-shadow: none; outline: 2px solid #e8c25a; }
+.editor-section.editable-suggested { background: none; box-shadow: none; }
+.editor-section-bar { position: absolute; top: -12px; left: 12px; z-index: 20; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+.editor-chip { min-height: 24px; padding: 0 10px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 600; opacity: .55; transition: opacity .15s; }
+.editor-section:hover .editor-chip, .editor-chip:focus-visible, .editor-chip[aria-expanded=true] { opacity: 1; }
+.editor-section-menu { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); box-shadow: var(--shadow); }
+.editor-section-menu button, .editor-hidden-section button { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.editor-hidden-section { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 20px 0; padding: 14px 16px; border: 1px dashed var(--line-strong); border-radius: var(--r-lg); background: rgb(255 255 255 / .5); color: var(--muted); font-size: 14px; }
+@media (max-width: 860px) {
+  .editor-toolbar { padding: 8px 12px; }
+  .editor-actions > button { flex: 1 1 auto; }
+  .editor-panel { right: 12px; left: 12px; width: auto; }
+  .editor-backdrop.drawer .editor-dialog { max-width: none; }
+  .editor-chip { opacity: 1; }
 }

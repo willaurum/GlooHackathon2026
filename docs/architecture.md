@@ -99,6 +99,7 @@ The first request for an existing church creates its tables. Only the demo churc
 | Info, church, ministries, events, matches, chat, guest sign-up and "I am here", viewing the prayer map, verse | public | public |
 | Welcome team queue, check-in, claim and met; volunteer applications (read, review); care requests (read, review, delete); adding events and AI summaries | that church staff | that church staff |
 | Church setup: `GET` and `PUT /api/church/content` | that church staff | that church staff |
+| Edit your site: everything under `/api/church/editor` (draft, ask, publish, restore) | that church staff | that church staff |
 | Staff accounts: `GET /api/churches/<slug>/admin/users` | that church staff | that church staff |
 | Add or remove staff: `POST /api/churches/<slug>/admin/users`, `DELETE /api/churches/<slug>/admin/users/<id>` | Owner only | Owner only |
 | Sermon Notes and the chat log | `NOTES_API_KEY` or that church staff | `NOTES_API_KEY` or that church staff |

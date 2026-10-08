@@ -172,13 +172,22 @@ const STAFF_ROUTES: Route[] = [
 	['PATCH', /^\/api\/blog(?:\/.*)?$/],
 	['DELETE', /^\/api\/blog(?:\/.*)?$/],
 	['POST', new RegExp(`^/api/builder/drafts/${ID}/apply$`)],
+	// Edit your site (backend/app/site_editor.py): the draft, asking Tekton, publish and restore.
+	['GET', /^\/api\/church\/editor$/],
+	['PUT', /^\/api\/church\/editor\/draft$/],
+	['DELETE', /^\/api\/church\/editor\/draft$/],
+	['POST', /^\/api\/church\/editor\/(ask|publish|restore)$/],
 ];
+
+// Every other method or path under the editor is staff only too, never the API key.
+const EDITOR_PREFIX = /^\/api\/church\/editor(?:\/.*)?$/;
 
 export type Access = 'public' | 'staff' | 'key' | 'key-or-staff';
 
 /** Who may call a route. Anything not listed (Sermon Notes, the chat log) takes the API key or a staff session. */
 export function access(method: string, path: string, demo: boolean): Access {
 	if (matches(STAFF_ROUTES, method, path)) return 'staff';
+	if (EDITOR_PREFIX.test(path)) return 'staff';
 	if (matches(PUBLIC_BUILDER_ROUTES, method, path)) return 'public';
 	// All other builder paths and methods stay staff only.
 	if (/^\/api\/builder(?:\/.*)?$/.test(path)) return 'staff';
@@ -186,6 +195,21 @@ export function access(method: string, path: string, demo: boolean): Access {
 	if (matches(STAFF_WORK_ROUTES, method, path)) return 'staff';
 	if (matches(OPERATOR_ROUTES, method, path)) return 'key';
 	return 'key-or-staff';
+}
+
+// The content import carries a whole church (FAQs, ministries, calendar), so it may be larger.
+export const MAX_IMPORT_BYTES = 512 * 1024;
+// A site editor draft holds up to 80 changes, some of them long texts.
+export const MAX_EDITOR_DRAFT_BYTES = 256 * 1024;
+// Builder uploads: 10 MB of files plus multipart overhead; the container enforces the exact limits.
+export const MAX_BUILDER_UPLOAD_BYTES = 11 * 1024 * 1024;
+
+/** The largest request body a route takes, or undefined for the usual JSON limit (notes.ts tooLarge). */
+export function bodyLimit(method: string, path: string): number | undefined {
+	if (path === '/api/church/content') return MAX_IMPORT_BYTES;
+	if (path === '/api/church/editor/draft' && method === 'PUT') return MAX_EDITOR_DRAFT_BYTES;
+	if (path === '/api/builder/drafts/upload') return MAX_BUILDER_UPLOAD_BYTES;
+	return undefined;
 }
 
 /** Headers the container uses to pick the church database. Anything a browser sent under these names is replaced. */

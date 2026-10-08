@@ -37,6 +37,7 @@ Every church site has these areas:
 | **Prayer map** | The countries a church prays for, with dated updates from the field and real news |
 | **About** | News (updates and articles), beliefs, staff directory and contact |
 | **Ask Tekton** | A chat assistant on every page that answers from the church's own content, links to the right page, and passes care requests to staff. It never sends anything to anyone by itself |
+| **Edit your site** | Staff see their live site at `#/c/<slug>/edit` and change wording, colors, fonts, sections and pages through a draft (directly or by asking Tekton), then review, publish, or restore the previous version |
 | **Church staff** | Sign-in, volunteer applications, care requests, Church setup, staff accounts and giving |
 
 Visitors need no account. Staff sign in at `#/setup` with their own email and password. Details: [docs/features.md](docs/features.md).
@@ -94,6 +95,7 @@ Browser (React + Vite, hash routes)
 │       ├── App.jsx, Layout.jsx           routes, navigation, page shell
 │       ├── Builder.jsx, TektonAgent.jsx  the #/new builder and Ask Tekton in the preview
 │       ├── SitePages.jsx, Sourced.jsx    pages imported from a church's website (#/p/<slug>), source hovers
+│       ├── SiteEditor.jsx, siteDraft.js  Edit your site (#/c/<slug>/edit)
 │       ├── Home, VisitPage, WelcomeTeam, Serve, PastorNotes, Calendar, Give*, PrayerMap, News, About ...
 │       ├── ChatWidget.jsx, chat*.js      Ask Tekton chat
 │       ├── church.js, churchSite.js, ChurchContext.js   which church is shown, its content and layout
@@ -105,6 +107,7 @@ Browser (React + Vite, hash routes)
 │   │   ├── builder*.py                   the agentic builder (crawl, extract, agents, theme, site, customize, export, scoring)
 │   │   ├── chat.py                       Ask Tekton: tools, guardrails, page links
 │   │   ├── church_content.py             the church content schema and import
+│   │   ├── site_editor.py                Edit your site: draft, ask, publish, restore
 │   │   ├── db.py, church_scope.py        SQL and the church each request is for
 │   │   ├── pastor_notes.py               Sermon Notes
 │   │   └── *.json                        demo church seed content
@@ -198,7 +201,7 @@ The full list, the optional model variables, and who keeps copies of each key ar
 | Document | What it covers |
 |---|---|
 | [docs/agentic-builder.md](docs/agentic-builder.md) | How the builder works: the five steps, trust rules, specialists, limitations |
-| [docs/builder-api.md](docs/builder-api.md) | The church content JSON and every builder route |
+| [docs/builder-api.md](docs/builder-api.md) | The church content JSON, the Edit your site API, and every builder route |
 | [docs/architecture.md](docs/architecture.md) | Churches and isolation, staff accounts and permissions, who may call what, data storage, keys, subdomains |
 | [docs/features.md](docs/features.md) | Guests, Serve, Ask Tekton and which AI does what, Sermon Notes, Give, Calendar, Prayer map, News, with their routes |
 | [docs/local-development.md](docs/local-development.md) | Running locally, Ollama, the HPC tunnel, the team AI bridge |

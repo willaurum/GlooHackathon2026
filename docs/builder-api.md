@@ -1,6 +1,6 @@
-# Church content and the builder API
+# Church content, the site editor and the builder API
 
-The JSON document a church is made of, and the routes behind the agentic builder (`#/new`). For how the builder decides what to trust, see [agentic-builder.md](agentic-builder.md); for how it was tested, [../build-docs/evaluation.md](../build-docs/evaluation.md). [Back to the README](../README.md)
+The JSON document a church is made of, the staff site editor that changes it after launch, and the routes behind the agentic builder (`#/new`). For how the builder decides what to trust, see [agentic-builder.md](agentic-builder.md); for how it was tested, [../build-docs/evaluation.md](../build-docs/evaluation.md). [Back to the README](../README.md)
 
 ## Church content import (the target for a site importer)
 
@@ -34,6 +34,19 @@ A church is one JSON document, read with `GET /api/church/content` and written w
 ```
 
 Extra fields are kept. A ministry that saved connections or requests still point at is not deleted by an import, so those stay readable. Giving funds and mission trips are not part of this document: they live in the giving Worker (`/api/churches/<slug>/admin/funds`), with the same staff session. Prayer map places and their field updates are in it under `regions`.
+
+## Edit your site
+
+Staff change their live site through a draft (`backend/app/site_editor.py`). Every change is one checked operation; nothing is live until they publish, and the version before the last publish can be restored.
+
+- `GET /api/church/editor`: the state, `{version, ops, changes, published, published_at, previous}`. `published` is the live content (the `GET /api/church/content` shape); `changes` has one entry per operation with a plain label and the value before and after.
+- `PUT /api/church/editor/draft` with `{version, ops}` (up to 80 operations, 256 KB): replaces the draft. 409 when `version` is not the stored one; 422 `{detail, op}` names the first operation that is not allowed.
+- `DELETE /api/church/editor/draft`: discards the draft.
+- `POST /api/church/editor/ask` with `{request, viewing, version}`: Tekton suggests operations, added to the draft as `pending` (plain rules first, else one AI call whose operations are checked the same way; wording it places must come from the request). 10 per person in 10 minutes and 60 per church in an hour (429).
+- `POST /api/church/editor/publish` with `{version}`: applies the accepted operations to the live content and writes only the sections they change (`info`, `site`, `pages`, `staff`, `faqs`). 409 while a suggestion is pending; the labels of what changed are in `published_changes`.
+- `POST /api/church/editor/restore`: puts the previous version back; restoring again undoes that.
+
+The operations: `set_text` (the Home headline, about and what to expect texts, the template wording in `backend/app/site_copy.json` stored as `site.copy`, imported page titles and sections, staff names, roles and bios, and FAQs; plain text only), `set_style` (colors and fonts in `site.theme`, kept readable by the builder's rules, and heading sizes in `site.style`: `heading_scale` 0.8 to 1.3, `hero_scale` 0.7 to 1.3), `move_section`, `hide_section` and `show_section` (Home and Plan your visit, `site.layout`), and `hide_page` and `show_page`. Facts with structure or side effects (name, address, service times, contacts, ministries, events and the like) stay in Church setup. The draft, the previous version and the publish time are in the church's `config` table (`site_editor:draft`, `site_editor:previous`, `site_editor:published_at`).
 
 ## Agentic builder
 
