@@ -5,9 +5,16 @@
     "country_code": "NPL",
     "codename": "Team Highland",
     "field_of_ministry": "Discipleship and community health training in mountain villages",
-    "testimony": "We spent the spring walking the ridge trails between villages that a car can never reach, carrying a water-filtration kit and a stack of health pamphlets translated into Nepali. Three families we have met with monthly for two years asked, unprompted, if they could start reading the Gospel of Luke together on Tuesday evenings. A landslide closed the lower trail in March, so the walk to the furthest village now takes an extra four hours each way, and our two porters are stretched thin. We are grateful and tired in about equal measure.",
     "since": 2019,
-    "team_size": 4
+    "team_size": 4,
+    "updates": [
+      {
+        "date": "2026-05-01",
+        "title": "",
+        "body": "We spent the spring walking the ridge trails between villages that a car can never reach, carrying a water-filtration kit and a stack of health pamphlets translated into Nepali. Three families we have met with monthly for two years asked, unprompted, if they could start reading the Gospel of Luke together on Tuesday evenings. A landslide closed the lower trail in March, so the walk to the furthest village now takes an extra four hours each way, and our two porters are stretched thin. We are grateful and tired in about equal measure.",
+        "author": "Team Highland"
+      }
+    ]
   },
   {
     "id": 1,
@@ -15,9 +22,16 @@
     "country_code": "KEN",
     "codename": "Team Rift Valley",
     "field_of_ministry": "Vocational training and church planting among pastoralist communities",
-    "testimony": "The welding and tailoring cohort graduated eleven students this term, and four of them have already opened small stalls at the trading center. Attendance at the Wednesday fellowship has tripled since a respected elder in the community started attending after his son's business took off. Prolonged drought has pushed several partner families to migrate further than usual with their herds, which means our teaching schedule now bends around water and grazing, not the calendar. We are learning to plan in seasons, not weeks.",
     "since": 2016,
-    "team_size": 6
+    "team_size": 6,
+    "updates": [
+      {
+        "date": "2026-05-01",
+        "title": "",
+        "body": "The welding and tailoring cohort graduated eleven students this term, and four of them have already opened small stalls at the trading center. Attendance at the Wednesday fellowship has tripled since a respected elder in the community started attending after his son's business took off. Prolonged drought has pushed several partner families to migrate further than usual with their herds, which means our teaching schedule now bends around water and grazing, not the calendar. We are learning to plan in seasons, not weeks.",
+        "author": "Team Rift Valley"
+      }
+    ]
   },
   {
     "id": 2,
@@ -25,9 +39,16 @@
     "country_code": "PER",
     "codename": "Team Andina",
     "field_of_ministry": "Literacy programs and church partnership in Quechua-speaking highland towns",
-    "testimony": "This month we finished translating the children's literacy primer into the local Quechua dialect, a project three village teachers have carried alongside us for over a year. Sunday attendance at the two partner churches keeps growing, mostly from families who first came for the after-school reading sessions. Altitude sickness took one of our newer teammates hard this quarter, and a stretch of heavy rain washed out the road to Ocongate for nearly three weeks, cutting off our furthest teaching site entirely.",
     "since": 2021,
-    "team_size": 3
+    "team_size": 3,
+    "updates": [
+      {
+        "date": "2026-05-01",
+        "title": "",
+        "body": "This month we finished translating the children's literacy primer into the local Quechua dialect, a project three village teachers have carried alongside us for over a year. Sunday attendance at the two partner churches keeps growing, mostly from families who first came for the after-school reading sessions. Altitude sickness took one of our newer teammates hard this quarter, and a stretch of heavy rain washed out the road to Ocongate for nearly three weeks, cutting off our furthest teaching site entirely.",
+        "author": "Team Andina"
+      }
+    ]
   },
   {
     "id": 3,
@@ -35,9 +56,16 @@
     "country_code": "THA",
     "codename": "Team Northern Light",
     "field_of_ministry": "Anti-trafficking advocacy and vocational safe houses for at-risk youth",
-    "testimony": "Two young women who came through our safe house program a year ago are now training as seamstresses at a partner workshop, earning their first steady wages. We opened conversations with a third village school this term after a teacher there asked us to run an awareness workshop following a recent case in the district. Funding for the safe house's second dormitory fell through in January, so we are currently over capacity and turning away referrals we deeply wish we could take.",
     "since": 2017,
-    "team_size": 5
+    "team_size": 5,
+    "updates": [
+      {
+        "date": "2026-05-01",
+        "title": "",
+        "body": "Two young women who came through our safe house program a year ago are now training as seamstresses at a partner workshop, earning their first steady wages. We opened conversations with a third village school this term after a teacher there asked us to run an awareness workshop following a recent case in the district. Funding for the safe house's second dormitory fell through in January, so we are currently over capacity and turning away referrals we deeply wish we could take.",
+        "author": "Team Northern Light"
+      }
+    ]
   },
   {
     "id": 4,
@@ -45,9 +73,16 @@
     "country_code": "ALB",
     "codename": "Team Adriatic",
     "field_of_ministry": "Youth mentoring and small church revitalization in post-communist towns",
-    "testimony": "The youth group in Shkodër has grown from five teenagers meeting in a living room to over twenty gathering weekly in the church basement, largely through word of mouth after a regional talent night we hosted last fall. Two of the original five are now leading their own small groups. Emigration keeps thinning the town: three families we mentor closely are weighing job offers abroad, and if they leave, our leadership pipeline shrinks by half overnight.",
     "since": 2018,
-    "team_size": 3
+    "team_size": 3,
+    "updates": [
+      {
+        "date": "2026-05-01",
+        "title": "",
+        "body": "The youth group in Shkodër has grown from five teenagers meeting in a living room to over twenty gathering weekly in the church basement, largely through word of mouth after a regional talent night we hosted last fall. Two of the original five are now leading their own small groups. Emigration keeps thinning the town: three families we mentor closely are weighing job offers abroad, and if they leave, our leadership pipeline shrinks by half overnight.",
+        "author": "Team Adriatic"
+      }
+    ]
   },
   {
     "id": 5,
@@ -55,8 +90,15 @@
     "country_code": "MNG",
     "codename": "Team Steppe",
     "field_of_ministry": "Herder-community outreach and winter relief logistics",
-    "testimony": "We distributed emergency fodder and stove fuel to fourteen herding families ahead of what forecasters are calling a severe dzud winter, working from a list built with a local cooperative we've partnered with for three years. A herder family that lost most of their livestock two winters ago hosted our team's Bible discussion for the first time this month, entirely their own idea. Roads outside Erdenet are already difficult, and if the season turns as hard as predicted, several of our contact families will be unreachable by vehicle for weeks at a time.",
     "since": 2015,
-    "team_size": 4
+    "team_size": 4,
+    "updates": [
+      {
+        "date": "2026-05-01",
+        "title": "",
+        "body": "We distributed emergency fodder and stove fuel to fourteen herding families ahead of what forecasters are calling a severe dzud winter, working from a list built with a local cooperative we've partnered with for three years. A herder family that lost most of their livestock two winters ago hosted our team's Bible discussion for the first time this month, entirely their own idea. Roads outside Erdenet are already difficult, and if the season turns as hard as predicted, several of our contact families will be unreachable by vehicle for weeks at a time.",
+        "author": "Team Steppe"
+      }
+    ]
   }
 ]

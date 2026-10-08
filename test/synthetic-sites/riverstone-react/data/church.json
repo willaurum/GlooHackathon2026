@@ -1,0 +1,67 @@
+{
+  "name": "Riverstone Fellowship",
+  "tagline": "Real people. Real hope. Right here in Kestrelton.",
+  "phone": "(555) 013-7745",
+  "email": "connect@riverstone.example.org",
+  "officeHours": "Tue–Fri 10a–4p",
+  "campuses": [
+    {
+      "id": "main",
+      "name": "Tamsin Ridge Campus",
+      "address": "77 Tamsin Ridge Road, Kestrelton, CO",
+      "services": [
+        { "day": "Sun", "time": "9:00a", "label": "Gathering", "kids": true, "online": false },
+        { "day": "Sun", "time": "11:00a", "label": "Gathering", "kids": true, "online": true }
+      ],
+      "parking": "Park in the north lot; first-time guests turn on hazard lights and a parking volunteer will wave you to a reserved spot by the doors.",
+      "kidsCheckIn": "RiverKids check-in kiosks are inside the east entrance. Print a sticker for your child and keep the matching pickup tag.",
+      "accessibility": "Step-free entry at every door, reserved seating in the front row, and assisted listening devices at the Info Desk."
+    },
+    {
+      "id": "north",
+      "name": "North Campus",
+      "address": "Meets at Kestrelton Grange Hall, 1402 Alder Bend Way, Kestrelton, CO",
+      "services": [
+        { "day": "Sun", "time": "10:00a", "label": "Gathering", "kids": true, "online": false }
+      ],
+      "parking": "Free parking in the Grange Hall lot and along Alder Bend Way.",
+      "kidsCheckIn": "Kids check in at the table by the stage; ages 0–10.",
+      "accessibility": "Single-level building with a ramp at the main entrance."
+    }
+  ],
+  "firstVisit": "Gatherings run about 70 minutes: music, a message, and plenty of coffee. Wear whatever's comfortable. Stop by the Info Desk after and we'll give you a free Riverstone mug.",
+  "beliefs": [
+    "Jesus is the center of everything we do.",
+    "Everyone is invited, and everyone has a place to serve.",
+    "Faith is lived out in community and generosity."
+  ],
+  "team": [
+    { "name": "Jonah Varela-Strick", "role": "Lead Pastor", "email": "jonah@riverstone.example.org" },
+    { "name": "Priya Holloway", "role": "Executive Pastor", "email": "priya@riverstone.example.org" },
+    { "name": "Benedikt Aarons", "role": "North Campus Pastor", "email": "ben@riverstone.example.org" },
+    { "name": "Shayla Crump-Ivers", "role": "RiverKids Director", "email": "kids@riverstone.example.org" },
+    { "name": "Tobias Wenning", "role": "Students Director", "email": "students@riverstone.example.org" }
+  ],
+  "groups": [
+    { "name": "Rooted (20s & 30s)", "when": "Mondays 7p", "where": "Tamsin Ridge Café", "about": "Dinner, discussion and friendship." },
+    { "name": "Riverstone Students", "when": "Wednesdays 6:30p", "where": "Tamsin Ridge Student Center", "about": "Grades 6–12. Games, worship, small groups." },
+    { "name": "Moms & Little Ones", "when": "Thursdays 9:30a", "where": "Tamsin Ridge, Room B", "about": "Coffee and conversation for moms of kids under 5. Childcare provided." },
+    { "name": "Men on Mission", "when": "1st & 3rd Saturdays 7a", "where": "North Campus", "about": "Breakfast, a short study and a serve project." },
+    { "name": "Grief & Hope", "when": "Tuesdays 6:30p", "where": "Online", "about": "A support group for anyone walking through loss." }
+  ],
+  "events": [
+    { "title": "Trunk or Treat", "date": "2026-10-31", "start": "16:00", "end": "18:00", "campus": "main", "summary": "Candy, costumes and a chili cook-off in the north lot." },
+    { "title": "Next Steps Lunch", "date": "2026-11-08", "start": "12:30", "end": "14:00", "campus": "main", "summary": "New to Riverstone? Meet the team over lunch and find your next step." },
+    { "title": "Serve Kestrelton", "date": "2026-11-21", "start": "08:30", "end": "12:00", "campus": "north", "summary": "Rake leaves and winterize homes for neighbors in need." },
+    { "title": "Christmas at Riverstone", "date": "2026-12-20", "start": "17:00", "end": "18:15", "campus": "main", "summary": "A family-friendly Christmas gathering with live music." }
+  ],
+  "giving": {
+    "url": "#give",
+    "note": "Give online, or in the boxes by every exit.",
+    "funds": ["General Fund", "Building Expansion", "Kestrelton Food Bank Partnership"]
+  },
+  "social": {
+    "instagram": "https://instagram.example.org/riverstonefellowship",
+    "youtube": "https://video.example.org/@riverstonefellowship"
+  }
+}

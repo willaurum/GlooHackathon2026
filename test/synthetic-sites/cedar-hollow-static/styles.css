@@ -1,0 +1,61 @@
+/* Cedar Hollow Community Church: fictional site for templatizer testing. */
+:root {
+  --ink: #2a2622;
+  --muted: #6b635b;
+  --line: #e6dfd6;
+  --bg: #fbf8f4;
+  --brand: #7a4b2a;
+  --brand-dark: #5c3820;
+  --accent: #c8963e;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Georgia, 'Times New Roman', serif; color: var(--ink); background: var(--bg); line-height: 1.6; }
+a { color: var(--brand); }
+img { max-width: 100%; }
+
+.site-header { background: #fff; border-bottom: 1px solid var(--line); }
+.site-header .inner { max-width: 1080px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font-weight: bold; font-size: 20px; }
+.logo img { width: 40px; height: 40px; }
+.site-nav { display: flex; gap: 18px; flex-wrap: wrap; font-family: Arial, sans-serif; font-size: 15px; }
+.site-nav a { text-decoration: none; color: var(--ink); }
+.site-nav a[aria-current="page"] { color: var(--brand); font-weight: bold; }
+.site-nav .cta, .site-nav .cta[aria-current="page"] { background: var(--brand); color: #fff; padding: 6px 14px; border-radius: 4px; }
+.site-nav .cta[aria-current="page"] { background: var(--brand-dark); }
+
+.hero { background: linear-gradient(135deg, var(--brand-dark), var(--brand)); color: #fff; text-align: center; padding: 72px 20px; }
+.hero h1 { font-size: 42px; margin: 0 0 8px; }
+.hero p { font-size: 19px; margin: 0 auto 24px; max-width: 640px; }
+.button { display: inline-block; background: var(--accent); color: #2a2622; text-decoration: none; padding: 10px 22px; border-radius: 4px; font-family: Arial, sans-serif; font-weight: bold; }
+
+main { max-width: 1080px; margin: 0 auto; padding: 40px 20px; }
+.page-title { font-size: 34px; margin: 0 0 6px; }
+.lead { color: var(--muted); font-size: 18px; margin-top: 0; }
+section { margin-bottom: 40px; }
+h2 { color: var(--brand-dark); border-bottom: 2px solid var(--line); padding-bottom: 6px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 18px; }
+.card h3 { margin-top: 0; }
+
+table.times { border-collapse: collapse; width: 100%; background: #fff; }
+table.times th, table.times td { border: 1px solid var(--line); padding: 10px 12px; text-align: left; }
+table.times th { background: #f3ece3; }
+
+.staff { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; }
+.staff .person { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 16px; text-align: center; }
+.staff .avatar { width: 72px; height: 72px; border-radius: 50%; background: #e9dccd; display: grid; place-items: center; margin: 0 auto 8px; font-family: Arial, sans-serif; font-weight: bold; color: var(--brand-dark); }
+
+.faq dt { font-weight: bold; margin-top: 14px; }
+.faq dd { margin: 4px 0 0; }
+
+.site-footer { background: #2a2622; color: #e9e2d8; font-family: Arial, sans-serif; font-size: 14px; }
+.site-footer .inner { max-width: 1080px; margin: 0 auto; padding: 32px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; }
+.site-footer a { color: #f1c27d; }
+.site-footer h4 { margin: 0 0 8px; color: #fff; }
+.fine { text-align: center; padding: 0 20px 20px; color: #a99f93; font-size: 12px; }
+
+@media (max-width: 640px) {
+  .hero h1 { font-size: 32px; }
+  .site-nav { gap: 12px; }
+}

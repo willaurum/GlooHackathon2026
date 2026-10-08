@@ -1,25 +1,40 @@
+import { DEMO_SLUG, churchHeaders, type Church } from './churches.ts';
+import { EmbedError, backfillChurch, comparable, cosine, embedChunks, embedTag, embedTexts, ensureEmbedColumn, vectorJson, type RunSql } from './embed.ts';
+
 // Keys are Workers secrets (`wrangler secret put`). Only NOTES_API_KEY is required.
 type Secrets = {
-	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; GEMINI_API_KEY?: string; YTDLP_COOKIES?: string;
-	GLOO_API_KEY?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string;
+	NOTES_API_KEY?: string; NOTES_ADMIN_KEY?: string; YTDLP_COOKIES?: string;
+	GLOO_API_KEY?: string; GLOO_MODEL?: string; GLOO_MATCH_MODEL?: string; GLOO_EMBED_MODEL?: string; GLOO_NOTES_MODEL?: string; GLOO_BUILDER_MODEL?: string; BUILDER_IMPORTS_PER_ADDRESS?: string; BUILDER_IMPORTS_PER_HOUR?: string; BUILDER_STRUCTURED_OUTPUT?: string; BUILDER_STRUCTURED_ENDPOINT?: string; OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; NEWSDATA_API_KEY?: string;
+	// Optional: the team AI bridge (scripts/team-ai-bridge), and which provider the chat tries first.
+	TEAM_AI_URL?: string; TEAM_AI_KEY?: string; TEAM_AI_MODEL?: string; AI_PROVIDER?: string;
+	// Optional: the YouTube helper (scripts/youtube-helper) that downloads YouTube audio from a home connection.
+	YT_HELPER_URL?: string; YT_HELPER_KEY?: string;
+	YOUVERSION_APP_KEY?: string; YOUVERSION_BIBLE_ID?: string;
+	// Optional: the base domain once churches have subdomains (grace.<BASE_DOMAIN>).
+	BASE_DOMAIN?: string;
 };
-export type AppEnv = Env & Secrets;
+// GIVING is a service binding to the giving Worker: the church registry and staff sign-in.
+export type AppEnv = Env & Secrets & { GIVING?: Fetcher };
 
 type Statement = { sql: string; params?: (string | number | null)[] };
-type Chunk = { idx: number; start: number; end: number; seg_from: number; seg_to: number; text: string; embedding: string };
+type Chunk = { idx: number; start: number; end: number; seg_from: number; seg_to: number; text: string; embedding: string; embed_model: string };
 type Segment = { idx: number; start: number; end: number; text: string };
-type Scored = Omit<Chunk, 'embedding'> & { score: number };
+type Scored = Omit<Chunk, 'embedding' | 'embed_model'> & { score: number };
 type Citation = { chunk: number; start: number; end: number; timestamp: string; quote: string; url?: string };
 type Answer = { found: boolean; answer: string; citations: Citation[] };
 
+// Transcription is the one model hosted on Workers AI: Gloo has no speech-to-text. Embeddings come from Gloo (embed.ts).
 export const ASR_MODEL = '@cf/openai/whisper-large-v3-turbo';
-export const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
-// cls pooling must match between ingest (/embed bridge) and questions.
-const POOLING = 'cls';
+// Sermon-note answers go to Gloo, like the chat. Keep in step with backend/app/chat.py.
+export const GLOO_CHAT_URL = 'https://platform.ai.gloo.com/ai/v2/guarded/chat/completions';
+export const GLOO_DEFAULT_MODEL = 'gloo-qwen-3.7-flash';
+// gloo-qwen-3.7-flash reasons before it answers and can take 30+ seconds; Cloudflare ends a proxied request at about 100.
+export const GLOO_TIMEOUT_MS = 60_000;
 const NOT_FOUND = 'Not found in this note.';
 const TOP_K = 5;
 const MAX_JSON_BYTES = 16 * 1024;
 const MAX_ASR_BYTES = 8 * 1024 * 1024;
+const MAX_LLM_PROMPT_CHARS = 64 * 1024;
 const MEDIA_KEY = /^notes\/[0-9a-f-]{36}\/source$/;
 
 export const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -27,22 +42,44 @@ const detail = (message: string, status: number) => json({ detail: message }, st
 
 // --- The church database (same /sql batch contract the container uses) ---
 
-export const churchDb = (env: AppEnv) => env.CHURCH_DB.get(env.CHURCH_DB.idFromName('church'));
+// One database per church. The demo church keeps the original database ('church'), so its data stays put.
+export const churchDb = (env: AppEnv, slug = DEMO_SLUG) =>
+	env.CHURCH_DB.get(env.CHURCH_DB.idFromName(slug === DEMO_SLUG ? 'church' : 'church:' + slug));
 
-async function sql(env: AppEnv, ...batch: Statement[]): Promise<{ rows: any[] }[]> {
-	const response = await churchDb(env).fetch('http://church-db/sql', { method: 'POST', body: JSON.stringify({ batch }) });
+async function sql(env: AppEnv, slug: string, ...batch: Statement[]): Promise<{ rows: any[] }[]> {
+	const response = await churchDb(env, slug).fetch('http://church-db/sql', { method: 'POST', body: JSON.stringify({ batch }) });
 	if (!response.ok) throw new Error(await response.text());
 	return (await response.json<{ results: { rows: any[] }[] }>()).results;
 }
 
-/** True while a note is queued or being processed; keeps the container awake. */
+const dbFor = (env: AppEnv, slug: string): RunSql => (...batch) => sql(env, slug, ...batch);
+
+// Churches whose chunks table is known to have embed_model, so the check runs about once per isolate.
+const embedColumnReady = new WeakMap<object, Set<string>>();
+
+async function ensureChunkTags(env: AppEnv, slug: string): Promise<void> {
+	const ready = embedColumnReady.get(env.CHURCH_DB) ?? new Set<string>();
+	embedColumnReady.set(env.CHURCH_DB, ready);
+	if (!ready.has(slug) && (await ensureEmbedColumn(dbFor(env, slug)))) ready.add(slug);
+}
+
+/** True while any church has a note queued or being processed; keeps the container awake. */
 export async function notesBusy(env: AppEnv): Promise<boolean> {
+	let slugs = [DEMO_SLUG];
 	try {
-		const [{ rows }] = await sql(env, { sql: "SELECT 1 AS x FROM notes WHERE status IN ('queued', 'processing') LIMIT 1" });
-		return rows.length > 0;
+		slugs = [DEMO_SLUG, ...(await churchDb(env).notesChurches())];
 	} catch {
-		return false;
+		/* just the demo church */
 	}
+	for (const slug of slugs) {
+		try {
+			const [{ rows }] = await sql(env, slug, { sql: "SELECT 1 AS x FROM notes WHERE status IN ('queued', 'processing') LIMIT 1" });
+			if (rows.length) return true;
+		} catch {
+			/* that church has no notes table yet */
+		}
+	}
+	return false;
 }
 
 // --- Auth ---
@@ -69,9 +106,9 @@ async function authorizeAdmin(request: Request, env: AppEnv): Promise<Response |
 }
 
 /** Rejects oversized JSON bodies before they reach the container. */
-export function tooLarge(request: Request): Response | null {
+export function tooLarge(request: Request, max = MAX_JSON_BYTES): Response | null {
 	const length = Number(request.headers.get('Content-Length') ?? 0);
-	return length > MAX_JSON_BYTES ? detail('Request body too large', 413) : null;
+	return length > max ? detail('Request body too large', 413) : null;
 }
 
 async function readJson(request: Request): Promise<any> {
@@ -108,10 +145,34 @@ export async function aiBridge(request: Request, env: AppEnv): Promise<Response>
 			});
 		}
 		if (request.method === 'POST' && path === '/embed') {
+			// Ingest embeddings, from Gloo. The container tags the chunks with `model`, or saves them unembedded on an error.
 			const { texts } = await request.json<{ texts: unknown }>();
 			if (!Array.isArray(texts) || !texts.length || texts.length > 100 || !texts.every((t) => typeof t === 'string' && t))
 				return new Response('texts must be 1-100 non-empty strings', { status: 400 });
-			return json({ vectors: await embed(env, texts) });
+			try {
+				const { tag, vectors } = await embedTexts(env, texts);
+				return json({ vectors, model: tag });
+			} catch (err) {
+				console.error('gloo embeddings failed:', String(err));
+				const noKey = err instanceof EmbedError && err.code === 'no_key';
+				return new Response(noKey ? 'GLOO_API_KEY is not set' : 'Gloo embeddings failed', { status: noKey ? 503 : 502 });
+			}
+		}
+		if (request.method === 'POST' && path === '/llm') {
+			// Highlight fallback only: the container tags transcript windows with Gloo itself
+			// (backend/app/pastor_notes.py) and asks here for a window Gloo could not tag.
+			const { prompt } = await request.json<{ prompt: unknown }>();
+			if (typeof prompt !== 'string' || !prompt || prompt.length > MAX_LLM_PROMPT_CHARS)
+				return new Response(`prompt must be 1-${MAX_LLM_PROMPT_CHARS} characters`, { status: 400 });
+			const out: any = await env.AI.run(env.NOTES_LLM_MODEL as any, {
+				messages: [{ role: 'user', content: prompt }],
+				temperature: 0,
+				max_tokens: 2048,
+			} as any);
+			return json({
+				text: typeof out.response === 'string' ? out.response : JSON.stringify(out.response ?? ''),
+				model: `workers-ai:${env.NOTES_LLM_MODEL}`,
+			});
 		}
 	} catch (err) {
 		console.error('workers-ai bridge failed:', String(err));
@@ -127,26 +188,23 @@ function toBase64(buffer: ArrayBuffer): string {
 	return btoa(binary);
 }
 
-async function embed(env: AppEnv, texts: string[]): Promise<number[][]> {
-	const out: any = await env.AI.run(EMBED_MODEL as any, { text: texts, pooling: POOLING } as any);
-	return out.data;
-}
-
 // --- Routes the Worker handles itself ---
 
 type ContainerStub = { fetch(request: Request): Promise<Response> };
 
-const internal = (container: ContainerStub, method: string, path: string, body?: unknown) =>
+// Internal calls carry the church headers, so the container works in that church's database.
+const internal = (container: ContainerStub, church: Church, method: string, path: string, body?: unknown) =>
 	container.fetch(new Request('http://container' + path, {
 		method,
-		headers: { 'Content-Type': 'application/json' },
+		headers: churchHeaders(new Headers({ 'Content-Type': 'application/json' }), church),
 		body: body === undefined ? undefined : JSON.stringify(body),
 	}));
 
-/** Handles upload, ask, admin config and delete. Returns null for routes the container serves. */
-export async function handleNotes(request: Request, env: AppEnv, url: URL, container: ContainerStub): Promise<Response | null> {
+/** Handles upload, ask, admin config and delete. Returns null for routes the container serves.
+ * `url` has the plain /api/... path; `church` is the church the request is for. */
+export async function handleNotes(request: Request, env: AppEnv, url: URL, container: ContainerStub, church: Church): Promise<Response | null> {
 	const path = url.pathname;
-	if (request.method === 'POST' && path === '/api/notes/upload') return upload(request, env, url, container);
+	if (request.method === 'POST' && path === '/api/notes/upload') return upload(request, env, url, container, church);
 	if (request.method === 'PUT' && path === '/api/admin/config') {
 		const denied = await authorizeAdmin(request, env);
 		if (denied) return denied;
@@ -156,13 +214,14 @@ export async function handleNotes(request: Request, env: AppEnv, url: URL, conta
 		} catch {
 			return detail('Body must be JSON', 400);
 		}
-		return internal(container, 'PUT', '/api/internal/config', body);
+		return internal(container, church, 'PUT', '/api/internal/config', body);
 	}
+	if (request.method === 'POST' && path === '/api/notes/reembed') return reembed(env, url, church.slug);
 	const ask = path.match(/^\/api\/notes\/([0-9a-f-]{36})\/ask$/);
-	if (request.method === 'POST' && ask) return answer(request, env, url, ask[1]);
+	if (request.method === 'POST' && ask) return answer(request, env, url, ask[1], church.slug);
 	const note = path.match(/^\/api\/notes\/([0-9a-f-]{36})$/);
 	if (request.method === 'DELETE' && note) {
-		const response = await internal(container, 'DELETE', `/api/internal/notes/${note[1]}`);
+		const response = await internal(container, church, 'DELETE', `/api/internal/notes/${note[1]}`);
 		if (!response.ok) return response;
 		const { r2_key } = await response.json<{ r2_key: string | null }>();
 		if (r2_key) await env.MEDIA.delete(r2_key);
@@ -171,7 +230,7 @@ export async function handleNotes(request: Request, env: AppEnv, url: URL, conta
 	return null;
 }
 
-async function upload(request: Request, env: AppEnv, url: URL, container: ContainerStub): Promise<Response> {
+async function upload(request: Request, env: AppEnv, url: URL, container: ContainerStub, church: Church): Promise<Response> {
 	const lengthHeader = request.headers.get('Content-Length');
 	const length = Number(lengthHeader);
 	if (!lengthHeader || !Number.isFinite(length)) return detail('Content-Length is required', 411);
@@ -185,7 +244,7 @@ async function upload(request: Request, env: AppEnv, url: URL, container: Contai
 	const noteId = crypto.randomUUID();
 	const key = `notes/${noteId}/source`;
 	await env.MEDIA.put(key, request.body, { httpMetadata: { contentType } });
-	const response = await internal(container, 'POST', '/api/internal/notes', { title, r2_key: key, note_id: noteId });
+	const response = await internal(container, church, 'POST', '/api/internal/notes', { title, r2_key: key, note_id: noteId });
 	if (!response.ok) await env.MEDIA.delete(key);
 	return response;
 }
@@ -198,29 +257,64 @@ can could did do does doing down during each few for from further had has have h
 its just me more most my no nor not now of off on once only or other our out over own same she should so some such than that the their
 them then there these they this those through to too under until up very was we were what when where which while who whom why will with
 would you your yours many much tell said say says saying talk talked talks mention mentioned speak spoke pastor preacher speaker sermon
-message note notes video church thing things get got going go really like one`.split(/\s+/));
+message note notes video church thing things get got going go really like one isnt dont doesnt didnt arent cant wont its`.split(/\s+/));
+// Words an answer uses to report what was said ("the pastor explains that..."). They are not facts, so the
+// grounding check leaves them out of the answer's topic words.
+const REPORTING = new Set(`explain explains explained describe describes described encourage encourages encouraged teach teaches taught
+emphasize emphasizes emphasized remind reminds reminded suggest suggests suggested urge urges urged point points pointed share shares
+shared highlight highlights highlighted discuss discusses discussed according believer believers listener listeners people us also
+instead rather means mean meant`.split(/\s+/));
+
+// forgive, forgiving and forgiveness share a stem; so do choice and choices.
+const dropE = (word: string) => (word.length > 4 && word.endsWith('e') ? word.slice(0, -1) : word);
 
 function stem(word: string): string {
 	for (const suffix of ['ingly', 'edly', 'ness', 'ers', 'ing', 'ies', 'er', 'ed', 'es', 'ly', 's']) {
-		if (word.length - suffix.length >= 3 && word.endsWith(suffix)) return suffix === 'ies' ? word.slice(0, -3) + 'y' : word.slice(0, -suffix.length);
+		if (word.length - suffix.length >= 3 && word.endsWith(suffix)) return dropE(suffix === 'ies' ? word.slice(0, -3) + 'y' : word.slice(0, -suffix.length));
 	}
-	return word;
+	return dropE(word);
 }
 
 const normalize = (text: string) =>
 	text.toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-const contentStems = (text: string) =>
-	new Set(normalize(text).split(' ').map((w) => w.replace(/'/g, '')).filter((w) => w.length >= 3 && !STOPWORDS.has(w)).map(stem));
+const contentStems = (text: string, skip: Set<string> = STOPWORDS) =>
+	new Set(normalize(text).split(' ').map((w) => w.replace(/'/g, '')).filter((w) => w.length >= 3 && !STOPWORDS.has(w) && !skip.has(w)).map(stem));
 
-function cosine(a: number[], b: number[]): number {
-	let dot = 0, na = 0, nb = 0;
-	for (let i = 0; i < a.length; i++) {
-		dot += a[i] * b[i];
-		na += a[i] * a[i];
-		nb += b[i] * b[i];
+/** Share of an answer's topic words found in the retrieved passages (or in the question it restates). */
+export const GROUNDED_SHARE = 0.6;
+export function groundedShare(answer: string, passages: string[], question = ''): number {
+	const source = new Set([...passages, question].flatMap((t) => [...contentStems(t)]));
+	const words = [...contentStems(answer, REPORTING)];
+	return words.length ? words.filter((s) => source.has(s)).length / words.length : 1;
+}
+
+/** Without vectors: rank passages by how many of the question's topic words they contain. */
+function keywordRank(chunks: Chunk[], questionStems: Set<string>): Scored[] {
+	if (!questionStems.size) return [];
+	return chunks
+		.map(({ embedding, embed_model, ...chunk }) => {
+			const stems = contentStems(chunk.text);
+			return { ...chunk, score: [...questionStems].filter((s) => stems.has(s)).length / questionStems.size };
+		})
+		.filter((c) => c.score > 0)
+		.sort((a, b) => b.score - a.score || a.idx - b.idx)
+		.slice(0, TOP_K);
+}
+
+/** Staff or API key: re-embed this church's chunks that are not on the current Gloo model, one batch per call.
+ * Repeat until `done`; it resumes where the last call stopped. Never re-transcribes. */
+async function reembed(env: AppEnv, url: URL, slug: string): Promise<Response> {
+	if (!env.GLOO_API_KEY) return detail('GLOO_API_KEY is not set on this deploy', 503);
+	const limit = Number(url.searchParams.get('limit') ?? '') || undefined;
+	let result;
+	try {
+		result = await backfillChurch(dbFor(env, slug), env, limit);
+	} catch (err) {
+		console.error('embedding backfill failed:', String(err));
+		return detail('Backfill failed', 500);
 	}
-	return na && nb ? dot / Math.sqrt(na * nb) : 0;
+	return json({ church: slug, ...result }, result.error && !result.embedded ? 502 : 200);
 }
 
 export function timestamp(seconds: number): string {
@@ -229,7 +323,7 @@ export function timestamp(seconds: number): string {
 	return h ? `${h}:${mmss}` : mmss;
 }
 
-async function answer(request: Request, env: AppEnv, url: URL, noteId: string): Promise<Response> {
+async function answer(request: Request, env: AppEnv, url: URL, noteId: string, slug: string): Promise<Response> {
 	let body;
 	try {
 		body = await readJson(request);
@@ -241,9 +335,10 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string): 
 
 	let results;
 	try {
-		results = await sql(env,
+		await ensureChunkTags(env, slug);
+		results = await sql(env, slug,
 			{ sql: 'SELECT status, source_kind, source_url FROM notes WHERE id = ?', params: [noteId] },
-			{ sql: 'SELECT idx, start, "end", seg_from, seg_to, text, embedding FROM chunks WHERE note_id = ? ORDER BY idx', params: [noteId] },
+			{ sql: 'SELECT idx, start, "end", seg_from, seg_to, text, embedding, embed_model FROM chunks WHERE note_id = ? ORDER BY idx', params: [noteId] },
 			{ sql: "SELECT data FROM config WHERE key = 'church'" },
 			{ sql: 'SELECT idx, start, "end", text FROM segments WHERE note_id = ? ORDER BY idx', params: [noteId] });
 	} catch {
@@ -254,24 +349,44 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string): 
 	if (note.status !== 'ready') return detail(`Note is ${note.status}, not ready`, 409);
 	const churchName = config ? JSON.parse(config.data).name : 'the church';
 
-	const [questionVector] = await embed(env, [question]);
 	const questionStems = contentStems(question);
 	const minScore = Number(env.NOTES_MIN_SCORE);
-	const ranked: Scored[] = chunks
-		.map(({ embedding, ...chunk }) => ({ ...chunk, score: cosine(questionVector, JSON.parse(embedding)) }))
-		.sort((a, b) => b.score - a.score)
-		.slice(0, TOP_K);
-	// A passage supports the question only if it is semantically close AND shares a topic word with it.
-	const supported = ranked.filter((c) => c.score >= minScore && [...contentStems(c.text)].some((s) => questionStems.has(s)));
+	const tag = embedTag(env);
+	let ranked: Scored[], retrieval: 'vector' | 'keyword', retrievalReason: string | undefined, reembedded = 0;
+	try {
+		// Chunks embedded by another model (or not at all) are re-embedded from their stored text first.
+		const stale = chunks.filter((c) => c.embed_model !== tag || !c.embedding);
+		if (stale.length) {
+			const out = await embedChunks(dbFor(env, slug), env, stale.map((c) => ({ note_id: noteId, idx: c.idx, text: c.text })));
+			stale.forEach((c, i) => Object.assign(c, { embedding: vectorJson(out.vectors[i]), embed_model: out.tag }));
+			reembedded = out.saved;
+		}
+		const { vectors: [questionVector] } = await embedTexts(env, [question]);
+		ranked = comparable(chunks, tag)
+			.map(({ embedding, embed_model, ...chunk }) => ({ ...chunk, score: cosine(questionVector, JSON.parse(embedding)) }))
+			.sort((a, b) => b.score - a.score)
+			.slice(0, TOP_K);
+		retrieval = 'vector';
+	} catch (err) {
+		// No key or Gloo is down: keyword search over the same passages, never an error and never another model's vectors.
+		retrievalReason = err instanceof EmbedError ? `embeddings_${err.code}` : 'embeddings_failed';
+		if (retrievalReason !== 'embeddings_no_key') console.error('question embedding failed:', String(err));
+		ranked = keywordRank(chunks, questionStems);
+		retrieval = 'keyword';
+	}
+	// A passage supports the question only if it shares a topic word with it AND (with vectors) is semantically close.
+	const sharesTopic = (c: Scored) => [...contentStems(c.text)].some((s) => questionStems.has(s));
+	const supported = ranked.filter((c) => sharesTopic(c) && (retrieval === 'keyword' || c.score >= minScore));
 	const debug = url.searchParams.get('debug') === '1'
-		? { min_score: minScore, question_terms: [...questionStems], top: ranked.map((c) => ({ chunk: c.idx, score: Number(c.score.toFixed(4)), text: c.text.slice(0, 120) })) }
+		? { min_score: minScore, embed_model: tag, reembedded, question_terms: [...questionStems], top: ranked.map((c) => ({ chunk: c.idx, score: Number(c.score.toFixed(4)), text: c.text.slice(0, 120) })) }
 		: undefined;
 
 	const cite = (c: Scored | Segment, quote = c.text, chunk = c.idx): Citation => ({
 		chunk, start: c.start, end: c.end, timestamp: timestamp(c.start), quote,
 		...(note.source_kind === 'youtube' && note.source_url ? { url: `${note.source_url}&t=${Math.floor(c.start)}s` } : {}),
 	});
-	const reply = (result: Answer, engine: string, extra: Record<string, unknown> = {}) => json({ ...result, engine, ...extra, ...(debug ? { debug } : {}) });
+	const reply = (result: Answer, engine: string, extra: Record<string, unknown> = {}) =>
+		json({ ...result, engine, retrieval, ...(retrievalReason ? { retrieval_reason: retrievalReason } : {}), ...extra, ...(debug ? { debug } : {}) });
 
 	if (!supported.length) return reply({ found: false, answer: NOT_FOUND, citations: [] }, 'extractive');
 
@@ -293,7 +408,7 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string): 
 
 	let raw: unknown, label: string;
 	try {
-		[raw, label] = await askModel(env, engine, churchName, question, supported);
+		[raw, label] = await askModel(env, churchName, question, supported);
 	} catch (err) {
 		console.error('answer model failed:', String(err));
 		return reply(extractive(), 'extractive', { fallback_reason: 'model_error' });
@@ -304,18 +419,16 @@ async function answer(request: Request, env: AppEnv, url: URL, noteId: string): 
 		const seg = segments.slice(c.seg_from, c.seg_to + 1).find((s) => normalize(s.text).includes(needle) || needle.includes(normalize(s.text)));
 		return seg ? cite(seg, quote, c.idx) : cite(c, quote);
 	};
-	const checked = verify(raw, supported, citeQuote);
+	const checked = verify(raw, supported, citeQuote, question);
 	if (typeof checked === 'string') return reply(extractive(), 'extractive', { fallback_reason: checked });
 	// The gate found support; a model that finds nothing can't make the answer worse than verbatim.
 	if (!checked.found) return reply(extractive(), 'extractive', { fallback_reason: 'model_found_nothing' });
 	return reply(checked, label);
 }
 
-function pickEngine(env: AppEnv, requested: unknown): 'extractive' | 'gemini' | 'workers-ai' {
-	if (requested === 'extractive') return 'extractive';
-	if (env.GEMINI_API_KEY) return 'gemini';
-	if (env.NOTES_ANSWER_ENGINE === 'workers-ai') return 'workers-ai';
-	return 'extractive';
+function pickEngine(env: AppEnv, requested: unknown): 'extractive' | 'gloo' {
+	// Gloo answers the questions. Without a key (or when asked) the extractive answerer, which uses no model.
+	return requested !== 'extractive' && env.GLOO_API_KEY ? 'gloo' : 'extractive';
 }
 
 const SYSTEM_PROMPT = `You answer questions about one sermon or teaching from {church}, using ONLY the transcript passages provided.
@@ -328,61 +441,79 @@ Rules:
 
 Return JSON only: {"found": boolean, "answer": string, "citations": [{"id": "C1", "quote": "exact words from C1"}]}`;
 
-/** The first JSON object in a model reply (small models sometimes wrap it in prose or a code fence). */
-function parseModelJson(reply: unknown): unknown {
+/** The JSON object in a model reply. Reasoning models may put a <think> block, a code fence or prose (with
+ * braces of its own) around it, so reasoning is dropped and each balanced {...} is tried in turn. */
+export function parseModelJson(reply: unknown): unknown {
 	if (typeof reply !== 'string') return reply;
-	const start = reply.indexOf('{'), end = reply.lastIndexOf('}');
-	return start >= 0 && end > start ? JSON.parse(reply.slice(start, end + 1)) : null;
+	let text = reply.replace(/<think>[\s\S]*?<\/think>/gi, '');
+	const open = text.toLowerCase().indexOf('<think>');
+	if (open >= 0) text = text.slice(0, open); // thinking cut off before it closed
+	for (let start = text.indexOf('{'); start >= 0; start = text.indexOf('{', start + 1)) {
+		const end = balancedEnd(text, start);
+		if (end < 0) continue;
+		try {
+			const value = JSON.parse(text.slice(start, end + 1));
+			if (value && typeof value === 'object') return value;
+		} catch {
+			/* not JSON; try the next '{' */
+		}
+	}
+	return null;
 }
 
-async function askModel(env: AppEnv, engine: 'gemini' | 'workers-ai', church: string, question: string, passages: Scored[]): Promise<[unknown, string]> {
+/** Index of the '}' that closes the '{' at `start` (braces inside JSON strings are ignored), or -1. */
+function balancedEnd(text: string, start: number): number {
+	let depth = 0, inString = false;
+	for (let i = start; i < text.length; i++) {
+		const ch = text[i];
+		if (inString) {
+			if (ch === '\\') i++;
+			else if (ch === '"') inString = false;
+		} else if (ch === '"') inString = true;
+		else if (ch === '{') depth++;
+		else if (ch === '}' && --depth === 0) return i;
+	}
+	return -1;
+}
+
+async function askModel(env: AppEnv, church: string, question: string, passages: Scored[]): Promise<[unknown, string]> {
 	const system = SYSTEM_PROMPT.replace('{church}', church);
 	const user = passages.map((c, i) => `[C${i + 1}] (${timestamp(c.start)}) ${c.text}`).join('\n\n') + `\n\nQuestion: ${question}`;
-	if (engine === 'gemini') {
-		const model = env.GEMINI_MODEL;
-		const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! },
-			body: JSON.stringify({
-				systemInstruction: { parts: [{ text: system }] },
-				contents: [{ role: 'user', parts: [{ text: user }] }],
-				generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-			}),
-		});
-		if (!response.ok) throw new Error(`gemini ${response.status}: ${(await response.text()).slice(0, 300)}`);
-		const out = await response.json<any>();
-		return [parseModelJson(out.candidates?.[0]?.content?.parts?.[0]?.text ?? ''), `gemini:${model}`];
-	}
-	const model = env.NOTES_LLM_MODEL;
-	const out: any = await env.AI.run(model as any, {
-		// No response_format: llama-3.1-8b-instruct-fp8 rejects JSON Schema mode (AiError 5025).
-		messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-		temperature: 0,
-		max_tokens: 600,
-	} as any);
-	return [parseModelJson(out.response), `workers-ai:${model}`];
+	// Same endpoint and model the chat uses (backend/app/chat.py), over OpenAI chat completions.
+	const model = (env.GLOO_MODEL ?? '').trim() || GLOO_DEFAULT_MODEL;
+	const response = await fetch(GLOO_CHAT_URL, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GLOO_API_KEY}` },
+		body: JSON.stringify({
+			auto_routing: false,
+			model,
+			messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+			temperature: 0,
+			max_tokens: 600,
+		}),
+		signal: AbortSignal.timeout(GLOO_TIMEOUT_MS),
+	});
+	if (!response.ok) throw new Error(`gloo ${response.status}: ${(await response.text()).slice(0, 300)}`);
+	const out = await response.json<any>();
+	return [parseModelJson(out.choices?.[0]?.message?.content ?? ''), `gloo:${model}`];
 }
 
-/** Accept the model's answer only if every quote is really in its passage and the answer's
- * topic words come from the cited passages. Otherwise return the reason it was rejected. */
-function verify(raw: any, passages: Scored[], cite: (c: Scored, quote: string) => Citation): Answer | string {
+/** Accept the model's answer only if every quote is really, word for word, in its passage and most of the
+ * answer's topic words (GROUNDED_SHARE) come from the passages it was given, cited or not. A paraphrase
+ * passes; an answer that brings in facts from elsewhere does not. Otherwise return the reason it was rejected. */
+function verify(raw: any, passages: Scored[], cite: (c: Scored, quote: string) => Citation, question = ''): Answer | string {
 	if (!raw || typeof raw.found !== 'boolean') return 'bad_model_output';
 	if (!raw.found) return { found: false, answer: NOT_FOUND, citations: [] };
 	if (typeof raw.answer !== 'string' || !raw.answer.trim()) return 'bad_model_output';
 	if (!Array.isArray(raw.citations) || !raw.citations.length) return 'no_citations';
 	const citations: Citation[] = [];
-	const cited = new Set<Scored>();
 	for (const c of raw.citations) {
 		const passage = passages[Number(/^C(\d+)$/.exec(String(c?.id ?? ''))?.[1]) - 1];
 		if (!passage) return 'unknown_citation';
 		const quote = normalize(String(c.quote ?? ''));
 		if (quote.length < 8 || !normalize(passage.text).includes(quote)) return 'quote_not_in_transcript';
 		citations.push(cite(passage, String(c.quote).trim()));
-		cited.add(passage);
 	}
-	const sourceStems = new Set([...cited].flatMap((p) => [...contentStems(p.text)]));
-	const answerStems = [...contentStems(raw.answer)];
-	const grounded = answerStems.filter((s) => sourceStems.has(s)).length;
-	if (answerStems.length && grounded / answerStems.length < 0.8) return 'answer_not_grounded';
+	if (groundedShare(raw.answer, passages.map((p) => p.text), question) < GROUNDED_SHARE) return 'answer_not_grounded';
 	return { found: true, answer: raw.answer.trim(), citations };
 }

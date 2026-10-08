@@ -44,8 +44,8 @@ that `wrangler.jsonc` (every branch made from `main`) gets its own
 - **Branches with the FastAPI + Postgres backend** (erik, ben, will, prayer
   map): the built frontend plus `preview-api-stub/`, a stand-in for the
   backend's API that runs inside the preview itself, seeded from the branch's
-  `backend/app/*.json`. No database and no AI: chat, event summaries and
-  prayer angles give demo answers. Its data is kept in memory, so what you add
+  `backend/app/*.json`. No database and no AI: chat and event summaries
+  give demo answers. Its data is kept in memory, so what you add
   resets on every deploy and when the preview has been idle.
 
 ## The token

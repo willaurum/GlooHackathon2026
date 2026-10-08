@@ -51,6 +51,36 @@ jobs:
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
           npm run deploy
 
+      # AI keys can live in GitHub secrets (and the model in a GitHub variable): whichever is set there is copied to the
+      # pastor-notes Worker on every deploy. One that is not set in GitHub is left untouched.
+      - name: Copy AI keys from GitHub secrets to the API Worker
+        working-directory: api
+        env:
+          GLOO_API_KEY: ${{ secrets.GLOO_API_KEY }}
+          NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
+          # The YouTube helper on Jaron's dev server (scripts/youtube-helper): the key is a secret, the URL a variable.
+          YT_HELPER_KEY: ${{ secrets.YT_HELPER_KEY }}
+          YT_HELPER_URL: ${{ vars.YT_HELPER_URL }}
+          # Not secret: set it under Settings > Secrets and variables > Actions > Variables.
+          GLOO_MODEL: ${{ vars.GLOO_MODEL }}
+          # Also a variable: the Gloo embedding model for sermon-note search (default gloo-baai-bge-base-en-v1.5).
+          GLOO_EMBED_MODEL: ${{ vars.GLOO_EMBED_MODEL }}
+          # Also a variable: the Gloo model that tags sermon highlights (default: GLOO_MODEL, then gloo-qwen-3.7-flash).
+          GLOO_NOTES_MODEL: ${{ vars.GLOO_NOTES_MODEL }}
+          GLOO_MATCH_MODEL: ${{ vars.GLOO_MATCH_MODEL }}
+          # Also a variable: the agentic builder's model (default: GLOO_MATCH_MODEL, then gloo-anthropic-claude-haiku-4.5).
+          GLOO_BUILDER_MODEL: ${{ vars.GLOO_BUILDER_MODEL }}
+        run: |
+          for name in GLOO_API_KEY NEWSDATA_API_KEY YT_HELPER_KEY YT_HELPER_URL GLOO_MODEL GLOO_EMBED_MODEL GLOO_NOTES_MODEL GLOO_MATCH_MODEL GLOO_BUILDER_MODEL; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              printf '%s' "$value" | npx wrangler secret put "$name"
+              echo "Set $name on the API Worker."
+            else
+              echo "$name is not set in GitHub; leaving the Worker's copy as it is."
+            fi
+          done
+
       - name: Deploy giving API
         working-directory: api-giving
         run: |

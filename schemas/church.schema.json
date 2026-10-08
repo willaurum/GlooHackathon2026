@@ -1,0 +1,830 @@
+{
+  "$defs": {
+    "CalendarEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "ai_summary": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Summary"
+        },
+        "category": {
+          "default": "General",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "date": {
+          "title": "Date",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "location": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Location",
+          "type": "string"
+        },
+        "ministry_name": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ministry Name"
+        },
+        "time": {
+          "default": "",
+          "maxLength": 100,
+          "title": "Time",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "date"
+      ],
+      "title": "CalendarEvent",
+      "type": "object"
+    },
+    "Faq": {
+      "additionalProperties": true,
+      "properties": {
+        "answer": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Answer",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "question": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question",
+        "answer"
+      ],
+      "title": "Faq",
+      "type": "object"
+    },
+    "Highlight": {
+      "additionalProperties": true,
+      "description": "church.json events and groups: short listings the visit page and the chat use.",
+      "properties": {
+        "audience": {
+          "default": "",
+          "maxLength": 100,
+          "title": "Audience",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "when": {
+          "default": "",
+          "maxLength": 200,
+          "title": "When",
+          "type": "string"
+        },
+        "where": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Where",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Highlight",
+      "type": "object"
+    },
+    "Info": {
+      "additionalProperties": true,
+      "properties": {
+        "about": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "About",
+          "type": "string"
+        },
+        "address": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Address",
+          "type": "string"
+        },
+        "care_team": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Care Team",
+          "type": "string"
+        },
+        "city": {
+          "default": "",
+          "maxLength": 120,
+          "title": "City",
+          "type": "string"
+        },
+        "email": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Email",
+          "type": "string"
+        },
+        "first_visit": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "First Visit",
+          "type": "string"
+        },
+        "map_query": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Map Query",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "office_hours": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Office Hours",
+          "type": "string"
+        },
+        "phone": {
+          "default": "",
+          "maxLength": 60,
+          "title": "Phone",
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/Service"
+          },
+          "maxItems": 30,
+          "title": "Services",
+          "type": "array"
+        },
+        "tagline": {
+          "default": "",
+          "maxLength": 160,
+          "title": "Tagline",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Info",
+      "type": "object"
+    },
+    "Location": {
+      "additionalProperties": true,
+      "description": "A campus or meeting place. The church's main address stays in info.address.",
+      "properties": {
+        "address": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Address",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "map_query": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Map Query",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Note",
+          "type": "string"
+        },
+        "service_times": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Service Times",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Location",
+      "type": "object"
+    },
+    "Ministry": {
+      "additionalProperties": true,
+      "properties": {
+        "category": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Category",
+          "type": "string"
+        },
+        "day": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Day",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Description",
+          "type": "string"
+        },
+        "email": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Email",
+          "type": "string"
+        },
+        "filled": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Filled",
+          "type": "integer"
+        },
+        "head": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Head",
+          "type": "string"
+        },
+        "icon": {
+          "default": "✦",
+          "maxLength": 4,
+          "title": "Icon",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Note",
+          "type": "string"
+        },
+        "requirements": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Requirements",
+          "type": "array"
+        },
+        "shifts": {
+          "items": {
+            "$ref": "#/$defs/Shift"
+          },
+          "maxItems": 100,
+          "title": "Shifts",
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Skills",
+          "type": "array"
+        },
+        "style": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Style",
+          "type": "string"
+        },
+        "total": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Ministry",
+      "type": "object"
+    },
+    "Person": {
+      "additionalProperties": true,
+      "description": "A staff or leadership directory entry.",
+      "properties": {
+        "bio": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Bio",
+          "type": "string"
+        },
+        "email": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Email",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Group",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "phone": {
+          "default": "",
+          "maxLength": 60,
+          "title": "Phone",
+          "type": "string"
+        },
+        "photo": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Photo",
+          "type": "string"
+        },
+        "role": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Person",
+      "type": "object"
+    },
+    "Sermon": {
+      "additionalProperties": true,
+      "description": "A sermon or message the church has published (a link, not a Sermon Notes transcript).",
+      "properties": {
+        "date": {
+          "default": "",
+          "title": "Date",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "scripture": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Scripture",
+          "type": "string"
+        },
+        "series": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Series",
+          "type": "string"
+        },
+        "speaker": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Speaker",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "maxLength": 500,
+          "pattern": "^(https?://\\S+)?$",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "Sermon",
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": true,
+      "properties": {
+        "day": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Day",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Note",
+          "type": "string"
+        },
+        "time": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "day",
+        "time"
+      ],
+      "title": "Service",
+      "type": "object"
+    },
+    "Shift": {
+      "additionalProperties": true,
+      "properties": {
+        "date": {
+          "title": "Date",
+          "type": "string"
+        },
+        "end_time": {
+          "title": "End Time",
+          "type": "string"
+        },
+        "filled": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Filled",
+          "type": "integer"
+        },
+        "frequencies": {
+          "items": {
+            "enum": [
+              "one-time",
+              "weekly",
+              "monthly"
+            ],
+            "type": "string"
+          },
+          "title": "Frequencies",
+          "type": "array"
+        },
+        "id": {
+          "default": "",
+          "maxLength": 40,
+          "title": "Id",
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Services",
+          "type": "array"
+        },
+        "start_time": {
+          "title": "Start Time",
+          "type": "string"
+        },
+        "total": {
+          "default": 1,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "date",
+        "start_time",
+        "end_time"
+      ],
+      "title": "Shift",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "description": "Where one fact came from: the page (title, url) and the exact words on it (quote, with a few words of\ncontext either side so a link can point at that spot).",
+      "properties": {
+        "prefix": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Prefix",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Quote",
+          "type": "string"
+        },
+        "suffix": {
+          "default": "",
+          "maxLength": 80,
+          "title": "Suffix",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "title": "Source",
+      "type": "object"
+    },
+    "Sources": {
+      "additionalProperties": false,
+      "properties": {
+        "info": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/Source"
+            },
+            "type": "array"
+          },
+          "title": "Info",
+          "type": "object"
+        },
+        "items": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "title": "Items",
+          "type": "object"
+        }
+      },
+      "title": "Sources",
+      "type": "object"
+    }
+  },
+  "$id": "https://tekton.church/schemas/church.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "church.json",
+  "properties": {
+    "calendar": {
+      "items": {
+        "$ref": "#/$defs/CalendarEvent"
+      },
+      "maxItems": 500,
+      "title": "Calendar",
+      "type": "array"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/Highlight"
+      },
+      "maxItems": 100,
+      "title": "Events",
+      "type": "array"
+    },
+    "faqs": {
+      "items": {
+        "$ref": "#/$defs/Faq"
+      },
+      "maxItems": 100,
+      "title": "Faqs",
+      "type": "array"
+    },
+    "generated_at": {
+      "default": "",
+      "maxLength": 40,
+      "title": "Generated At",
+      "type": "string"
+    },
+    "generated_by": {
+      "const": "tekton",
+      "default": "tekton",
+      "title": "Generated By",
+      "type": "string"
+    },
+    "groups": {
+      "items": {
+        "$ref": "#/$defs/Highlight"
+      },
+      "maxItems": 100,
+      "title": "Groups",
+      "type": "array"
+    },
+    "info": {
+      "$ref": "#/$defs/Info"
+    },
+    "kind": {
+      "const": "church",
+      "default": "church",
+      "title": "Kind",
+      "type": "string"
+    },
+    "locations": {
+      "items": {
+        "$ref": "#/$defs/Location"
+      },
+      "maxItems": 30,
+      "title": "Locations",
+      "type": "array"
+    },
+    "ministries": {
+      "items": {
+        "$ref": "#/$defs/Ministry"
+      },
+      "maxItems": 60,
+      "title": "Ministries",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sermons": {
+      "items": {
+        "$ref": "#/$defs/Sermon"
+      },
+      "maxItems": 200,
+      "title": "Sermons",
+      "type": "array"
+    },
+    "source_url": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Source Url",
+      "type": "string"
+    },
+    "sources": {
+      "$ref": "#/$defs/Sources"
+    },
+    "staff": {
+      "items": {
+        "$ref": "#/$defs/Person"
+      },
+      "maxItems": 200,
+      "title": "Staff",
+      "type": "array"
+    }
+  },
+  "required": [
+    "info"
+  ],
+  "title": "ChurchFile",
+  "type": "object"
+}

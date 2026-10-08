@@ -1,0 +1,16 @@
+# Copy this file to bridge.config (same folder) and fill it in once.
+# bridge.config is ignored by git. Never commit it or paste it in chat; it holds team secrets.
+
+# Your Liberty HPC username, for the SSH tunnel. Leave empty if you open the tunnel yourself.
+HPC_USERNAME=
+
+# The team AI key and the team tunnel token. Jaron sends these privately.
+TEAM_AI_KEY=
+TUNNEL_TOKEN=
+
+# Models the bridge shares (comma-separated). Leave as is unless the team agrees otherwise.
+MODELS=qwen3.8:27b
+
+# Local ports; change only if something else already uses them.
+OLLAMA_PORT=11434
+GATEKEEPER_PORT=8787

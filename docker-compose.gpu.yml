@@ -1,0 +1,12 @@
+# Optional: give the ollama container an NVIDIA GPU, which makes replies faster.
+# Used together with docker-compose.ollama.yml. Opt in per command:
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.gpu.yml up -d
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

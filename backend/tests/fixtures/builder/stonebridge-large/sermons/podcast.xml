@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Stonebridge Church Sermons</title>
+    <item><title>Hope That Holds | Psalm 46</title><link>https://www.youtube.com/watch?v=abcdefghij1</link>
+      <pubDate>Sun, 29 Dec 2029 10:00:00 GMT</pubDate><itunes:author>Ruth Calloway</itunes:author>
+      <enclosure url="https://church.test/audio/abcdefghij1.mp3" type="audio/mpeg" length="1"/></item>
+    <item><title>Neighbors | Luke 10</title><link>https://www.youtube.com/watch?v=abcdefghij2</link>
+      <pubDate>Sun, 22 Dec 2029 10:00:00 GMT</pubDate><itunes:author>Ruth Calloway</itunes:author>
+      <enclosure url="https://church.test/audio/abcdefghij2.mp3" type="audio/mpeg" length="1"/></item>
+    <item><title>Bread for the Journey | John 6</title><link>https://www.youtube.com/watch?v=abcdefghij3</link>
+      <pubDate>Sun, 15 Dec 2029 10:00:00 GMT</pubDate><itunes:author>Ruth Calloway</itunes:author>
+      <enclosure url="https://church.test/audio/abcdefghij3.mp3" type="audio/mpeg" length="1"/></item>
+  </channel>
+</rss>

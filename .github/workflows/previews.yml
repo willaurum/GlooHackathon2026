@@ -29,7 +29,7 @@ name: Previews
 
 on:
   push:
-    branches: ['main', 'jaron-*', 'ben-*', 'erik-*', 'will-*', 'feature/**']
+    branches: ['main', 'jaron-*', 'ben-*', 'erik-*', 'will-*', 'isaac-*', 'isaiah-*', 'feature/**']
   pull_request:
     types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
@@ -102,6 +102,8 @@ jobs:
           fi
           case "$WORKER" in
             preview-*"$SUFFIX") ;;
+            # Only a push to main may deploy the live Worker (KIND=cloudflare is set for main alone).
+            "$LIVE") [ "$KIND" = cloudflare ] || { echo "::error::Only main deploys the live site ($LIVE)."; exit 1; } ;;
             *) echo "::error::Refusing to deploy '$WORKER': preview Workers are named preview-...$SUFFIX."; exit 1 ;;
           esac
           echo "Branch $BRANCH, kind $KIND, Worker $WORKER"

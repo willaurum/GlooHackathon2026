@@ -1,0 +1,17 @@
+{
+  "label": "Cedar Hollow",
+  "name": "Cedar Hollow Community Church",
+  "address": "418 Quillmore Lane, Thistlemere, OH",
+  "phone": "5550142290",
+  "email": "hello@cedarhollow.example.org",
+  "services": [
+    {"day": "Sunday", "time": "08:30"},
+    {"day": "Sunday", "time": "10:45"},
+    {"day": "Wednesday", "time": "19:00"}
+  ],
+  "office_hours": "Monday–Thursday, 9:00 AM – 3:00 PM\nClosed Fridays",
+  "about": "Cedar Hollow began as a Bible study of eleven families meeting in a farmhouse on Quillmore Lane. Our current building was finished in 1981 and expanded in 2009 to add the Fellowship Hall and children's wing.",
+  "first_visit": "Services last about an hour. Dress is casual; you will see everything from jeans to suits. Greeters at the front doors can show you around, and coffee and pastries are in the lobby before each service.",
+  "conflicts": [],
+  "missing": []
+}
