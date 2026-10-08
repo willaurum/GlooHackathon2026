@@ -166,6 +166,7 @@ const OPERATOR_ROUTES: Route[] = [['POST', /^\/api\/(ai|ollama)\/model$/]];
 const STAFF_ROUTES: Route[] = [
 	['GET', /^\/api\/church\/content$/],
 	['PUT', /^\/api\/church\/content$/],
+	['POST', /^\/api\/church\/(edit-assist|preview)$/],
 	// Blog routes match Ben's PR #52; drafting and approval workflows must filter drafts separately.
 	['POST', /^\/api\/blog(?:\/.*)?$/],
 	['PUT', /^\/api\/blog(?:\/.*)?$/],
