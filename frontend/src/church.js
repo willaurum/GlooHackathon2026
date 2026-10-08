@@ -45,6 +45,12 @@ export function resolveChurch({ host = '', hash = '', saved = '', base = BASE_DO
   return { slug: DEMO_CHURCH, source: 'demo', route: fromHash.route };
 }
 
+/** Whether this is Tekton's own front door: the bare address (no hash, `#` or `#/`) off any church subdomain.
+ * It opens the site builder (#/new); churches, the demo church included, are reached by their own links. */
+export function isLanding({ host = '', hash = '', base = BASE_DOMAIN } = {}) {
+  return !slugFromHost(host, base) && /^#?\/?$/.test(String(hash || ''));
+}
+
 /** The hash for a page of a church: #/c/<slug>/<route>, so a copied address bar or shared link keeps the church
  * (the demo church too). On a church subdomain the church is already in the host, and the site builder (#/new)
  * belongs to no church. */

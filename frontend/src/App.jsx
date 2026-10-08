@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, churchCapabilities, gapi, setApiChurch, startApiPreview, stopApiPreview, whenCapabilitiesKnown } from './api.js';
 import { ChurchContext } from './ChurchContext.js';
 import ChatWidget from './ChatWidget.jsx';
-import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isSlug, needsChurchInHash, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
+import { DEMO_CHURCH, DEMO_INFO, forgetSavedChurch, getStaffToken, getVerifiedStaffToken, hashFor, isLanding, isSlug, needsChurchInHash, resolveChurch, saveChurch, savedChurch, setStaffToken, shareLink } from './church.js';
 import ChurchSetup from './ChurchSetup.jsx';
 import Builder from './Builder.jsx';
 import { draftApi } from './builderApi.js';
@@ -78,6 +78,8 @@ function readLocation() {
       route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) || PAGE_ROUTE.test(route) ? route : '', false) };
   }
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
+  // The bare address is Tekton's landing page, the site builder (a checkout return on /give still opens Give).
+  if (!onGivePath() && isLanding({ host: window.location.host, hash: window.location.hash })) return { ...where, route: 'new' };
   const back = new URLSearchParams(window.location.search).get('church');
   if (onGivePath() && isSlug(back) && where.source !== 'subdomain') Object.assign(where, { slug: back, source: 'link' });
   // The blog became part of News, Church staff moved out of Give, and the prayer map lost its one sub-page;
