@@ -1,4 +1,4 @@
-import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { orderedSections } from './churchSite.js';
 import { SECTIONS, cleanLayout, cleanText, parsePath } from './siteDraft.js';
 
@@ -10,6 +10,11 @@ export const useEditor = () => useContext(EditorContext);
 const active = editor => !!editor && !editor.clean;
 const classes = (...names) => names.filter(Boolean).join(' ') || undefined;
 const stop = e => { e.preventDefault(); e.stopPropagation(); };
+// Space and Enter on text inside a <summary> (an FAQ question) would open or close its <details>: the summary acts on
+// the click they cause and on their key up. Text being edited keeps those keys to itself.
+const keepKeys = e => { if (e.key === ' ' || e.key === 'Enter') stop(e); };
+/** The tooltip on site buttons that do nothing in the editor. */
+export const INERT = 'Buttons don’t work while editing';
 
 /** Text staff can change in place. `path` is a draft path (siteDraft.js), `fallback` the text shown while the field is
  *  empty (the template's own), `render` turns the text into elements (paragraphs). Without an editor it renders
@@ -54,21 +59,34 @@ export function Editable({ path, as: Tag = null, className, fallback = '', rende
   const status = editor.status(path);
   if (editing) return <El ref={ref} className={classes(className, 'editable', 'editing', where?.multiline && 'multiline')}
     contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-multiline={!!where?.multiline}
-    aria-label={editor.label(path)} onKeyDown={onKeyDown} onBlur={commit} onClick={e => e.stopPropagation()} />;
+    aria-label={editor.label(path)} onKeyDown={onKeyDown} onKeyUp={keepKeys} onBlur={commit} onClick={stop} />;
   return <El className={classes(className, 'editable', status && 'editable-' + status)} tabIndex={0}
     title={status === 'suggested' ? 'Tekton suggested this. Review it in Ask Tekton.' : 'Click to edit'}
-    onClick={e => { stop(e); setEditing(true); }} onKeyDown={e => { if (e.key === 'Enter') { stop(e); setEditing(true); } }}>
+    onClick={e => { stop(e); setEditing(true); }} onKeyUp={keepKeys}
+    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { stop(e); setEditing(true); } }}>
     {body}
   </El>;
 }
+
+// The one "Edit this in Church setup" note open now: opening another closes it.
+let closeOpenNote = null;
 
 /** A fact Church setup owns (name, address, service times, lists): in the editor, clicking it says where to change it. */
 export function SetupFact({ as: Tag = null, block = false, className, children }) {
   const editor = useEditor();
   const [open, setOpen] = useState(false);
+  const close = useRef(() => setOpen(false));
+  useEffect(() => () => { if (closeOpenNote === close.current) closeOpenNote = null; }, []);
   if (!active(editor)) return Tag ? <Tag className={className}>{children}</Tag> : <>{children}</>;
   const El = Tag || (block ? 'div' : 'span');
-  return <El className={classes(className, 'editable-fact', open && 'open')} onClick={e => { stop(e); setOpen(o => !o); }}>
+  function toggle(e) {
+    stop(e);
+    if (open) { setOpen(false); closeOpenNote = null; return; }
+    if (closeOpenNote && closeOpenNote !== close.current) closeOpenNote();
+    closeOpenNote = close.current;
+    setOpen(true);
+  }
+  return <El className={classes(className, 'editable-fact', open && 'open')} onClick={toggle}>
     {children}
     {open && <span className="editor-note" role="note" onClick={e => e.stopPropagation()}>
       Edit this in Church setup. <a href={editor.setupHref}>Open Church setup</a>

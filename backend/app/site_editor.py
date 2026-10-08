@@ -2,9 +2,10 @@
 
 Every change, from the editor or suggested by Tekton, is one operation (OPS below) stored on the church's draft
 (config table, DRAFT). Nothing is live until staff publish: publishing applies the accepted operations to the
-current live content, validates it as ChurchContent and writes only the sections that changed, keeping what they
-replaced so "Restore previous version" can put it back. Facts Church setup owns (name, address, service times,
-ministries, events and the like) are not editable here.
+current live content, validates it as ChurchContent and writes only the sections that changed. It records each field
+it changed, with the value before and the value it wrote, so "Restore previous version" can put back just those fields
+(and only where nobody changed them since). Facts Church setup owns (name, address, service times, ministries, events
+and the like) are not editable here.
 
 Tekton's suggestions come from plain rules first (builder_customize.rule_ops, converted), else from one forced AI
 tool call whose operations are checked by the same validator. They land as pending and are never published until
@@ -12,17 +13,19 @@ staff accept them.
 """
 
 import copy
+import hashlib
 import logging
+import math
 import re
 import secrets
-import threading
+import unicodedata
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import builder, builder_customize, builder_edit, db, ratelimit
+from . import builder, builder_customize, builder_edit, builder_theme, db, ratelimit
 from .church_content import (HIDEABLE_PAGES, SITE_COPY, STYLE_SCALES, ChurchContent, ContentError, normalize,
                              round_scale)
 
@@ -52,22 +55,30 @@ OPS = ('set_text', 'set_style', *LAYOUT_OPS, *PAGE_OPS)
 
 # set_text paths: (pattern, max length, multiline, required). Copy keys take theirs from the catalog.
 INFO_TEXT = {'tagline': (160, False), 'about': (4000, True), 'first_visit': (4000, True)}
+# Numbers in paths are ASCII digits written the one way (no leading zeros), so one field has exactly one path.
+INDEX, ITEM_ID = r'(0|[1-9][0-9]{0,2})', r'(0|[1-9][0-9]{0,8})'
 TEXT_PATHS = [
-    (re.compile(r'info\.(tagline|about|first_visit)'), None),
-    (re.compile(r'copy\.(.+)'), None),
-    (re.compile(r'pages\.([a-z0-9][a-z0-9-]{0,79})\.title'), (200, False, True)),
-    (re.compile(r'pages\.([a-z0-9][a-z0-9-]{0,79})\.sections\.(\d{1,3})\.heading'), (200, False, False)),
-    (re.compile(r'pages\.([a-z0-9][a-z0-9-]{0,79})\.sections\.(\d{1,3})\.text'), (4000, True, False)),
-    (re.compile(r'staff\.(\d{1,9})\.name'), (120, False, True)),
-    (re.compile(r'staff\.(\d{1,9})\.role'), (120, False, False)),
-    (re.compile(r'staff\.(\d{1,9})\.bio'), (2000, True, False)),
-    (re.compile(r'faqs\.(\d{1,9})\.question'), (300, False, True)),
-    (re.compile(r'faqs\.(\d{1,9})\.answer'), (4000, True, True)),
+    (re.compile(r'info\.(tagline|about|first_visit)', re.ASCII), None),
+    (re.compile(r'copy\.(.+)', re.ASCII), None),
+    (re.compile(r'pages\.([a-z0-9][a-z0-9-]{0,79})\.title', re.ASCII), (200, False, True)),
+    (re.compile(rf'pages\.([a-z0-9][a-z0-9-]{{0,79}})\.sections\.{INDEX}\.heading', re.ASCII), (200, False, False)),
+    (re.compile(rf'pages\.([a-z0-9][a-z0-9-]{{0,79}})\.sections\.{INDEX}\.text', re.ASCII), (4000, True, False)),
+    (re.compile(rf'staff\.{ITEM_ID}\.name', re.ASCII), (120, False, True)),
+    (re.compile(rf'staff\.{ITEM_ID}\.role', re.ASCII), (120, False, False)),
+    (re.compile(rf'staff\.{ITEM_ID}\.bio', re.ASCII), (2000, True, False)),
+    (re.compile(rf'faqs\.{ITEM_ID}\.question', re.ASCII), (300, False, True)),
+    (re.compile(rf'faqs\.{ITEM_ID}\.answer', re.ASCII), (4000, True, True)),
 ]
 SETUP_OWNED = re.compile(r'(info|services|ministries|locations|events|groups|sermons|calendar|regions)(\..*)?'
-                         r'|staff\.\d+\.(email|phone|photo|group)')
+                         r'|staff\.[0-9]+\.(email|phone|photo|group)', re.ASCII)
 IN_SETUP = 'Edit this in Church setup.'
 NOT_EDITABLE = 'That part of the site cannot be changed in the editor.'
+ADD_STAFF = 'Tekton does not add people to your site. Add staff in Church setup.'
+NO_BELIEFS = 'Tekton does not write beliefs. Your pastor adds them in Church setup.'
+# What Home shows while the church has no headline or text of its own (frontend/src/siteDraft.js INFO_DEFAULTS).
+INFO_DEFAULTS = {'tagline': builder_customize.DEFAULT_TAGLINE,
+                 'about': 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. '
+                          'All in one place.'}
 
 
 class Invalid(ValueError):
@@ -90,8 +101,12 @@ def clean_text(value, limit, multiline, required=False):
     """Plain text as it will be stored, or Invalid."""
     if not isinstance(value, str):
         raise Invalid('Text must be a string.')
-    value = value.replace('\r\n', '\n').replace('\r', '\n').replace('\t', ' ')
-    value = ''.join(ch for ch in value if ch == '\n' or not (ord(ch) < 32 or 127 <= ord(ch) <= 159))
+    # Line and paragraph separators are line breaks; control and format characters (bidi controls, zero-width
+    # spaces and joiners, Unicode category Cf) are dropped, so stored text reads as it looks.
+    value = value.replace('\r\n', '\n').replace('\r', '\n').replace('\u2028', '\n').replace('\u2029', '\n')
+    value = value.replace('\t', ' ')
+    value = ''.join(ch for ch in value if ch == '\n' or not (ord(ch) < 32 or 127 <= ord(ch) <= 159
+                                                              or unicodedata.category(ch) == 'Cf'))
     if HTML_RE.search(value):
         raise Invalid('Use plain text. HTML tags are not allowed.')
     if multiline:
@@ -229,6 +244,14 @@ def read_text(content, path):
     return str(holder.get(field) or '')
 
 
+def shown_text(content, path):
+    """What a visitor sees for a set_text path: read_text, or the template's own words while the field is empty."""
+    text = read_text(content, path)
+    if not text and path.startswith('info.'):
+        return INFO_DEFAULTS.get(path[5:], '')
+    return text
+
+
 def copy_default(content, key):
     # "{name}" in the template's wording is the church's name.
     return SITE_COPY[key]['default'].replace('{name}', (content.get('info') or {}).get('name') or 'our church')
@@ -249,6 +272,50 @@ def _font_allowed(value, token, live):
     if value == ((live.get('site') or {}).get('theme') or {}).get(token):
         return value  # the church's current font, kept as it is
     raise Invalid('Pick one of the fonts listed.')
+
+
+# The template's own text color, and the page behind text when the church has picked no background (as the builder's
+# rules and frontend/src/siteDraft.js check it).
+TEMPLATE_TEXT, PAGE_WHITE = '#3a4d44', '#ffffff'
+
+
+def _mix(hex_color, target, amount):
+    a, b = ([int(c[i:i + 2], 16) for i in (1, 3, 5)] for c in (hex_color, target))
+    return '#' + ''.join(f'{math.floor(x + (y - x) * amount + 0.5):02x}' for x, y in zip(a, b))  # as JavaScript rounds
+
+
+def nearest_readable(token, value, theme):
+    """The closest color to `value` that keeps the page readable: a background lightened until it is light and the
+    text reads on it, or a text color darkened (or lightened) until it reads on the background. '' if none."""
+    for step in range(1, 21):
+        if token == 'background':
+            candidate = _mix(value, '#ffffff', step * 0.05)
+            if builder_theme._luminance(candidate) >= 0.6 and \
+                    builder_theme.contrast(theme.get('text') or TEMPLATE_TEXT, candidate) >= 4.5:
+                return candidate
+        else:
+            page = theme.get('background') or PAGE_WHITE
+            candidate = _mix(value, '#000000' if builder_theme._luminance(page) >= 0.18 else '#ffffff', step * 0.05)
+            if builder_theme.contrast(candidate, page) >= 4.5:
+                return candidate
+    return ''
+
+
+def _readable_page(token, value, theme):
+    """Invalid, naming the nearest readable color, for a background that is too dark or would make the text hard to
+    read, or a text color that would be hard to read on the background."""
+    if token == 'background':
+        light = builder_theme._luminance(value) >= 0.6
+        if light and builder_theme.contrast(theme.get('text') or TEMPLATE_TEXT, value) >= 4.5:
+            return
+        why = ('Your site keeps a light page background so text stays readable.' if not light
+               else 'Your text would be hard to read on that background.')
+    else:
+        if builder_theme.contrast(value, theme.get('background') or PAGE_WHITE) >= 4.5:
+            return
+        why = 'That text color would be hard to read on your background.'
+    nearest = nearest_readable(token, value, theme)
+    raise Invalid(f'{why} The nearest readable shade is {nearest}.' if nearest else why)
 
 
 def _apply(content, op, live):
@@ -279,6 +346,8 @@ def _apply(content, op, live):
         if token in FONT_TOKENS:
             value = _font_allowed(value, token, live)
         elif value:
+            if token in ('background', 'text'):
+                _readable_page(token, value, theme)
             # The builder's own rules: buttons readable with white text, a light background, readable text.
             trial = {'site': {'theme': theme}}
             try:
@@ -359,10 +428,11 @@ def _change(op, live, before_state, after_state, stale):
     if kind == 'set_text':
         path = op['path']
         try:
-            before = read_text(live, path)
+            before = shown_text(live, path)
         except Stale:
             before = ''
-        after = op['value'] or (copy_default(live, path[5:]) if path.startswith('copy.') else '')
+        after = op['value'] or (copy_default(live, path[5:]) if path.startswith('copy.') else
+                                INFO_DEFAULTS.get(path[5:], '') if path.startswith('info.') else '')
         change.update(path=path, label=text_label(live, path), before=before, after=after)
     elif kind == 'set_style':
         token = op['token']
@@ -413,12 +483,16 @@ def _key(op):
         return 'text', op['path']
     if op['op'] == 'set_style':
         return 'style', op['token']
+    if op['op'] in ('hide_section', 'show_section'):
+        return 'section', op['page'], op['section']
+    if op['op'] in PAGE_OPS:
+        return 'page', op['page']
     return None
 
 
 def coalesce(ops):
-    """Accepted operations first, then pending ones. A later set_text for the same path, or set_style for the same
-    token, replaces the earlier one in its group; layout operations add up."""
+    """Accepted operations first, then pending ones. A later set_text for the same path, set_style for the same
+    token, or hide or show of the same section or page, replaces the earlier one in its group; moves add up."""
     def group(items):
         out = []
         for op in items:
@@ -430,6 +504,34 @@ def coalesce(ops):
     return group([o for o in ops if not o.get('pending')]) + group([o for o in ops if o.get('pending')])
 
 
+def _no_change(content, op, live):
+    """Whether an accepted operation, as `content` holds it after the draft, leaves the live site as it was."""
+    kind = op['op']
+    try:
+        if kind == 'set_text':
+            path = op['path']
+            value = op['value'] or (copy_default(live, path[5:]) if path.startswith('copy.') else '')
+            return value == read_text(live, path)
+        if kind == 'set_style':
+            now = _live_style(live, op['token'])
+            return float(op['value']) == float(now) if op['token'] in STYLE_SCALES else op['value'] == now
+        if kind in ('hide_section', 'show_section'):
+            return _hidden(content, op['page'], op['section']) == _hidden(live, op['page'], op['section'])
+        if kind in PAGE_OPS:
+            return _hidden(content, op['page']) == _hidden(live, op['page'])
+        order = lambda c: builder_edit.clean_layout((c.get('site') or {}).get('layout'))[op['page']]  # noqa: E731
+        return order(content) == order(live)
+    except Stale:
+        return False
+
+
+def settle(ops, live):
+    """The draft without accepted operations that change nothing: hiding then showing a section, moving it back, or
+    text and styles put back to what is live all cancel out. Tekton's suggestions stay until staff answer them."""
+    content, _ = apply_ops(live, [op for op in ops if not op.get('pending')])
+    return [op for op in ops if op.get('pending') or not _no_change(content, op, live)]
+
+
 def _new_id(taken):
     while True:
         op_id = secrets.token_hex(6)
@@ -437,9 +539,101 @@ def _new_id(taken):
             return op_id
 
 
+# ---------------------------------------------------------------- the fields a publish changes
+
+# A field is a key (a list, as stored): ['info', field], ['copy', key], ['theme', token], ['style', token],
+# ['order', page], ['hidden', 'page:section'], ['hidden_page', page], ['page', slug, 'title'],
+# ['section', slug, n, field], ['staff', id, field] or ['faqs', id, field]. Publishing records each one it changed with
+# the value before and the value it wrote; restoring puts back only those, and only where the field still holds what
+# the publish wrote.
+GONE = object()  # a field whose page, person or question is no longer there
+FIELD_SECTION = {'info': 'info', 'copy': 'site', 'theme': 'site', 'style': 'site', 'order': 'site', 'hidden': 'site',
+                 'hidden_page': 'site', 'page': 'pages', 'section': 'pages', 'staff': 'staff', 'faqs': 'faqs'}
+
+
+def field_key(op):
+    """The field an operation changes."""
+    kind = op['op']
+    if kind == 'set_text':
+        parts = _parts(op['path'])
+        if parts[0] in ('info', 'copy'):
+            return parts
+        if parts[0] == 'pages':
+            return ['page', parts[1], 'title'] if parts[2] == 'title' else ['section', parts[1], int(parts[3]), parts[4]]
+        return parts
+    if kind == 'set_style':
+        return ['style' if op['token'] in STYLE_SCALES else 'theme', op['token']]
+    if kind == 'move_section':
+        return ['order', op['page']]
+    if kind in ('hide_section', 'show_section'):
+        return ['hidden', f'{op["page"]}:{op["section"]}']
+    return ['hidden_page', op['page']]
+
+
+def _holder(content, key):
+    """The dict a page, section, staff or question field lives on, or None when it is gone."""
+    if key[0] in ('page', 'section'):
+        page = next((p for p in content.get('pages') or [] if p.get('slug') == key[1]), None)
+        if page is None or key[0] == 'page':
+            return page
+        sections = page.get('sections') or []
+        return sections[key[2]] if key[2] < len(sections) else None
+    return next((i for i in content.get(key[0]) or [] if str(i.get('id')) == key[1]), None)
+
+
+def get_field(content, key):
+    site = content.get('site') or {}
+    kind = key[0]
+    if kind == 'info':
+        return (content.get('info') or {}).get(key[1]) or ''
+    if kind in ('copy', 'style'):
+        return (site.get(kind) or {}).get(key[1])
+    if kind == 'theme':
+        return (site.get('theme') or {}).get(key[1]) or ''
+    if kind == 'order':
+        return builder_edit.clean_layout(site.get('layout'))[key[1]]
+    if kind == 'hidden':
+        return key[1] in builder_edit.clean_layout(site.get('layout'))['hidden']
+    if kind == 'hidden_page':
+        return key[1] in ((site.get('layout') or {}).get('hidden_pages') or [])
+    holder = _holder(content, key)
+    return GONE if holder is None else holder.get(key[-1]) or ''
+
+
+def set_field(content, key, value):
+    """Put one field back (in place). Only called for fields get_field found."""
+    kind = key[0]
+    if kind == 'info':
+        content.setdefault('info', {})[key[1]] = value
+    elif kind in ('copy', 'style', 'theme'):
+        values = dict(_site(content).get(kind) or {})
+        if value is None:
+            values.pop(key[1], None)
+        else:
+            values[key[1]] = value
+        content['site'][kind] = values
+    elif kind in ('order', 'hidden', 'hidden_page'):
+        layout = dict(_site(content).get('layout') or {})
+        if kind == 'order':
+            layout[key[1]] = value
+        else:
+            name = 'hidden' if kind == 'hidden' else 'hidden_pages'
+            listed = [k for k in layout.get(name) or [] if k != key[1]]
+            layout[name] = listed + [key[1]] if value else listed
+        content['site']['layout'] = layout
+    else:
+        _holder(content, key)[key[-1]] = value
+
+
+def _labels(edits):
+    return list(dict.fromkeys(edit['label'] for edit in edits))
+
+
 # ---------------------------------------------------------------- storage
 
-_lock = threading.RLock()
+# The draft and the live content are read and written under the content lock (db.content_lock), so a publish or
+# restore never interleaves with Church setup saving the content (PUT /api/church/content) in this process.
+_lock = db.content_lock
 
 
 def _now():
@@ -464,9 +658,14 @@ def state(draft=None):
     live = db.export_content()
     _, changes = apply_ops(live, draft['ops'])
     previous = db.get_value(PREVIOUS)
+    # A record from before restores were field by field (whole sections) is not offered: restoring it would undo
+    # Church setup changes made since.
+    if not previous or not previous.get('edits'):
+        previous = None
     return {'version': draft['version'], 'ops': draft['ops'], 'changes': changes, 'published': live,
             'published_at': db.get_value(PUBLISHED_AT),
-            'previous': {'saved_at': previous.get('saved_at'), 'changes': previous.get('changes') or []} if previous else None}
+            'previous': {'saved_at': previous.get('saved_at'), 'changes': previous.get('changes') or [],
+                         'direction': previous.get('direction') or 'undo'} if previous else None}
 
 
 def validate_draft(raw_ops, held, live):
@@ -509,7 +708,58 @@ def validate_draft(raw_ops, held, live):
             if not unchanged:
                 raise OpError(str(why), op['id']) from None
         stored.append(op)
-    return stored
+    return settle(stored, live)
+
+
+# ---------------------------------------------------------------- request size
+
+# The largest draft staff can make: MAX_OPS texts at the longest limit (4000 characters, up to 3 bytes each as UTF-8,
+# as the editor counts them) with room for the JSON around them. api/churches.ts MAX_EDITOR_DRAFT_BYTES is the same.
+MAX_DRAFT_BYTES = 1024 * 1024
+# Every other editor request (an ask, a publish) is small, like the Worker's usual JSON limit.
+MAX_EDITOR_BYTES = 16 * 1024
+TOO_LARGE = b'{"detail":"Request body too large"}'
+
+
+def body_limit(method, path):
+    if path == '/api/church/editor/draft' and method == 'PUT':
+        return MAX_DRAFT_BYTES
+    return MAX_EDITOR_BYTES if path == '/api/church/editor' or path.startswith('/api/church/editor/') else None
+
+
+class BodyLimit:
+    """Pure ASGI middleware: an editor request whose body is over its limit gets 413, counted on the body as it
+    arrives (a missing or wrong Content-Length makes no difference). Other requests pass straight through."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        limit = body_limit(scope.get('method'), scope.get('path', '')) if scope['type'] == 'http' else None
+        if limit is None:
+            return await self.app(scope, receive, send)
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message['type'] != 'http.request':
+                return
+            chunks.append(message.get('body', b''))
+            size += len(chunks[-1])
+            if size > limit:
+                await send({'type': 'http.response.start', 'status': 413,
+                            'headers': [(b'content-type', b'application/json')]})
+                return await send({'type': 'http.response.body', 'body': TOO_LARGE})
+            if not message.get('more_body'):
+                break
+        body, sent = b''.join(chunks), False
+
+        async def replay():
+            nonlocal sent
+            if sent:
+                return await receive()
+            sent = True
+            return {'type': 'http.request', 'body': body, 'more_body': False}
+        await self.app(scope, replay, send)
 
 
 # ---------------------------------------------------------------- endpoints
@@ -532,6 +782,9 @@ class PublishBody(BaseModel):
 
 def _conflict():
     raise HTTPException(status_code=409, detail='Your draft changed in another window. Reload to see the latest.')
+
+
+CHANGED_MEANWHILE = 'Your site was changed in Church setup at the same moment, so nothing was changed. Please try again.'
 
 
 @router.get('/api/church/editor')
@@ -571,6 +824,7 @@ def publish(body: PublishBody):
             _conflict()
         if any(op.get('pending') for op in draft['ops']):
             raise HTTPException(status_code=409, detail='Accept or dismiss Tekton’s suggestions before publishing.')
+        version = db.content_version()
         live = db.export_content()
         new, changes = apply_ops(live, draft['ops'])
         labels = [c['label'] for c in changes if not c['stale']]
@@ -583,69 +837,193 @@ def publish(body: PublishBody):
             log.info('site editor: publish refused: %s', error)
             raise HTTPException(status_code=422, detail='These changes would not fit your site. Undo the last change '
                                                         'and try again.') from None
+        # Each field this publish changes: the value before and the value written (as validated).
+        written, edits, seen = {**live, **content}, [], set()
+        for op, change in zip(draft['ops'], changes):
+            key = field_key(op)
+            if change['stale'] or repr(key) in seen:
+                continue
+            seen.add(repr(key))
+            before, after = get_field(live, key), get_field(written, key)
+            if before != after and after is not GONE:
+                edits.append({'key': key, 'label': change['label'], 'before': before, 'after': after})
         saved_at = _now()
-        previous = {'saved_at': saved_at, 'sections': {key: live.get(key) for key in touched}, 'changes': labels}
+        previous = {'saved_at': saved_at, 'edits': edits, 'changes': labels, 'direction': 'undo'}
         draft = {'version': draft['version'] + 1, 'ops': []}
-        db.replace_content(content, also=[db.set_value_statement(PREVIOUS, previous),
-                                          db.set_value_statement(DRAFT, _draft_value(draft['version'], [])),
-                                          db.set_value_statement(PUBLISHED_AT, saved_at)])
+        try:
+            db.replace_content(content, expect=version, also=[
+                db.set_value_statement(PREVIOUS, previous), db.set_value_statement(DRAFT, _draft_value(draft['version'], [])),
+                db.set_value_statement(PUBLISHED_AT, saved_at)])
+        except db.ContentChanged:
+            raise HTTPException(status_code=409, detail=CHANGED_MEANWHILE) from None
         return {**state(draft), 'published_changes': labels}
 
 
 @router.post('/api/church/editor/restore')
 def restore():
+    """Put back the fields the last publish (or restore) changed, where they still hold what it wrote. A field changed
+    since, in Church setup or anywhere else, is kept and listed in `kept`. The fields put back become the new record,
+    the other way round, so restoring again is the exact inverse."""
     with _lock:
         previous = db.get_value(PREVIOUS)
-        if not previous or not previous.get('sections'):
+        if not previous or not previous.get('edits'):
             raise HTTPException(status_code=400, detail='There is no previous version to restore.')
+        version = db.content_version()
         live = db.export_content()
-        sections = previous['sections']
-        # What is live now becomes the previous version, so restoring again undoes this.
+        content, undone, kept = copy.deepcopy(live), [], []
+        for edit in previous['edits']:
+            key = edit['key']
+            if get_field(live, key) == edit['after']:
+                set_field(content, key, edit['before'])
+                undone.append(edit)
+            else:
+                kept.append(edit['label'])
+        kept = list(dict.fromkeys(kept))
+        if not undone:
+            # Everything was changed since: there is nothing left to restore.
+            db.delete_value(PREVIOUS)
+            return {**state(), 'restored': [], 'kept': kept}
+        touched = list(dict.fromkeys(FIELD_SECTION[edit['key'][0]] for edit in undone))
+        try:
+            restored = normalize(ChurchContent(**{key: content[key] for key in touched}))
+        except (ValidationError, ContentError) as error:
+            log.info('site editor: restore refused: %s', error)
+            raise HTTPException(status_code=422, detail='The previous version no longer fits your site, so it was '
+                                                        'not restored.') from None
+        written = {**live, **restored}
         saved_at = _now()
-        swapped = {'saved_at': saved_at, 'sections': {key: live.get(key) for key in sections},
-                   'changes': previous.get('changes') or []}
-        db.replace_content(sections, also=[db.set_value_statement(PREVIOUS, swapped),
-                                           db.set_value_statement(PUBLISHED_AT, saved_at)])
-        return state()
+        swapped = {'saved_at': saved_at, 'changes': _labels(undone),
+                   'direction': 'redo' if previous.get('direction', 'undo') == 'undo' else 'undo',
+                   'edits': [{**edit, 'before': edit['after'], 'after': get_field(written, edit['key'])} for edit in undone]}
+        try:
+            db.replace_content(restored, expect=version, also=[db.set_value_statement(PREVIOUS, swapped),
+                                                               db.set_value_statement(PUBLISHED_AT, saved_at)])
+        except db.ContentChanged:
+            raise HTTPException(status_code=409, detail=CHANGED_MEANWHILE) from None
+        return {**state(), 'restored': _labels(undone), 'kept': kept}
 
 
 # ---------------------------------------------------------------- asking Tekton
 
 ASK_PER_VISITOR = ratelimit.RateLimit(limit=10, window=10 * 60)
+ASK_PER_SESSION = ratelimit.RateLimit(limit=10, window=10 * 60)
 ASK_PER_CHURCH = ratelimit.RateLimit(limit=60, window=60 * 60)
 TOO_MANY_ASKS = 'Tekton has had many requests in a short time. Please try again in a few minutes.'
 NOT_UNDERSTOOD = ('Tekton did not understand that. Try “Make the main color navy”, “Make the header smaller”, '
                   '“Change the pastor name to Dr. Lee Brown” or “Hide the calendar”.')
 UNAVAILABLE = 'Tekton is unavailable right now. Please try again in a moment.'
+# What each size changes, in the suggestion Tekton replies with.
+SCALE_HINTS = {'hero_scale': 'the big headline at the top of Home', 'heading_scale': 'page titles and section headings'}
 
-SCALE_RE = re.compile(r"(?:(?:can|could|would) you |please )*(?:make|turn|set|have)\s+(?:the |our |my |all (?:of )?(?:the )?)?"
+POLITE = r"(?:(?:can|could|would) you |please )*"
+SAY = r"\s+(?:so (?:that )?it says|to say|to read|say|read|says|to)\s*:?\s+(.+)$"
+SCALE_RE = re.compile(POLITE + r"(?:make|turn|set|have)\s+(?:the |our |my |all (?:of )?(?:the )?)?"
                       r"(.+?)\s+(?:(?:a )?(?:little |tiny |lot |touch |bit )*(?:bit )?|slightly |much |even )?"
                       r"(smaller|bigger|larger)(?: please)?", re.I)
+TOO_RE = re.compile(r"(?:i think |i feel |it looks like )?(?:the |our |my )?(.+?)\s+(?:is|are|looks?|seems?|feels?)\s+"
+                    r"(?:(?:a )?(?:little|bit|tad|touch|way|much|far|kind of|rather|slightly|just) )*too\s+"
+                    r"(big|large|huge|small|tiny)", re.I)
 HERO_RE = re.compile(r"(?:main |big |home(?: page)? |top |page |welcome )?(?:header|headline|heading|hero|title)"
-                     r"(?: text)?(?: (?:at|on) (?:the )?(?:top|home(?: page)?))?", re.I)
+                     r"(?: text)?", re.I)
 HEADINGS_RE = re.compile(r"(?:section |page |other )?(?:headings|headers|titles)|section (?:heading|header|title)s?", re.I)
-PERSON_NAME_RE = re.compile(r"(?:(?:can|could|would) you |please )*(?:change|update|set|make|replace)\s+(?:the |our )?"
+# "the header on the about page", "the headline at the top": the part of the site a size request names.
+PLACE_RE = re.compile(r"(.+?)\s+(?:on|of|at|in)\s+(?:the |our |my |this )?(.+?)(?:\s+page|\s+screen)?", re.I)
+HOME_PLACE_RE = re.compile(r"(?:very )?top|home|front|main|landing|welcome", re.I)
+PERSON_NAME_RE = re.compile(POLITE + r"(?:change|update|set|make|replace)\s+(?:the |our )?"
                             r"(.+?)(?:'s|’s)?\s+name\s+(?:to|be)\s+(.+)$", re.I)
-INFO_TEXT_RE = re.compile(r"(?:(?:can|could|would) you |please )*(?:change|set|update|replace|make)\s+(?:the |our )?"
+INFO_TEXT_RE = re.compile(POLITE + r"(?:change|set|update|replace|make)\s+(?:the |our )?"
                           r"(about(?: us)?|what to expect|first visit)(?: text| section| paragraph| wording)?\s+"
                           r"(?:to say|to read|to|say|read)\s*:?\s+(.+)$", re.I)
+FOOTER_RE = re.compile(POLITE + r"(?:make|have|let|change|set|update|edit)\s+(?:the |our )?footer"
+                       r"(?: text| line| tagline| wording| message)?" + SAY, re.I)
+BOTTOM_RE = re.compile(POLITE + r"(?:make|have|let|change|set|update|edit)\s+(?:the )?(?:(?:last|bottom|final) section|"
+                       r"section (?:at|on) the (?:very )?(?:bottom|end))(?: (?:of|on) (?:the )?(home|plan your visit|visit)"
+                       r"(?: page)?)?" + SAY, re.I)
+# "Pastor Dan left, change the pastor name to Lee Brown": the request after a leading clause.
+CLAUSE_RE = re.compile(r".+?(?:[,;:.!?]|\s(?:so|and|then|now))\s+(" + POLITE +
+                       r"(?:change|make|set|update|replace|rename|hide|show|move|put)\b.+)$", re.I)
+COMMAND_RE = re.compile(r"\b(?:change|make|set|update|replace|rename|hide|show|move|put|add|remove)\b", re.I)
+# Requests Tekton turns down with the reason, rather than sending them to the AI.
+BELIEF_ASK_RE = re.compile(r"\b(?:statements? of (?:faith|beliefs?)|beliefs?|believe|doctrines?|doctrinal|creeds?|"
+                           r"what we teach|theology|confession of faith)\b", re.I)
+ADD_PEOPLE_RE = re.compile(r"\b(?:add(?:ing)?|hire[ds]?|hiring|introduce|list)\b.*\b(?:pastors?|staff|ministers?|elders?|"
+                           r"deacons?|directors?|coordinators?|secretar(?:y|ies)|team members?|people|persons?|admins?)\b"
+                           r"|\b(?:new|another) (?:pastor|staff member|minister|elder|deacon|director|coordinator|"
+                           r"secretary|team member)\b", re.I)
+SETUP_FACT_RE = re.compile(r"\b(?:service times?|services?|worship times?|address|phone(?: number)?|e-?mail|"
+                           r"office hours|ministr(?:y|ies)|events?|calendar|small groups?|groups?|locations?|"
+                           r"campus(?:es)?|sermons?)\b", re.I)
+CHANGE_WORD_RE = re.compile(r"\b(?:add|change|update|set|edit|remove|delete|fix|correct|replace|switch|new)\b", re.I)
+WORDING_WORD_RE = re.compile(r"\b(?:heading|headline|title|label|section|wording|text|words|eyebrow|header|footer|"
+                             r"colou?rs?|font|size|bigger|smaller|hide|show|move|page)\b", re.I)
+# The words a Home or Plan your visit section shows, for "the section at the bottom": (heading, text) copy keys.
+SECTION_WORDS = {
+    'home': {'ministries': ('home.ministries_title', None), 'sermons': ('home.sermons_title', None),
+             'service_times': ('home.services_title', None), 'leaders': ('home.leaders_title', 'home.leaders_text'),
+             'about': ('home.about_eyebrow', None)},
+    'visit': {'service_times': ('visit.services_title', None), 'what_to_expect': ('visit.expect_title', None),
+              'map': ('visit.map_title', None), 'locations': ('visit.locations_title', None),
+              'faqs': ('visit.faqs_title', None), 'next_steps': ('visit.next_title', None),
+              'sign_up': ('visit.signup_title', None)},
+}
 
 
-def _scale_rule(text, content):
-    m = SCALE_RE.fullmatch(text)
-    if not m:
+def _scale_token(target, viewing):
+    """The size a phrase names: heading_scale for headings and page titles, hero_scale for the big Home headline. A
+    plain "header" is the one the staff member is looking at: the Home headline on Home, the page title elsewhere."""
+    target = ' '.join(target.lower().split())
+    place = None
+    m = PLACE_RE.fullmatch(target)
+    if m and (HERO_RE.fullmatch(m.group(1)) or HEADINGS_RE.fullmatch(m.group(1))):
+        target, place = m.group(1), 'home' if HOME_PLACE_RE.fullmatch(m.group(2)) else 'page'
+    if HEADINGS_RE.fullmatch(target):
+        return 'heading_scale'
+    if not HERO_RE.fullmatch(target):
         return None
-    target = m.group(1).strip()
-    token = 'heading_scale' if HEADINGS_RE.fullmatch(target) else 'hero_scale' if HERO_RE.fullmatch(target) else None
+    if place is None:
+        place = 'home' if re.search(r'\b(?:home|hero|welcome)\b', target) or _viewing_page(viewing) == 'home' else 'page'
+    return 'hero_scale' if place == 'home' else 'heading_scale'
+
+
+def _scale_rule(text, content, viewing=''):
+    m = SCALE_RE.fullmatch(text)
+    if m:
+        target, smaller = m.group(1), m.group(2).lower() == 'smaller'
+    else:
+        m = TOO_RE.fullmatch(text)
+        if not m:
+            return None
+        target, smaller = m.group(1), m.group(2).lower() in ('big', 'large', 'huge')
+    token = _scale_token(target.strip(), viewing)
     if not token:
         return None
     current = float(_live_style(content, token) or 1)
     low, high = STYLE_SCALES[token]
-    step = -0.1 if m.group(2).lower() == 'smaller' else 0.1
+    step = -0.1 if smaller else 0.1
     value = min(max(round_scale(current + step), low), high)
     if value == round_scale(current):
-        raise Invalid(f'The {STYLE_LABELS[token].lower()} is already as {"small" if step < 0 else "big"} as it goes.')
+        raise Invalid(f'The {STYLE_LABELS[token].lower()} ({SCALE_HINTS[token]}) is already as '
+                      f'{"small" if step < 0 else "big"} as it goes.')
     return [{'op': 'set_style', 'token': token, 'value': value}]
+
+
+def _bottom_rule(m, viewing, content):
+    """"Change the section at the bottom of the home page to say …": the words of the last section shown there."""
+    named = (m.group(1) or '').lower()
+    page = 'home' if named == 'home' else 'visit' if named else _viewing_page(viewing)
+    page = page if page in SECTION_WORDS else 'home'
+    layout = builder_edit.clean_layout((content.get('site') or {}).get('layout'))
+    shown = [key for key in layout[page] if f'{page}:{key}' not in layout['hidden']]
+    if not shown:
+        return None
+    heading, body = SECTION_WORDS[page].get(shown[-1], (None, None))
+    value = m.group(2).strip().strip('"“”').strip()
+    # A short line is the heading; longer wording is the section's text, when it has one.
+    key = body if body and (len(value) > SITE_COPY[heading]['max'] or len(re.findall(r'[.!?](?:\s|$)', value)) > 1) \
+        else heading
+    if not key:
+        return None
+    return [{'op': 'set_text', 'path': f'copy.{key}', 'value': value}]
 
 
 def _find_person(content, who):
@@ -665,22 +1043,57 @@ def _viewing_page(viewing):
     return 'visit' if viewing.startswith('guests/plan') else 'home' if not viewing else 'other'
 
 
+def _refusal(text):
+    """Why Tekton turns a request down, for the kinds it never makes: beliefs, people, and facts Church setup owns."""
+    if BELIEF_ASK_RE.search(text):
+        return NO_BELIEFS
+    if ADD_PEOPLE_RE.search(text):
+        return ADD_STAFF
+    if SETUP_FACT_RE.search(text) and CHANGE_WORD_RE.search(text) and not WORDING_WORD_RE.search(text):
+        return IN_SETUP
+    return None
+
+
 def rule_ops(text, viewing, content):
-    """(operations, refused) for the requests plain rules understand, or None for the AI."""
+    """(operations, refused) for the requests plain rules understand, or None for the AI. A request after a leading
+    clause ("Pastor Dan left, change …") is read on its own too."""
+    ruled = _rule_ops(text, viewing, content)
+    if ruled is None:
+        # Only when the leading clause is context, not a request of its own ("Make the header smaller, and hide the
+        # calendar" is two requests: the AI reads those).
+        m = CLAUSE_RE.match(' '.join(text.split()))
+        if m and not COMMAND_RE.search(m.string[:m.start(1)]):
+            ruled = _rule_ops(m.group(1), viewing, content)
+    if ruled is None:
+        why = _refusal(text)
+        if why:
+            return [], [why]
+    return ruled
+
+
+def _rule_ops(text, viewing, content):
     words = ' '.join(text.split())
     text = ' '.join(text.strip().rstrip('.!?').split())
-    scaled = _scale_rule(text, content)
+    scaled = _scale_rule(text, content, viewing)
     if scaled:
         return scaled, []
     m = PERSON_NAME_RE.match(text)
     if m and builder_customize.PERSON_RE.fullmatch(m.group(1).strip()):
         planned = [{'op': 'edit_person', 'name': m.group(1).strip(), 'new_name': m.group(2).strip().strip('"“”\'')}]
     else:
-        m = INFO_TEXT_RE.match(words)  # the wording keeps its last period
+        # The wording keeps its last period.
+        m = INFO_TEXT_RE.match(words)
         if m:
             field = 'about' if m.group(1).lower().startswith('about') else 'first_visit'
             value = m.group(2).strip().strip('"“”').strip()
             return [{'op': 'set_text', 'path': f'info.{field}', 'value': value}], []
+        m = FOOTER_RE.match(words)
+        if m:
+            return [{'op': 'set_text', 'path': 'copy.footer.tagline', 'value': m.group(1).strip().strip('"“”').strip()}], []
+        m = BOTTOM_RE.match(words)
+        if m:
+            ops = _bottom_rule(m, viewing, content)
+            return (ops, []) if ops else None
         planned = builder_customize.rule_ops(text, _viewing_page(viewing))
     if planned is None:
         return None
@@ -695,7 +1108,8 @@ def rule_ops(text, viewing, content):
         elif kind == 'edit_person' and op.get('new_name'):
             person = _find_person(content, op.get('name'))
             if person is None:
-                refused.append(f'Tekton could not find “{op.get("name")}” among your staff. Add people in Church setup.')
+                refused.append(f'Tekton could not find “{op.get("name")}” among your staff, and it does not add people. '
+                               'Add staff in Church setup.')
             else:
                 ops.append({'op': 'set_text', 'path': f'staff.{person["id"]}.name', 'value': op['new_name']})
         elif kind in ('move', 'hide', 'show'):
@@ -710,6 +1124,29 @@ def rule_ops(text, viewing, content):
             refused.append(IN_SETUP if kind in ('set_detail', 'remove_item', 'edit_person') else
                            'Tekton cannot make that change here.')
     return ops, refused
+
+
+def bio_note(content, path, new_name):
+    """For a staff rename: a note when their bio still uses the old name ("Their bio still says “Sam has led…”"). Tekton
+    never rewrites a bio itself."""
+    m = re.fullmatch(rf'staff\.{ITEM_ID}\.name', path)
+    person = next((p for p in content.get('staff') or [] if m and str(p.get('id')) == m.group(1)), None)
+    old, bio = str((person or {}).get('name') or '').strip(), str((person or {}).get('bio') or '')
+    if not old or not bio or old.lower() == str(new_name).strip().lower():
+        return None
+    names = sorted({old, *(w for w in re.findall(r'[^\W\d_]{2,}', old) if w.lower() not in ('dr', 'rev', 'mr', 'mrs', 'ms'))},
+                   key=len, reverse=True)
+    found = re.search(r'\b(?:' + '|'.join(re.escape(n) for n in names) + r')\b', bio, re.I)
+    if not found:
+        return None
+    said = ' '.join(bio[found.start():].split())
+    said = said if len(said) <= 40 else said[:39].rstrip() + '…'
+    return f'Their bio still says “{said}”. Edit it too?'
+
+
+def _sentence(text):
+    text = text.rstrip()
+    return text if re.search(r'[.!?…]["”’\')]*$', text) else text + '.'
 
 
 TOOL = {'type': 'function', 'function': {
@@ -771,7 +1208,8 @@ def summary(content, viewing):
                  f'{theme.get("body_font") or "default"}): ' + ', '.join(FONTS))
     lines.append('Sizes: ' + '; '.join(f'{token} = {_live_style(content, token)} (from {low} to {high}, 1 is the default)'
                                        for token, (low, high) in STYLE_SCALES.items())
-                 + '. hero_scale is the big Home headline; heading_scale is every section heading.')
+                 + '. hero_scale is the big Home headline; heading_scale is every page title and section heading, so '
+                   'a size request about the header of any page but Home is heading_scale.')
     layout = builder_edit.clean_layout(site.get('layout'))
     for page, sections in builder_edit.PAGES.items():
         lines.append(f'{page} sections in order (move_section, hide_section, show_section): ' + ', '.join(
@@ -801,16 +1239,15 @@ def ai_ops(content, request, viewing, complete):
     return ops, _short(result.get('reply'), 400), bool(result.get('needs_answer'))
 
 
+def _plain(text):
+    return ' '.join(re.sub(r'[\W_]+', ' ', str(text or '').lower()).split())
+
+
 def written_by_ai(value, request):
-    """Whether set_text wording is not the church's own: most of its words must be in the request, and every word of
-    a short value."""
-    words = builder_customize._words(value)
-    if not words:
-        return False
-    asked = set(builder_customize._words(request))
-    if len(words) < 4:
-        return any(word not in asked for word in words)
-    return sum(word in asked for word in words) < 0.7 * len(words)
+    """Whether set_text wording is not the church's own: the whole value must appear in the request, in order, once
+    case, spacing and punctuation (quotes around it, too) are set aside."""
+    words = _plain(value)
+    return bool(words) and f' {words} ' not in f' {_plain(request)} '
 
 
 def _touches_beliefs(content, path):
@@ -831,10 +1268,17 @@ def _override_attempt(text):
         return False
 
 
+def _session(request):
+    """This staff session, as a digest of its token (never the token itself), for its own rate limit."""
+    token = (request.headers.get('authorization') or '').strip()
+    return hashlib.sha256(token.encode()).hexdigest()[:32] if token else ''
+
+
 @router.post('/api/church/editor/ask')
 def ask(body: AskBody, request: Request):
     church = db.current_church()
-    if not ASK_PER_VISITOR.allow((church, ratelimit.client_ip(request))) or not ASK_PER_CHURCH.allow(church):
+    if not ASK_PER_VISITOR.allow((church, ratelimit.client_ip(request))) or \
+            not ASK_PER_SESSION.allow((church, _session(request))):
         raise HTTPException(status_code=429, detail=TOO_MANY_ASKS)
     if _override_attempt(body.request):
         raise HTTPException(status_code=400, detail=NOT_UNDERSTOOD)
@@ -844,6 +1288,9 @@ def ask(body: AskBody, request: Request):
             _conflict()
         live = db.export_content()
         current, _ = apply_ops(live, draft['ops'])
+    # Only requests that get this far count toward the church's own limit.
+    if not ASK_PER_CHURCH.allow(church):
+        raise HTTPException(status_code=429, detail=TOO_MANY_ASKS)
     refused = []
     try:
         ruled = rule_ops(body.request, body.viewing, current)
@@ -862,17 +1309,22 @@ def ask(body: AskBody, request: Request):
             log.exception('site editor: Tekton AI call failed')
             raise HTTPException(status_code=502, detail=UNAVAILABLE) from None
         method = 'ai'
-    proposed = []
+    proposed, notes = [], []
     trial = copy.deepcopy(current)
     for raw in planned:
         try:
             op = clean_op(raw)
             if method == 'ai' and op['op'] == 'set_text':
                 if _touches_beliefs(trial, op['path']):
-                    raise Invalid('Tekton does not change your statement of belief. Edit it yourself if needed.')
+                    raise Invalid(NO_BELIEFS)
                 if written_by_ai(op['value'], body.request):
                     raise Invalid(builder_customize.NOT_WRITTEN)
+            if op['op'] == 'set_text' and op['path'].startswith('staff.') and op['path'].endswith('.name'):
+                notes.append(bio_note(trial, op['path'], op['value']))
+            asked = op.get('value')
             op = _apply(trial, op, live)
+            if op['op'] == 'set_style' and op['token'] in COLOR_TOKENS and asked and op['value'] != asked:
+                notes.append(f'{STYLE_LABELS[op["token"]]} was darkened to {op["value"]} so white text on it stays readable.')
         except Stale:
             refused.append('That part of the site is no longer there.')
             continue
@@ -880,7 +1332,7 @@ def ask(body: AskBody, request: Request):
             refused.append(str(why))
             continue
         proposed.append(op)
-    refused = list(dict.fromkeys(refused))
+    refused, notes = list(dict.fromkeys(refused)), [note for note in dict.fromkeys(notes) if note]
     if not proposed:
         if asking and reply:
             return {**state(), 'reply': reply, 'proposed': [], 'refused': refused}
@@ -900,7 +1352,12 @@ def ask(body: AskBody, request: Request):
             raise HTTPException(status_code=400, detail='Your draft has many changes. Publish or discard some first.')
         draft = {'version': draft['version'] + 1, 'ops': ops}
         save_draft(draft['version'], ops)
-        labels = [f'{c["label"]}: {c["after"]}' if len(c['after']) <= 40 else c['label']
-                  for c in apply_ops(live, added)[1]]
-        reply = reply or ('Suggested: ' + '; '.join(labels) + '. Accept it to keep it in your draft.')
+        labels = []
+        for change in apply_ops(live, added)[1]:
+            label = change['label']
+            if change.get('token') in STYLE_SCALES:
+                label += f' ({SCALE_HINTS[change["token"]]})'
+            labels.append(f'{label}: {change["after"]}' if len(change['after']) <= 40 else label)
+        reply = reply or (_sentence('Suggested: ' + '; '.join(labels)) + ' Accept it to keep it in your draft.')
+        reply = ' '.join([reply, *notes])
         return {**state(draft), 'reply': reply, 'proposed': [op['id'] for op in added], 'refused': refused}

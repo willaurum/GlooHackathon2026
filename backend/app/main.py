@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Tekton API", lifespan=lifespan)
 # Every request runs against one church's database (X-Church); see church_scope.py.
 app.add_middleware(ChurchScope)
+# Editor request bodies are size-checked as they arrive (site_editor.BodyLimit).
+app.add_middleware(site_editor.BodyLimit)
 app.include_router(pastor_notes.router)
 app.include_router(church_content.router)
 app.include_router(site_editor.router)

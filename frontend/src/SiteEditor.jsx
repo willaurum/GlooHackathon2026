@@ -5,7 +5,7 @@ import { verifyStaffSession } from './giving.js';
 import Icon from './Icon.jsx';
 import { Brand } from './Layout.jsx';
 import { COLOR_TOKENS, FONTS, MAX_OPS, SCALES, STYLE_LABELS, acceptOp, addOp, applyOps, checkOp, describeChanges, newOpId,
-  pathLabel, publicSite, readPath, removeOp } from './siteDraft.js';
+  pathLabel, publicSite, readPath, removeOp, settle } from './siteDraft.js';
 
 // Staff edit their live site here (#/c/<slug>/edit/<route>): the site as visitors see it with the draft on top,
 // text changed in place, sections moved or hidden, colors and sizes picked, and Tekton asked for changes. Every change
@@ -14,6 +14,15 @@ import { COLOR_TOKENS, FONTS, MAX_OPS, SCALES, STYLE_LABELS, acceptOp, addOp, ap
 // The template's own colors, shown in the color pickers while the church uses them.
 const TEMPLATE_COLORS = { primary: '#2b6248', accent: '#8f7a4f', background: '#f6f7f3', text: '#3a4d44' };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const list = items => items.join(', ');
+// Dotted outlines around everything editable, on unless staff turn them off (remembered in this browser).
+const OUTLINES_KEY = 'tekton.editorOutlines';
+const storedOutlines = () => { try { return localStorage.getItem(OUTLINES_KEY) !== 'off'; } catch { return true; } };
+
+/** A message that names Church setup, with the same link the "Edit this in Church setup" note has. */
+function SetupMessage({ text, setupHref }) {
+  return <>{text}{/Church setup/.test(text) && <> <a href={setupHref}>Open Church setup</a></>}</>;
+}
 
 /** Only signed-in staff of this church may edit; anyone else is pointed to Church setup to sign in. */
 export default function SiteEditor({ slug, Site }) {
@@ -63,9 +72,12 @@ function EditorSession({ slug, Site }) {
   const [server, setServer] = useState(null), [ops, setOps] = useState([]), [loadError, setLoadError] = useState('');
   const [epoch, setEpoch] = useState(0), [clean, setClean] = useState(false), [panel, setPanel] = useState('');
   const [saving, setSaving] = useState('saved'), [message, setMessage] = useState(null), [busy, setBusy] = useState('');
-  const [reply, setReply] = useState(null), [published, setPublished] = useState(null);
-  // The latest ops and draft version, for saves that finish after newer edits.
+  const [reply, setReply] = useState(null), [published, setPublished] = useState(null), [more, setMore] = useState(false);
+  const [outlines, setOutlines] = useState(storedOutlines);
+  // The latest ops and draft version, for saves that finish after newer edits; keptAlive: the save under way was sent
+  // so it finishes even if the page closes.
   const opsRef = useRef([]), versionRef = useRef(0), dirtyRef = useRef(false), savingRef = useRef(null), timerRef = useRef(null);
+  const keptAliveRef = useRef(false);
 
   function notify(text, kind = 'error') { setMessage(text ? { text, kind } : null); }
   // A fresh State from the server: its ops replace ours; `reload` remounts the site so pages read the new content.
@@ -95,14 +107,16 @@ function EditorSession({ slug, Site }) {
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(flush, 600);
   }
-  async function flush() {
+  async function flush({ keepalive = false } = {}) {
     clearTimeout(timerRef.current);
     while (savingRef.current) await savingRef.current;
     if (!dirtyRef.current) return true;
     dirtyRef.current = false;
     const sent = opsRef.current;
     setSaving('saving');
-    savingRef.current = saveDraft(slug, versionRef.current, sent).then(state => {
+    const request = saveDraft(slug, versionRef.current, sent, { keepalive });
+    keptAliveRef.current = request.keepalive;
+    savingRef.current = request.then(state => {
       versionRef.current = state.version;
       setServer(state);
       // The server's copy (ids, cleaned values) unless staff changed more while it saved.
@@ -125,16 +139,33 @@ function EditorSession({ slug, Site }) {
     }).finally(() => { savingRef.current = null; });
     return savingRef.current;
   }
-  // Leaving the editor sends what is not saved yet; closing the tab first asks.
+  // Leaving the editor, reloading or closing the tab sends what is not saved yet, in a request that outlives the page
+  // (keepalive), so nothing waits on a prompt. Only a change that cannot go that way (a draft too large for it, or a
+  // save still under way with newer changes) asks before the page closes.
   useEffect(() => {
-    const warn = e => { if (dirtyRef.current || savingRef.current) { e.preventDefault(); e.returnValue = ''; } };
-    window.addEventListener('beforeunload', warn);
+    const leave = e => {
+      if (dirtyRef.current && !savingRef.current) flush({ keepalive: true });
+      const unsent = dirtyRef.current || (!!savingRef.current && !keptAliveRef.current);
+      if (e.type === 'beforeunload' && unsent) { e.preventDefault(); e.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', leave);
+    window.addEventListener('pagehide', leave);
     return () => {
-      window.removeEventListener('beforeunload', warn);
+      window.removeEventListener('beforeunload', leave);
+      window.removeEventListener('pagehide', leave);
       clearTimeout(timerRef.current);
       if (dirtyRef.current) saveDraft(slug, versionRef.current, opsRef.current).catch(() => {});
     };
   }, []);
+  useEffect(() => { try { localStorage.setItem(OUTLINES_KEY, outlines ? 'on' : 'off'); } catch { /* private mode */ } }, [outlines]);
+  // The phone toolbar's More menu closes on Escape or a tap elsewhere.
+  useEffect(() => {
+    if (!more) return;
+    const close = e => { if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('.editor-more')) setMore(false); };
+    window.addEventListener('keydown', close);
+    window.addEventListener('pointerdown', close);
+    return () => { window.removeEventListener('keydown', close); window.removeEventListener('pointerdown', close); };
+  }, [more]);
 
   const draft = useMemo(() => server ? applyOps(server.published, ops, { pending: true }) : null, [server?.published, ops]);
   const snapshot = useMemo(() => draft && publicSite(draft.content), [draft]);
@@ -156,25 +187,21 @@ function EditorSession({ slug, Site }) {
   const name = live?.info?.name || 'your church';
   const pending = changes.filter(c => c.pending), accepted = changes.filter(c => !c.pending && !c.stale);
 
-  // A staff change: checked like the server does; one that puts back the live value just drops the earlier change.
+  // A staff change: checked like the server does. One that leaves the live site as it was (text or a style put back,
+  // a section hidden and shown again) drops out of the draft (siteDraft.js settle). Returns { error } or { note }.
   function addChange(fields) {
     const op = { id: newOpId(), source: 'staff', pending: false, ...fields };
     const checked = checkOp(draft.content, op);
-    if (checked.error) return checked.error;
-    if (checked.stale) return 'That part of the site is no longer there. It may have been removed in Church setup.';
-    const same = checked.op.op === 'set_text' ? readPath(applyOps(live, [checked.op]).content, op.path) === readPath(live, op.path)
-      : checked.op.op === 'set_style' ? (SCALES[op.token] ? (live.site?.style?.[op.token] ?? 1) : live.site?.theme?.[op.token] || '') === checked.op.value
-        : false;
-    const kind = checked.op.op === 'set_text' ? 'path' : 'token';
-    const without = opsRef.current.filter(o => o.pending || o.op !== checked.op.op || o[kind] !== checked.op[kind]);
-    const next = same ? without : addOp(opsRef.current, checked.op);
-    if (next.length > MAX_OPS) return 'Your draft holds as many changes as it can. Publish or undo some first.';
+    if (checked.error) return { error: checked.error, suggest: checked.suggest || '' };
+    if (checked.stale) return { error: 'That part of the site is no longer there. It may have been removed in Church setup.' };
+    const next = settle(live, addOp(opsRef.current, checked.op));
+    if (next.length > MAX_OPS) return { error: 'Your draft holds as many changes as it can. Publish or undo some first.' };
     change(next);
-    return '';
+    return { note: checked.note || '' };
   }
   const setStyle = (token, value) => addChange({ op: 'set_style', token, value });
 
-  async function run(kind, call, { remount = true, done } = {}) {
+  async function run(kind, call, { remount = true, done, failed } = {}) {
     if (busy) return;
     setBusy(kind);
     try {
@@ -184,24 +211,40 @@ function EditorSession({ slug, Site }) {
       done?.(state);
     } catch (err) {
       if (err.status === 409) { notify(err.message || 'Your draft changed. It was reloaded.'); await reload(); }
+      else if (failed) failed(err);
       else notify(err.message);
     } finally { setBusy(''); }
   }
   const publish = () => run('publish', () => publishDraft(slug, versionRef.current), {
     done: state => { setPublished(state.published_changes || []); notify(''); } });
   const discard = () => run('discard', () => discardDraft(slug), { done: () => { setPanel(''); setReply(null); notify('Your draft was discarded.', 'info'); } });
-  const restore = () => run('restore', () => restorePrevious(slug), {
-    done: () => { setPanel(''); setPublished(null); notify('The previous version is live again.', 'info'); } });
+  // Restoring puts back only what the last publish (or restore) changed; anything changed since is kept and named.
+  const restore = () => {
+    const redo = server.previous?.direction === 'redo';
+    run('restore', () => restorePrevious(slug), { done: state => {
+      setPanel(''); setPublished(null);
+      const kept = state.kept || [];
+      if (!(state.restored || []).length) notify(`Nothing was restored. Everything in it was changed since, so it was kept: ${list(kept)}.`, 'info');
+      else notify((redo ? 'Those changes are live again.' : 'The previous version is live again.')
+        + (kept.length ? ` These were changed since, so they were kept: ${list(kept)}.` : ''), 'info');
+    } });
+  };
+  // A failed ask replaces the last reply, so an earlier suggestion's reply is not left looking like this answer.
   const ask = (request, route) => run('ask', () => askTekton(slug, request, route, versionRef.current), {
-    remount: false, done: state => setReply({ reply: state.reply || '', refused: state.refused || [], proposed: state.proposed || [] }) });
+    remount: false, done: state => setReply({ reply: state.reply || '', refused: state.refused || [], proposed: state.proposed || [] }),
+    failed: err => setReply({ reply: '', refused: [], proposed: [], error: err.message }) });
   async function exit(route) {
     await flush();
     window.location.hash = hashFor(slug, route);
   }
-  const accept = id => change(acceptOp(opsRef.current, id));
+  const accept = id => change(settle(live, acceptOp(opsRef.current, id)));
   const decline = id => change(removeOp(opsRef.current, id));
-  const acceptAll = () => change(pending.reduce((list, c) => acceptOp(list, c.id), opsRef.current));
+  const acceptAll = () => change(settle(live, pending.reduce((list, c) => acceptOp(list, c.id), opsRef.current)));
   const toggle = name => setPanel(p => p === name ? '' : name);
+  const setupHref = hashFor(slug, 'setup');
+  // On a phone the toolbar is one row: the title and status, Review and publish, and a More menu for the rest.
+  const pick = action => () => { setMore(false); action(); };
+  const badge = pending.length > 0 && <b className="count" aria-label={plural(pending.length, 'suggestion')}>{pending.length}</b>;
 
   const toolbar = (route, viewing) => <div className="editor-ui">
     <div className="editor-bar">
@@ -210,14 +253,27 @@ function EditorSession({ slug, Site }) {
         <span role="status">{ops.length ? plural(ops.length, 'change') : 'No changes yet'} · {{ saved: 'Saved', saving: 'Saving…', error: 'Not saved' }[saving]}</span>
       </div>
       <div className="editor-actions">
-        <button type="button" className="secondary" aria-expanded={panel === 'style'} onClick={() => toggle('style')}><Icon name="sparkle" size={16} />Style</button>
-        <button type="button" className="secondary" aria-expanded={panel === 'ask'} onClick={() => toggle('ask')}>
-          <Icon name="chat" size={16} />Ask Tekton{pending.length > 0 && <b className="count">{pending.length}</b>}
+        <button type="button" className="secondary wide-only" aria-expanded={panel === 'style'} onClick={() => toggle('style')}><Icon name="sparkle" size={16} />Style</button>
+        <button type="button" className="secondary wide-only" aria-expanded={panel === 'ask'} onClick={() => toggle('ask')}>
+          <Icon name="chat" size={16} />Ask Tekton{badge}
         </button>
         <button type="button" className="primary" onClick={() => { setPublished(null); setPanel('review'); }}>Review and publish</button>
-        <button type="button" className="ghost" disabled={!ops.length} onClick={() => setPanel('discard')}>Discard draft</button>
-        {server.previous && <button type="button" className="ghost" onClick={() => setPanel('restore')}>Restore previous version</button>}
-        <button type="button" className="ghost" onClick={() => exit(route)}>Exit editor</button>
+        <label className="editor-toggle wide-only"><input type="checkbox" checked={outlines} onChange={e => setOutlines(e.target.checked)} />Show outlines</label>
+        <button type="button" className="ghost wide-only" disabled={!ops.length} onClick={() => setPanel('discard')}>Discard draft</button>
+        {server.previous && <button type="button" className="ghost wide-only" onClick={() => setPanel('restore')}>Restore previous version</button>}
+        <button type="button" className="ghost wide-only" onClick={() => exit(route)}>Exit editor</button>
+        <div className="editor-more narrow-only">
+          <button type="button" className="secondary" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(m => !m)}>More{badge}</button>
+          {more && <div className="editor-more-menu" role="menu" aria-label="More editor actions">
+            <button type="button" role="menuitem" onClick={pick(() => toggle('style'))}><Icon name="sparkle" size={16} />Style</button>
+            <button type="button" role="menuitem" onClick={pick(() => toggle('ask'))}><Icon name="chat" size={16} />Ask Tekton{pending.length > 0 && ` (${plural(pending.length, 'suggestion')})`}</button>
+            <button type="button" role="menuitemcheckbox" aria-checked={outlines} onClick={pick(() => setOutlines(o => !o))}>
+              <span className="editor-check" aria-hidden="true">{outlines && <Icon name="check" size={14} />}</span>Show outlines</button>
+            <button type="button" role="menuitem" disabled={!ops.length} onClick={pick(() => setPanel('discard'))}>Discard draft</button>
+            {server.previous && <button type="button" role="menuitem" onClick={pick(() => setPanel('restore'))}>Restore previous version</button>}
+            <button type="button" role="menuitem" onClick={pick(() => exit(route))}>Exit editor</button>
+          </div>}
+        </div>
       </div>
     </div>
     {message && <div className={'editor-message ' + message.kind} role={message.kind === 'error' ? 'alert' : 'status'}>
@@ -225,7 +281,7 @@ function EditorSession({ slug, Site }) {
       <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => notify('')}><Icon name="x" size={16} /></button>
     </div>}
     {panel === 'style' && <StylePanel live={live} theme={draft.content.site?.theme || {}} style={draft.content.site?.style || {}} setStyle={setStyle} onClose={() => setPanel('')} />}
-    {panel === 'ask' && <AskPanel viewing={viewing} route={route} busy={busy === 'ask'} reply={reply} pending={pending}
+    {panel === 'ask' && <AskPanel viewing={viewing} route={route} busy={busy === 'ask'} reply={reply} pending={pending} setupHref={setupHref}
       onAsk={request => ask(request, route)} onAccept={accept} onDecline={decline} onAcceptAll={acceptAll} onClose={() => setPanel('')} />}
     {panel === 'review' && <EditorDialog title={published ? 'Your changes are live.' : 'Review and publish'} drawer onClose={() => setPanel('')}>
       {published ? <div className="editor-published">
@@ -261,24 +317,18 @@ function EditorSession({ slug, Site }) {
         <button type="button" className="ghost" onClick={() => setPanel('')}>Keep editing</button>
       </div>
     </EditorDialog>}
-    {panel === 'restore' && server.previous && <EditorDialog title="Restore the previous version?" onClose={() => setPanel('')}>
-      <p>Your live site goes back to how it was before {server.previous.saved_at ? new Date(server.previous.saved_at).toLocaleString() : 'the last publish'}. These changes are undone:</p>
-      <ul className="editor-previous">{(server.previous.changes || []).map((label, i) => <li key={i}>{label}</li>)}</ul>
-      <p className="form-note">Your draft is kept. You can restore again to bring these changes back.</p>
-      <div className="editor-dialog-actions">
-        <button type="button" className="primary" disabled={!!busy} onClick={restore}>{busy === 'restore' ? 'Restoring…' : 'Restore previous version'}</button>
-        <button type="button" className="ghost" onClick={() => setPanel('')}>Cancel</button>
-      </div>
-    </EditorDialog>}
+    {panel === 'restore' && server.previous && <RestoreDialog previous={server.previous} busy={busy} onRestore={restore} onClose={() => setPanel('')} />}
   </div>;
 
   const editor = {
-    slug, content: draft.content, clean, setupHref: hashFor(slug, 'setup'),
+    slug, content: draft.content, clean, outlines, setupHref,
     read: path => readPath(draft.content, path),
     status: key => marks.get(key) || '',
     label: path => pathLabel(draft.content, path),
-    setText: (path, value) => addChange({ op: 'set_text', path, value }),
-    addOp: fields => { const error = addChange(fields); if (error) notify(error); },
+    setText: (path, value) => addChange({ op: 'set_text', path, value }).error || '',
+    addOp: fields => { const { error } = addChange(fields); if (error) notify(error); },
+    // The site's own Ask Tekton buttons open this panel while editing.
+    openAsk: () => { setMore(false); setPanel('ask'); },
     notify, toolbar,
   };
   return <Site key={epoch} snapshot={snapshot} editor={editor} />;
@@ -300,8 +350,9 @@ function ChangeLine({ change }) {
 }
 
 function StylePanel({ live, theme, style, setStyle, onClose }) {
-  const [error, setError] = useState('');
-  const set = (token, value) => setError(setStyle(token, value));
+  // A refused color says why; one darkened to stay readable says so too, in the same place.
+  const [said, setSaid] = useState({});
+  const set = (token, value) => setSaid({ ...setStyle(token, value), token });
   const fonts = token => [...new Set([...FONTS, ...(live.site?.theme?.[token] ? [live.site.theme[token]] : [])])];
   const step = (token, delta) => {
     const [low, high] = SCALES[token];
@@ -332,25 +383,28 @@ function StylePanel({ live, theme, style, setStyle, onClose }) {
         </div>
       </div>)}
     </div>
-    {error && <p className="editor-error" role="alert">{error}</p>}
+    {said.error && <p className="editor-error" role="alert">{said.error}
+      {said.suggest && <> <button type="button" className="link" onClick={() => set(said.token, said.suggest)}>Use {said.suggest}</button></>}</p>}
+    {said.note && <p className="editor-info" role="status">{said.note}</p>}
   </section>;
 }
 
-function AskPanel({ viewing, busy, reply, pending, onAsk, onAccept, onDecline, onAcceptAll, onClose }) {
+function AskPanel({ viewing, busy, reply, pending, setupHref, onAsk, onAccept, onDecline, onAcceptAll, onClose }) {
   const [request, setRequest] = useState('');
   const text = request.trim();
   return <section className="editor-panel card" aria-label="Ask Tekton">
     <div className="editor-panel-head"><strong>Ask Tekton</strong><button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" size={18} /></button></div>
     <form className="editor-ask" onSubmit={e => { e.preventDefault(); if (text.length >= 3 && !busy) { onAsk(text); setRequest(''); } }}>
-      <label className="builder-sr-only" htmlFor="editor-ask">Ask Tekton to change your site</label>
+      <label className="builder-sr-only" htmlFor="editor-ask">Ask Tekton to change {viewing || 'your site'}</label>
       <input id="editor-ask" value={request} maxLength={300} disabled={busy} onChange={e => setRequest(e.target.value)}
-        placeholder={'Ask Tekton to change ' + (viewing || 'your site') + ', like “Make the headings bigger”'} />
+        placeholder="Try “Make the headings bigger”" />
       <button className="primary" disabled={busy || text.length < 3}>{busy ? 'Working…' : 'Ask'}</button>
     </form>
     <p className="form-note">Tekton suggests changes. Nothing changes until you accept it and publish.</p>
     <div role="status" aria-live="polite">
       {reply?.reply && <p className="editor-reply">{reply.reply}</p>}
-      {reply?.refused?.length > 0 && <p className="editor-error">{reply.refused.join(' ')}</p>}
+      {reply?.error && <p className="editor-error" role="alert"><SetupMessage text={reply.error} setupHref={setupHref} /></p>}
+      {reply?.refused?.length > 0 && <p className="editor-error"><SetupMessage text={reply.refused.join(' ')} setupHref={setupHref} /></p>}
     </div>
     {pending.length > 0 && <div className="editor-suggestions">
       <div className="editor-panel-head"><strong>{plural(pending.length, 'suggestion')}</strong>
@@ -364,6 +418,23 @@ function AskPanel({ viewing, busy, reply, pending, onAsk, onAccept, onDecline, o
       </li>)}</ul>
     </div>}
   </section>;
+}
+
+// Restoring undoes the last publish; restoring after a restore puts those changes back. The record says which.
+function RestoreDialog({ previous, busy, onRestore, onClose }) {
+  const redo = previous.direction === 'redo';
+  const when = previous.saved_at ? new Date(previous.saved_at).toLocaleString() : '';
+  return <EditorDialog title={redo ? 'Put those changes back?' : 'Restore the previous version?'} onClose={onClose}>
+    <p>{redo ? `These changes were undone ${when ? 'at ' + when : 'by the last restore'}. Restoring puts them back on your live site:`
+      : `Your live site goes back to how it was before ${when || 'the last publish'}. These changes are undone:`}</p>
+    <ul className="editor-previous">{(previous.changes || []).map((label, i) => <li key={i}>{label}</li>)}</ul>
+    <p className="form-note">Your draft is kept, and anything changed since in Church setup stays as it is. You can restore
+      again to {redo ? 'undo these changes' : 'bring these changes back'}.</p>
+    <div className="editor-dialog-actions">
+      <button type="button" className="primary" disabled={!!busy} onClick={onRestore}>{busy === 'restore' ? 'Restoring…' : redo ? 'Put changes back' : 'Restore previous version'}</button>
+      <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+    </div>
+  </EditorDialog>;
 }
 
 function EditorDialog({ title, drawer = false, onClose, children }) {

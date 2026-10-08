@@ -199,8 +199,9 @@ export function access(method: string, path: string, demo: boolean): Access {
 
 // The content import carries a whole church (FAQs, ministries, calendar), so it may be larger.
 export const MAX_IMPORT_BYTES = 512 * 1024;
-// A site editor draft holds up to 80 changes, some of them long texts.
-export const MAX_EDITOR_DRAFT_BYTES = 256 * 1024;
+// A site editor draft holds up to 80 changes; at most each is a 4000-character text, up to 3 bytes a character as
+// UTF-8 (about 960 KB in all), so a full draft fits. backend/app/site_editor.py MAX_DRAFT_BYTES is the same.
+export const MAX_EDITOR_DRAFT_BYTES = 1024 * 1024;
 // Builder uploads: 10 MB of files plus multipart overhead; the container enforces the exact limits.
 export const MAX_BUILDER_UPLOAD_BYTES = 11 * 1024 * 1024;
 
@@ -211,6 +212,10 @@ export function bodyLimit(method: string, path: string): number | undefined {
 	if (path === '/api/builder/drafts/upload') return MAX_BUILDER_UPLOAD_BYTES;
 	return undefined;
 }
+
+/** Routes whose body the Worker reads and counts before passing it on (notes.ts cappedBody), so the limit holds
+ *  for a body sent without a Content-Length too: the content import and every editor route. */
+export const countsBody = (path: string): boolean => path === '/api/church/content' || EDITOR_PREFIX.test(path);
 
 /** Headers the container uses to pick the church database. Anything a browser sent under these names is replaced. */
 export function churchHeaders(headers: Headers, church: Church): Headers {

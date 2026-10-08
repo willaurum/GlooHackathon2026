@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HTML_ERROR, MAX_OPS, acceptOp, addOp, applyOps, checkOp, cleanText, describeChanges, newOpId, OP_ID, parsePath,
-  publicSite, readPath, readableOnWhite, removeOp, styleVariables } from './siteDraft.js';
+import { HTML_ERROR, INFO_DEFAULTS, MAX_OPS, acceptOp, addOp, applyOps, checkOp, cleanText, describeChanges, newOpId, OP_ID,
+  contrast, nearestReadable, parsePath, publicSite, readPath, readableOnWhite, removeOp, settle, styleVariables } from './siteDraft.js';
 
 const published = () => ({
   info: { name: 'Hope Chapel', tagline: 'Old headline', about: 'About us', first_visit: '', services: [] },
@@ -183,4 +183,87 @@ test('style variables only for sizes within bounds; op ids are valid', () => {
   const ids = new Set(Array.from({ length: 50 }, newOpId));
   assert.equal(ids.size, 50);
   for (const id of ids) assert.match(id, OP_ID);
+});
+
+test('format characters and line separators are cleaned like the server does', () => {
+  assert.deepEqual(cleanText('Come\u202e as\u202c you\u200b are\ufeff\u2066!\u2069\u00ad'), { value: 'Come as you are!' });
+  assert.deepEqual(cleanText('One\u2028Two\u2029Three'), { value: 'One Two Three' });
+  assert.deepEqual(cleanText('One\u2028Two\u2029\u2029Three\u200d', { multiline: true }), { value: 'One\nTwo\n\nThree' });
+  assert.ok(cleanText('\u200b\u200e\u2060', { required: true }).error);
+});
+
+test('numbers in paths are written one way only', () => {
+  for (const path of ['staff.01.name', 'staff.00.name', 'faqs.\u0661.question', 'faqs.\uff10.answer', 'pages.about-us.sections.01.text',
+    'pages.about-us.sections.1000.heading', 'staff.1234567890.name', 'staff.3.name\n'])
+    assert.equal(parsePath(path), null, JSON.stringify(path));
+  assert.equal(parsePath('staff.10.name').id, '10');
+  assert.equal(parsePath('pages.about-us.sections.999.heading').index, 999);
+  assert.equal(parsePath('faqs.0.answer').field, 'answer');
+});
+
+test('hiding then showing a section, or putting anything back, leaves no change', () => {
+  const content = published();
+  const hide = op({ op: 'hide_section', page: 'home', section: 'about' });
+  let ops = settle(content, addOp([], hide));
+  assert.deepEqual(ops.map(o => o.id), [hide.id]);
+  // Showing it again replaces the hide, and the show changes nothing, so the draft is empty.
+  ops = settle(content, addOp(ops, op({ op: 'show_section', page: 'home', section: 'about' })));
+  assert.deepEqual(ops, []);
+  ops = settle(content, addOp(addOp([], op({ op: 'hide_page', page: 'calendar' })), op({ op: 'show_page', page: 'calendar' })));
+  assert.deepEqual(ops, []);
+  const down = op({ op: 'move_section', page: 'home', section: 'about', after: 'ministries' });
+  ops = settle(content, addOp([], down));
+  assert.equal(ops.length, 1);
+  ops = settle(content, addOp(ops, op({ op: 'move_section', page: 'home', section: 'about', before: 'ministries' })));
+  assert.deepEqual(ops, []);
+  ops = settle(content, addOp(addOp([], op({ op: 'set_text', path: 'info.tagline', value: 'New' })), op({ op: 'set_text', path: 'info.tagline', value: 'Old headline' })));
+  assert.deepEqual(ops, []);
+  ops = settle(content, addOp([], op({ op: 'set_style', token: 'primary', value: '#2d5c9e' })));
+  assert.deepEqual(ops, []);
+  ops = settle(content, addOp([], op({ op: 'set_style', token: 'hero_scale', value: 1 })));
+  assert.deepEqual(ops, []);
+  // Tekton's suggestions wait for an answer, even one that changes nothing.
+  const suggestion = op({ op: 'show_section', page: 'home', section: 'about' }, { pending: true, source: 'tekton' });
+  assert.deepEqual(settle(content, [suggestion]), [suggestion]);
+  // A real change stays.
+  const real = op({ op: 'set_text', path: 'info.tagline', value: 'Come as you are' });
+  assert.deepEqual(settle(content, [hide, real]).map(o => o.id), [hide.id, real.id]);
+});
+
+test('review shows the default text a visitor saw, not "Empty"', () => {
+  const content = published();
+  content.info.tagline = '';
+  content.info.about = '';
+  const [tagline, about, emptied, first] = describeChanges(content, [op({ op: 'set_text', path: 'info.tagline', value: 'Come as you are' }),
+    op({ op: 'set_text', path: 'info.about', value: 'We love our town.' }), op({ op: 'set_text', path: 'info.tagline', value: '' }),
+    op({ op: 'set_text', path: 'info.first_visit', value: 'Come early.' })]);
+  assert.equal(tagline.before, INFO_DEFAULTS.tagline);
+  assert.equal(INFO_DEFAULTS.tagline, 'A place to belong, grow and give.');
+  assert.equal(about.before, INFO_DEFAULTS.about);
+  assert.equal(emptied.after, INFO_DEFAULTS.tagline);
+  assert.equal(first.before, '');  // first visit has no default
+});
+
+test('a button color darkened to stay readable says so', () => {
+  const checked = checkOp(published(), op({ op: 'set_style', token: 'accent', value: '#ffff66' }));
+  assert.notEqual(checked.op.value, '#ffff66');
+  assert.match(checked.note, /too light for buttons with white text, so it was darkened to #[0-9a-f]{6}\./);
+  assert.equal(checkOp(published(), op({ op: 'set_style', token: 'accent', value: '#1f3a5f' })).note, undefined);
+});
+
+test('a background or text color that would not read is refused with the nearest one that does', () => {
+  const content = published();
+  content.site.theme = { text: '#222222' };
+  const dark = checkOp(content, op({ op: 'set_style', token: 'background', value: '#334455' }));
+  assert.match(dark.error, /^Your site keeps a light page background so text stays readable\. The nearest readable shade is #[0-9a-f]{6}\.$/);
+  assert.equal(dark.suggest, nearestReadable('background', '#334455', content.site.theme));
+  assert.ok(checkOp(content, op({ op: 'set_style', token: 'background', value: dark.suggest })).op);
+  const pale = checkOp(content, op({ op: 'set_style', token: 'text', value: '#eeeeee' }));
+  assert.match(pale.error, /^That text color would be hard to read on your background\./);
+  assert.ok(contrast(pale.suggest, '#ffffff') >= 4.5);
+  assert.ok(checkOp(content, op({ op: 'set_style', token: 'text', value: pale.suggest })).op);
+  // The same shades the server suggests (backend site_editor.nearest_readable).
+  assert.equal(nearestReadable('background', '#334455', {}), '#ccd0d5');
+  assert.equal(nearestReadable('text', '#f0f0f0', { background: '#fdf3e1' }), '#6c6c6c');
+  assert.equal(checkOp(content, op({ op: 'set_style', token: 'background', value: '#FDF3E1' })).op.value, '#fdf3e1');
 });
