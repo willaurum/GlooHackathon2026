@@ -71,6 +71,13 @@ function WelcomeQueue() {
     try { setPermission(await Notification.requestPermission()); } catch { setPermission(readPermission()); }
   }
 
+  async function checkIn(visitId) {
+    setBusy(true);
+    try { await api(`/visits/${visitId}/checkin`, { method: 'POST' }); await load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
   async function claim(visitId) {
     setBusy(true); setError('');
     try { await api(`/visits/${visitId}/claim`, { method: 'POST', body: JSON.stringify({ host: hostName }) }); await load(); }
@@ -110,7 +117,7 @@ function WelcomeQueue() {
     <section className="card visit-section">
       <div className="eyebrow">GUESTS WAITING</div>
       <h2 aria-live="polite">Guests waiting {waiting.length > 0 && <span className="badge urgent">{waiting.length}</span>}</h2>
-      {!waiting.length ? <div className="empty">No one is waiting right now.</div> : <div className="guest-list">
+      {!waiting.length ? <div className="empty">No one is waiting right now. Guests show up here when they tap “I’m here” on their phone, or when you check them in below.</div> : <div className="guest-list">
         {waiting.map(v => <article className={'card guest-card' + (v.status === 'arrived' ? ' just-arrived' : '')} key={v.visit_id}>
           <div className="card-top">
             <span className="tag">{v.status === 'arrived' ? '● Just arrived' : 'On the way'}</span>
@@ -134,6 +141,8 @@ function WelcomeQueue() {
         {planned.map(v => <article className="card guest-card" key={v.visit_id}>
           <h3>{v.name} <small>· party of {v.party_size}</small></h3>
           <p>{v.service}{v.kids && ' · ' + v.kids}</p>
+          {/* A guest at the door without their phone: a greeter checks them in. */}
+          <button className="btn secondary" disabled={busy} onClick={() => checkIn(v.visit_id)}>They&rsquo;re here</button>
         </article>)}
       </div>}
     </section>
