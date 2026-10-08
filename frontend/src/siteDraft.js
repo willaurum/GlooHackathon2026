@@ -129,6 +129,28 @@ export function readableOnWhite(hex) {
 }
 
 const roundScale = value => Math.round(value * 20) / 20;
+// The template's own text color (styles.css --text), checked against a background when the church has picked none.
+const TEMPLATE_TEXT = '#3a4d44';
+const mixHex = (hex, target, amount) => '#' + [1, 3, 5].map(i => {
+  const a = parseInt(hex.slice(i, i + 2), 16), b = parseInt(target.slice(i, i + 2), 16);
+  return Math.round(a + (b - a) * amount).toString(16).padStart(2, '0');
+}).join('');
+
+/** The closest color to `value` that keeps the page readable: a background lightened until it is light and the text
+ *  reads on it, or a text color darkened (or lightened) until it reads on the background. '' if none. */
+export function nearestReadable(token, value, theme = {}) {
+  for (let step = 1; step <= 20; step++) {
+    if (token === 'background') {
+      const candidate = mixHex(value, '#ffffff', step * 0.05);
+      if (luminance(candidate) >= 0.6 && contrast(HEX.test(theme.text || '') ? theme.text : TEMPLATE_TEXT, candidate) >= 4.5) return candidate;
+    } else {
+      const page = HEX.test(theme.background || '') ? theme.background : '#ffffff';
+      const candidate = mixHex(value, luminance(page) >= 0.18 ? '#000000' : '#ffffff', step * 0.05);
+      if (contrast(candidate, page) >= 4.5) return candidate;
+    }
+  }
+  return '';
+}
 
 /** Check an op against the content it applies to. Returns { op } (cleaned, e.g. a darkened button color) or
  *  { error } in plain words, or { stale: true } when its target no longer exists. */
@@ -156,10 +178,16 @@ export function checkOp(content, op) {
         return { op: { ...op, value: readable }, ...(readable !== value
           ? { note: `That color is too light for buttons with white text, so it was darkened to ${readable}.` } : {}) };
       }
-      if (token === 'background' && luminance(value) < 0.6) return { error: 'Your site uses a light page background so text stays readable. Try a lighter color.' };
-      const text = token === 'text' ? value : theme.text, background = token === 'background' ? value : theme.background;
-      if (HEX.test(text || '') && contrast(text, HEX.test(background || '') ? background : '#ffffff') < 4.5) {
-        return { error: token === 'text' ? 'That text color would be hard to read on your background.' : 'Your text would be hard to read on that background.' };
+      // A background stays light and keeps the text readable; text reads on the background. A color that does not is
+      // refused with the reason and the nearest one that does (backend site_editor._readable_page).
+      const text = token === 'text' ? value : HEX.test(theme.text || '') ? theme.text : TEMPLATE_TEXT;
+      const background = token === 'background' ? value : HEX.test(theme.background || '') ? theme.background : '#ffffff';
+      const light = token !== 'background' || luminance(value) >= 0.6;
+      if (!light || contrast(text, background) < 4.5) {
+        const why = !light ? 'Your site keeps a light page background so text stays readable.'
+          : token === 'text' ? 'That text color would be hard to read on your background.' : 'Your text would be hard to read on that background.';
+        const suggest = nearestReadable(token, value, theme);
+        return { error: suggest ? `${why} The nearest readable shade is ${suggest}.` : why, ...(suggest ? { suggest } : {}) };
       }
       return { op: { ...op, value } };
     }

@@ -729,6 +729,40 @@ class EditorEndpointTests(ChurchTestCase):
             self.assertEqual(se.written_by_ai(value, request), made_up, (value, request))
 
 
+    def test_background_and_text_colors_publish_or_say_the_nearest_readable_shade(self):
+        saved = self.put([{'op': 'set_style', 'token': 'background', 'value': '#FDF3E1'},
+                          {'op': 'set_style', 'token': 'text', 'value': '#1a2b4c'}])
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual([c['after'] for c in saved.json()['changes']], ['#fdf3e1', '#1a2b4c'])
+        dark = self.put([{'id': 'dark', 'op': 'set_style', 'token': 'background', 'value': '#334455'}])
+        self.assertEqual((dark.status_code, dark.json()['op']), (422, 'dark'))
+        nearest = se.nearest_readable('background', '#334455', {})
+        self.assertEqual(dark.json()['detail'], 'Your site keeps a light page background so text stays readable. '
+                                                f'The nearest readable shade is {nearest}.')
+        self.assertGreaterEqual(builder_theme._luminance(nearest), 0.6)
+        self.assertEqual(self.put([{'op': 'set_style', 'token': 'background', 'value': nearest}]).status_code, 200)
+        pale = self.put([{'id': 'pale', 'op': 'set_style', 'token': 'text', 'value': '#f0f0f0'}])
+        self.assertEqual(pale.status_code, 422)
+        self.assertIn('The nearest readable shade is #', pale.json()['detail'])
+        suggestion = se.nearest_readable('text', '#f0f0f0', {})
+        self.assertGreaterEqual(builder_theme.contrast(suggestion, '#ffffff'), 4.5)
+        # A background the chosen text would not read on is refused too.
+        self.assertEqual(self.put([{'op': 'set_style', 'token': 'text', 'value': '#555555'},
+                                   {'id': 'grey', 'op': 'set_style', 'token': 'background', 'value': '#a8a8a8'}]).status_code, 422)
+        # Published, the colors are in the live theme every visitor gets.
+        self.put([{'op': 'set_style', 'token': 'background', 'value': '#fdf3e1'},
+                  {'op': 'set_style', 'token': 'text', 'value': '#1a2b4c'},
+                  {'op': 'set_style', 'token': 'accent', 'value': '#ffd966'}])
+        self.assertEqual(self.publish().status_code, 200)
+        theme = self.client.get('/api/church', headers=HOPE).json()['site']['theme']
+        self.assertEqual((theme['background'], theme['text']), ('#fdf3e1', '#1a2b4c'))
+        self.assertGreaterEqual(builder_theme.contrast(theme['accent'], '#ffffff'), 3)
+        # Asking Tekton for a dark background says why, with the shade to use.
+        refused = self.ask('Make the background color navy')
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn('The nearest readable shade is #', refused.json()['detail'])
+
+
 class TextCleaningTests(ChurchTestCase):
     def test_only_ascii_canonical_numbers_name_a_field(self):
         for path in ('staff.١.name', 'staff.01.name', 'staff.00.name', 'faqs.０.question', 'faqs.0.question\n',

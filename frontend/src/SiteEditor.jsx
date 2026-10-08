@@ -192,7 +192,7 @@ function EditorSession({ slug, Site }) {
   function addChange(fields) {
     const op = { id: newOpId(), source: 'staff', pending: false, ...fields };
     const checked = checkOp(draft.content, op);
-    if (checked.error) return { error: checked.error };
+    if (checked.error) return { error: checked.error, suggest: checked.suggest || '' };
     if (checked.stale) return { error: 'That part of the site is no longer there. It may have been removed in Church setup.' };
     const next = settle(live, addOp(opsRef.current, checked.op));
     if (next.length > MAX_OPS) return { error: 'Your draft holds as many changes as it can. Publish or undo some first.' };
@@ -352,7 +352,7 @@ function ChangeLine({ change }) {
 function StylePanel({ live, theme, style, setStyle, onClose }) {
   // A refused color says why; one darkened to stay readable says so too, in the same place.
   const [said, setSaid] = useState({});
-  const set = (token, value) => setSaid(setStyle(token, value));
+  const set = (token, value) => setSaid({ ...setStyle(token, value), token });
   const fonts = token => [...new Set([...FONTS, ...(live.site?.theme?.[token] ? [live.site.theme[token]] : [])])];
   const step = (token, delta) => {
     const [low, high] = SCALES[token];
@@ -383,7 +383,8 @@ function StylePanel({ live, theme, style, setStyle, onClose }) {
         </div>
       </div>)}
     </div>
-    {said.error && <p className="editor-error" role="alert">{said.error}</p>}
+    {said.error && <p className="editor-error" role="alert">{said.error}
+      {said.suggest && <> <button type="button" className="link" onClick={() => set(said.token, said.suggest)}>Use {said.suggest}</button></>}</p>}
     {said.note && <p className="editor-info" role="status">{said.note}</p>}
   </section>;
 }

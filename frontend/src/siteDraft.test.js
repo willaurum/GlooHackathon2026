@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { HTML_ERROR, INFO_DEFAULTS, MAX_OPS, acceptOp, addOp, applyOps, checkOp, cleanText, describeChanges, newOpId, OP_ID,
-  parsePath, publicSite, readPath, readableOnWhite, removeOp, settle, styleVariables } from './siteDraft.js';
+  contrast, nearestReadable, parsePath, publicSite, readPath, readableOnWhite, removeOp, settle, styleVariables } from './siteDraft.js';
 
 const published = () => ({
   info: { name: 'Hope Chapel', tagline: 'Old headline', about: 'About us', first_visit: '', services: [] },
@@ -249,4 +249,21 @@ test('a button color darkened to stay readable says so', () => {
   assert.notEqual(checked.op.value, '#ffff66');
   assert.match(checked.note, /too light for buttons with white text, so it was darkened to #[0-9a-f]{6}\./);
   assert.equal(checkOp(published(), op({ op: 'set_style', token: 'accent', value: '#1f3a5f' })).note, undefined);
+});
+
+test('a background or text color that would not read is refused with the nearest one that does', () => {
+  const content = published();
+  content.site.theme = { text: '#222222' };
+  const dark = checkOp(content, op({ op: 'set_style', token: 'background', value: '#334455' }));
+  assert.match(dark.error, /^Your site keeps a light page background so text stays readable\. The nearest readable shade is #[0-9a-f]{6}\.$/);
+  assert.equal(dark.suggest, nearestReadable('background', '#334455', content.site.theme));
+  assert.ok(checkOp(content, op({ op: 'set_style', token: 'background', value: dark.suggest })).op);
+  const pale = checkOp(content, op({ op: 'set_style', token: 'text', value: '#eeeeee' }));
+  assert.match(pale.error, /^That text color would be hard to read on your background\./);
+  assert.ok(contrast(pale.suggest, '#ffffff') >= 4.5);
+  assert.ok(checkOp(content, op({ op: 'set_style', token: 'text', value: pale.suggest })).op);
+  // The same shades the server suggests (backend site_editor.nearest_readable).
+  assert.equal(nearestReadable('background', '#334455', {}), '#ccd0d5');
+  assert.equal(nearestReadable('text', '#f0f0f0', { background: '#fdf3e1' }), '#6c6c6c');
+  assert.equal(checkOp(content, op({ op: 'set_style', token: 'background', value: '#FDF3E1' })).op.value, '#fdf3e1');
 });

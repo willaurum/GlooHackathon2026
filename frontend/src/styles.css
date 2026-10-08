@@ -17,6 +17,11 @@
   --line: #e1e7e1;
   --line-strong: #d0dbd0;
   --bg: #f6f7f3;
+  /* The Home hero, which follows a church's background and text colors when it picks them (theme.js). */
+  --hero-from: #edf2e6;
+  --hero-to: #e3ecdf;
+  --hero-line: #dbe5d3;
+  --hero-text: #56695e;
   --card: #fff;
   --sand-50: #fbf6ec;
   --sand-100: #f3ecdd;
@@ -81,6 +86,9 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 }
 .primary { background: var(--green-700); color: #fff; box-shadow: 0 2px 6px rgb(36 75 56 / .18); }
 .primary:hover:not(:disabled) { background: var(--green-800); }
+/* On the church's site, buttons take its Button color when it has one (theme.js --button); the main color otherwise. */
+.content .primary { background: var(--button, var(--green-700)); }
+.content .primary:hover:not(:disabled) { background: var(--button-hover, var(--green-800)); }
 .secondary { background: var(--card); color: var(--green-700); border: 1px solid var(--line-strong); }
 .secondary:hover:not(:disabled) { border-color: var(--green-600); background: var(--green-50); }
 .ghost { color: var(--green-700); min-height: 38px; padding: 0 12px; }
@@ -228,10 +236,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 .site-footer .powered-by { width: 100%; margin-left: 0; font-size: 12px; color: var(--faint); }
 
 /* ---------- Home ---------- */
-.home-hero { position: relative; overflow: hidden; padding: 48px 44px; border-radius: var(--r-xl); background: linear-gradient(135deg, #edf2e6 0%, #e3ecdf 100%); border: 1px solid #dbe5d3; }
+.home-hero { position: relative; overflow: hidden; padding: 48px 44px; border-radius: var(--r-xl); background: linear-gradient(135deg, var(--hero-from) 0%, var(--hero-to) 100%); border: 1px solid var(--hero-line); }
 .home-hero > *:not(.hero-art) { position: relative; z-index: 1; max-width: 560px; }
 .home-hero h1 { font-size: calc(clamp(32px, 5vw, 48px) * var(--hero-scale, 1)); color: var(--green-900); }
-.home-hero p { font-size: 17px; margin: 14px 0 24px; color: #56695e; }
+.home-hero p { font-size: 17px; margin: 14px 0 24px; color: var(--hero-text); }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .hero-art { position: absolute; right: 6%; top: 50%; transform: translateY(-50%); width: 300px; height: 300px; display: grid; place-items: center; color: #7d9a67; }
 .orbit { position: absolute; inset: 30px; border: 1px solid #c8d6ba; border-radius: 50%; }

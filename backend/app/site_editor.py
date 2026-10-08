@@ -15,6 +15,7 @@ staff accept them.
 import copy
 import hashlib
 import logging
+import math
 import re
 import secrets
 import unicodedata
@@ -24,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import builder, builder_customize, builder_edit, db, ratelimit
+from . import builder, builder_customize, builder_edit, builder_theme, db, ratelimit
 from .church_content import (HIDEABLE_PAGES, SITE_COPY, STYLE_SCALES, ChurchContent, ContentError, normalize,
                              round_scale)
 
@@ -273,6 +274,50 @@ def _font_allowed(value, token, live):
     raise Invalid('Pick one of the fonts listed.')
 
 
+# The template's own text color, and the page behind text when the church has picked no background (as the builder's
+# rules and frontend/src/siteDraft.js check it).
+TEMPLATE_TEXT, PAGE_WHITE = '#3a4d44', '#ffffff'
+
+
+def _mix(hex_color, target, amount):
+    a, b = ([int(c[i:i + 2], 16) for i in (1, 3, 5)] for c in (hex_color, target))
+    return '#' + ''.join(f'{math.floor(x + (y - x) * amount + 0.5):02x}' for x, y in zip(a, b))  # as JavaScript rounds
+
+
+def nearest_readable(token, value, theme):
+    """The closest color to `value` that keeps the page readable: a background lightened until it is light and the
+    text reads on it, or a text color darkened (or lightened) until it reads on the background. '' if none."""
+    for step in range(1, 21):
+        if token == 'background':
+            candidate = _mix(value, '#ffffff', step * 0.05)
+            if builder_theme._luminance(candidate) >= 0.6 and \
+                    builder_theme.contrast(theme.get('text') or TEMPLATE_TEXT, candidate) >= 4.5:
+                return candidate
+        else:
+            page = theme.get('background') or PAGE_WHITE
+            candidate = _mix(value, '#000000' if builder_theme._luminance(page) >= 0.18 else '#ffffff', step * 0.05)
+            if builder_theme.contrast(candidate, page) >= 4.5:
+                return candidate
+    return ''
+
+
+def _readable_page(token, value, theme):
+    """Invalid, naming the nearest readable color, for a background that is too dark or would make the text hard to
+    read, or a text color that would be hard to read on the background."""
+    if token == 'background':
+        light = builder_theme._luminance(value) >= 0.6
+        if light and builder_theme.contrast(theme.get('text') or TEMPLATE_TEXT, value) >= 4.5:
+            return
+        why = ('Your site keeps a light page background so text stays readable.' if not light
+               else 'Your text would be hard to read on that background.')
+    else:
+        if builder_theme.contrast(value, theme.get('background') or PAGE_WHITE) >= 4.5:
+            return
+        why = 'That text color would be hard to read on your background.'
+    nearest = nearest_readable(token, value, theme)
+    raise Invalid(f'{why} The nearest readable shade is {nearest}.' if nearest else why)
+
+
 def _apply(content, op, live):
     """Make one cleaned operation on `content` (in place) and return it as stored (a color may be darkened to stay
     readable). Invalid or Stale leave `content` as it was."""
@@ -301,6 +346,8 @@ def _apply(content, op, live):
         if token in FONT_TOKENS:
             value = _font_allowed(value, token, live)
         elif value:
+            if token in ('background', 'text'):
+                _readable_page(token, value, theme)
             # The builder's own rules: buttons readable with white text, a light background, readable text.
             trial = {'site': {'theme': theme}}
             try:

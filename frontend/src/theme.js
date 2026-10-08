@@ -18,12 +18,24 @@ export function themeVariables(theme) {
     '--green-600': mix(primary, '#ffffff', 0.15), '--green-200': mix(primary, '#ffffff', 0.75),
     '--green-100': mix(primary, '#ffffff', 0.88), '--green-50': mix(primary, '#ffffff', 0.94),
   });
-  if (HEX.test(theme?.background || '')) vars['--bg'] = theme.background.toLowerCase();
+  const background = HEX.test(theme?.background || '') ? theme.background.toLowerCase() : '';
+  if (background) Object.assign(vars, {
+    // The Home hero is the page background with a touch of the main color, so a new background shows at once.
+    '--bg': background, '--hero-from': mix(background, primary || '#2b6248', 0.06),
+    '--hero-to': mix(background, primary || '#2b6248', 0.12), '--hero-line': mix(background, primary || '#2b6248', 0.2),
+  });
   if (HEX.test(theme?.accent || '')) Object.assign(vars, {
     '--sand-50': mix(theme.accent, '#ffffff', 0.94), '--sand-100': mix(theme.accent, '#ffffff', 0.85),
     '--sand-700': mix(theme.accent, '#000000', 0.35),
+    // The Button color (kept readable with white text on the server) fills the site's main buttons.
+    '--button': theme.accent.toLowerCase(), '--button-hover': mix(theme.accent, '#000000', 0.15),
   });
-  if (HEX.test(theme?.text || '')) Object.assign(vars, { '--text': theme.text.toLowerCase(), '--ink': theme.text.toLowerCase() });
+  if (HEX.test(theme?.text || '')) {
+    // Body text, headings and the softer secondary text (a little toward the page) all follow the text color.
+    const text = theme.text.toLowerCase();
+    Object.assign(vars, { '--text': text, '--ink': text, '--muted': mix(text, background || '#ffffff', 0.2),
+      '--hero-text': mix(text, background || '#ffffff', 0.12) });
+  }
   if (FONT.test(theme?.body_font || '')) vars['--font'] = `'${theme.body_font}', system-ui, -apple-system, sans-serif`;
   if (FONT.test(theme?.heading_font || '')) vars['--display'] = `'${theme.heading_font}', Georgia, serif`;
   return vars;
