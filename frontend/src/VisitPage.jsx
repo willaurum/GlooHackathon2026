@@ -1,9 +1,11 @@
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import ChurchMap from './ChurchMap.jsx';
 import ContactInput from './ContactInput.jsx';
 import { useChurch } from './ChurchContext.js';
-import { directionsHref, nextSteps as pickNextSteps, orderedSections } from './churchSite.js';
+import { directionsHref, nextSteps as pickNextSteps } from './churchSite.js';
+import { Editable, SectionFrame, SetupFact, sectionKeys, useEditor } from './Editable.jsx';
+import { copyText } from './siteCopy.js';
 import Sourced from './Sourced.jsx';
 import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS, geocodeAddress, parkingFaq } from './visitMap.js';
 
@@ -25,6 +27,10 @@ function writeToken(key, token) {
 
 export default function VisitPage() {
   const site = useChurch();
+  const editor = useEditor();
+  // The church's own wording for an eyebrow or heading (site.copy), else the template's.
+  const label = (as, key, className) => <Editable as={as} className={className} path={'copy.' + key}>{copyText(site.site, key, site.name)}</Editable>;
+  const eyebrow = key => label('div', key, 'eyebrow'), heading = key => label('h2', key);
   const tokenKey = site.demo ? TOKEN_KEY : TOKEN_KEY + ':' + site.slug;
   const [church, setChurch] = useState(null),
     [visit, setVisit] = useState(null),
@@ -126,27 +132,27 @@ export default function VisitPage() {
     {error && <div className="api-message" role="alert">{error}</div>}
 
     {/* In the order the church asked Tekton for (site.layout). The demo church's illustrated map takes the map's place. */}
-    {orderedSections(site.site?.layout, 'visit', VISIT_SECTIONS).map(key => <Fragment key={key}>{{
+    {sectionKeys(editor, site.site?.layout, 'visit', VISIT_SECTIONS).map(key => <SectionFrame key={key} page="visit" section={key} layout={site.site?.layout}>{{
       service_times: <section className="card visit-section" id="visit-service-times">
-        <div className="eyebrow">SERVICE TIMES</div>
-        <h2>Join us this week</h2>
-        {info.services.length ? <div className="service-cards">
+        {eyebrow('visit.services_eyebrow')}
+        {heading('visit.services_title')}
+        {info.services.length ? <SetupFact as="div" className="service-cards">
           {info.services.map(s => <article key={s.day + s.time} className="service-card">
             <strong><Sourced field="services">{s.day} {s.time}</Sourced></strong>
             <p>{s.note}</p>
           </article>)}
-        </div> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Tekton or the church office in the meantime.'}</p>}
+        </SetupFact> : <p className="muted">Service times are coming soon. {site.staff ? 'Add them in Church setup.' : 'Ask Tekton or the church office in the meantime.'}</p>}
       </section>,
       what_to_expect: (info.first_visit && <section className="card visit-section" id="visit-what-to-expect">
-        <div className="eyebrow">WHAT TO EXPECT</div>
-        <h2>Before you arrive</h2>
-        <p><Sourced field="first_visit">{info.first_visit}</Sourced></p>
+        {eyebrow('visit.expect_eyebrow')}
+        {heading('visit.expect_title')}
+        <Editable as="p" path="info.first_visit"><Sourced field="first_visit">{info.first_visit}</Sourced></Editable>
       </section>),
       map: <>{!site.demo && <div className={'visit-location' + (place && parking.length ? ' has-parking' : '')}>
       {place && <section className="card visit-section" id="visit-map">
-        <div className="eyebrow">FIND YOUR WAY</div>
-        <h2>Where we meet</h2>
-        <p>{info.address ? <Sourced field="address">{info.address}</Sourced> : place}</p>
+        {eyebrow('visit.map_eyebrow')}
+        {heading('visit.map_title')}
+        <SetupFact as="p">{info.address ? <Sourced field="address">{info.address}</Sourced> : place}</SetupFact>
         {location && <>
           <ChurchMap center={location.center} approximate={location.approximate} name={info.name} />
           {location.approximate && <p className="map-address">Approximate location</p>}
@@ -160,7 +166,7 @@ export default function VisitPage() {
         <div className="eyebrow">BEFORE YOU ARRIVE</div>
         <h2>Parking &amp; accessibility</h2>
         <div className="faq-list">
-          {parking.map(f => <details key={f.id ?? f.question} className="faq"><summary>{f.question}</summary><p>{f.answer}</p></details>)}
+          {parking.map(f => <Faq key={f.id ?? f.question} faq={f} open={!!editor} />)}
         </div>
       </section>}
       </div>}
@@ -186,9 +192,9 @@ export default function VisitPage() {
         <p className="map-address">Example campus: {EXAMPLE_CAMPUS.name}, {EXAMPLE_CAMPUS.address}. Parking and door labels are illustrative.</p>
       </section>}</>,
       locations: (church.locations.length > 0 && <section className="card visit-section" id="visit-locations">
-        <div className="eyebrow">OUR CAMPUSES</div>
-        <h2>Places we meet</h2>
-        <div className="service-cards">
+        {eyebrow('visit.locations_eyebrow')}
+        {heading('visit.locations_title')}
+        <SetupFact as="div" className="service-cards">
           {church.locations.map(loc => <article key={loc.id ?? loc.name} className="service-card campus-card">
             <strong><Sourced list="locations" name={loc.name}>{loc.name}</Sourced></strong>
             {loc.address && <p>{loc.address}</p>}
@@ -196,34 +202,31 @@ export default function VisitPage() {
             {loc.note && <p>{loc.note}</p>}
             {(loc.map_query || loc.address) && <a className="link" href={directionsHref(loc.map_query || loc.address)} target="_blank" rel="noopener noreferrer">Get directions</a>}
           </article>)}
-        </div>
+        </SetupFact>
       </section>),
       faqs: (faqs.length > 0 && <section className="card visit-section" id="visit-good-to-know">
-        <div className="eyebrow">GOOD TO KNOW</div>
-        <h2>Questions people ask</h2>
+        {eyebrow('visit.faqs_eyebrow')}
+        {heading('visit.faqs_title')}
         <div className="faq-list">
-          {faqs.map(f => <details key={f.id ?? f.question} className="faq">
-            <summary>{f.question}</summary>
-            <p>{f.answer}</p>
-          </details>)}
+          {faqs.map(f => <Faq key={f.id ?? f.question} faq={f} open={!!editor} />)}
         </div>
       </section>),
       next_steps: (nextSteps.length > 0 && <section className="card visit-section" id="visit-next-steps">
-        <div className="eyebrow">YOUR NEXT STEP</div>
-        <h2>A good place to start</h2>
-        <div className="service-cards">
+        {eyebrow('visit.next_eyebrow')}
+        {heading('visit.next_title')}
+        <SetupFact as="div" className="service-cards">
           {nextSteps.map(ev => <article key={ev.id} className="service-card">
             <strong>{ev.name}</strong>
             <p>{[ev.when, ev.where].filter(Boolean).join(' · ')}</p>
             <p>{ev.description}</p>
           </article>)}
-        </div>
+        </SetupFact>
       </section>),
       sign_up: <>{/* Guests pick a service time, so the form waits until the church has one. */}
       {(info.services.length > 0 || visit) && <section className="card visit-section" id="visit-sign-up">
         {!visit ? <>
-          <div className="eyebrow">LET US KNOW YOU'RE COMING</div>
-          <h2>Plan your visit</h2>
+          {eyebrow('visit.signup_eyebrow')}
+          {heading('visit.signup_title')}
           <form className="visit-form" onSubmit={signUp}>
             <label className="field">Name
               <input required maxLength={100} value={name} onChange={e => setName(e.target.value)} placeholder="Jamie Parker" />
@@ -277,6 +280,15 @@ export default function VisitPage() {
           <button type="button" className="plan-another" onClick={planAnother}>Plan a different visit</button>
         </div>}
       </section>}</>,
-    }[key]}</Fragment>)}
+    }[key]}</SectionFrame>)}
   </div>;
+}
+
+// One question people ask; staff edit it in place in the site editor, where every answer stays open.
+function Faq({ faq, open }) {
+  const path = faq.id == null ? null : 'faqs.' + faq.id;
+  return <details className="faq" open={open || undefined}>
+    <summary><Editable path={path && path + '.question'}>{faq.question}</Editable></summary>
+    <Editable as="p" path={path && path + '.answer'}>{faq.answer}</Editable>
+  </details>;
 }

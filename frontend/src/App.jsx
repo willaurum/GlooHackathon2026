@@ -28,6 +28,10 @@ import { footerLinks, pageHidden } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
 import TektonAgent from './TektonAgent.jsx';
+import { EditorContext, Editable } from './Editable.jsx';
+import SiteEditor from './SiteEditor.jsx';
+import { copyText } from './siteCopy.js';
+import { styleVariables } from './siteDraft.js';
 
 const ROUTES = ['', 'serve', 'serve/find', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -35,14 +39,14 @@ const SERMON_ROUTE = /^notes\/[\w-]+$/;
 // Managing a monthly gift: #/give/manage, or a gift's private link #/give/manage/<church>.<token>.
 const GIVE_MANAGE = /^give\/manage(\/[a-z0-9-]{1,40}\.[\w-]{20,100})?$/;
 
-// [eyebrow, title, intro] for each About page.
-const ABOUT_PAGES = {
-  about: ['About', 'Who we are.', 'The story, the people and the heart behind {name}.'],
-  'about/beliefs': ['About', 'What we believe.', 'The convictions that shape our teaching and our life together.'],
-  'about/news': ['News', 'What’s happening.', 'Quick updates on what’s coming up, and longer articles from our pastors and ministry leaders.'],
-  'about/directory': ['About', 'Who to contact.', 'Pastors, staff and ministry leaders, and how to reach them.'],
-  'about/connect': ['Connect', 'Let’s get you connected.', 'Whether you are new, curious or ready to jump in, here are a few ways to take the next step.'],
-};
+// The page header (eyebrow, title, intro) of a route, in the church's words (site.copy keys header.<route>.*) or
+// the template's, with the draft paths the site editor changes them by.
+function pageHeader(site, route, name) {
+  const key = 'header.' + route.replace('/', '_');
+  const part = field => copyText(site, key + '.' + field, name);
+  return { eyebrow: part('eyebrow'), title: part('title'), text: part('text'),
+    paths: { eyebrow: 'copy.' + key + '.eyebrow', title: 'copy.' + key + '.title', text: 'copy.' + key + '.text' } };
+}
 const GUEST_TABS = [['guests/plan', 'Plan your visit', 'pin'], ['guests/welcome', 'Welcome team', 'users']];
 // Pages that work before the church API knows about new churches: giving has its own API.
 // #/platform (every church, for the platform team) is not tied to the church showing.
@@ -69,6 +73,17 @@ function withDefault(route, demo = true) {
 // Stripe returns to /give?church=<slug>&session_id=..., so that path opens Give for that church.
 const onGivePath = () => window.location.pathname.startsWith('/give');
 
+// The site editor: #/c/<slug>/edit, or #/c/<slug>/edit/<route> for one of the church's public pages.
+const EDIT_HASH = /^#\/c\/([^/]+)\/edit(?:\/(.*))?$/;
+const NOT_EDITABLE = ['setup', 'staff', 'new', 'platform'];
+function editLocation(hash = window.location.hash) {
+  const edit = EDIT_HASH.exec(hash);
+  if (!edit || !isSlug(edit[1])) return null;
+  const route = (edit[2] || '').replace(/\/$/, '');
+  const known = (ROUTES.includes(route) && !NOT_EDITABLE.includes(route)) || SERMON_ROUTE.test(route) || PAGE_ROUTE.test(route);
+  return { slug: edit[1], source: 'edit', route: withDefault(known ? route : '') };
+}
+
 /** The church and page in the address bar. See church.js for the order churches are picked in. */
 function readLocation() {
   const preview = /^#\/new\/preview(?:\/(.*))?$/.exec(window.location.hash);
@@ -77,6 +92,8 @@ function readLocation() {
     return { slug: 'builder-preview', source: 'preview',
       route: withDefault((ROUTES.includes(route) && !['new', 'platform'].includes(route)) || SERMON_ROUTE.test(route) || PAGE_ROUTE.test(route) ? route : '', false) };
   }
+  const edit = editLocation();
+  if (edit) return edit;
   const where = resolveChurch({ host: window.location.host, hash: window.location.hash, saved: savedChurch() });
   // The bare address is Tekton's landing page, the site builder (a checkout return on /give still opens Give).
   if (!onGivePath() && isLanding({ host: window.location.host, hash: window.location.hash })) return { ...where, route: 'new' };
@@ -108,12 +125,16 @@ const titleCase = slug => slug.split('-').map(w => w.charAt(0).toUpperCase() + w
 
 const inPreview = () => /^#\/new\/preview(?:\/|$)/.test(window.location.hash);
 
+const editingSlug = () => editLocation()?.slug || '';
+
 export default function App() {
   const [preview, setPreview] = useState(inPreview);
+  const [editing, setEditing] = useState(editingSlug);
   useEffect(() => {
     const sync = () => {
-      if (!inPreview()) stopApiPreview();
+      if (!inPreview() && !editingSlug()) stopApiPreview();
       setPreview(inPreview());
+      setEditing(editingSlug());
     };
     window.addEventListener('hashchange', sync);
     window.addEventListener('popstate', sync);
@@ -123,6 +144,8 @@ export default function App() {
     };
   }, []);
   if (preview) return <BuilderPreview />;
+  // Staff editing their site see it as visitors do, with their draft on top (SiteEditor.jsx).
+  if (editing) return <SiteEditor key={editing} slug={editing} Site={SiteApp} />;
   stopApiPreview();
   return <SiteApp />;
 }
@@ -151,7 +174,8 @@ function BuilderPreview() {
   return <SiteApp key={loaded} snapshot={snapshot} draft={draft} lastAsk={lastAsk} onEdited={result => { setLastAsk(result); setVersion(v => v + 1); }} />;
 }
 
-function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
+// `editor` (SiteEditor.jsx): the site editor's state and toolbar. The snapshot is then the church's draft.
+function SiteApp({ snapshot, draft, lastAsk, onEdited, editor = null }) {
   const previewBanner = useRef(null);
   // On a Tekton preview, each imported fact can show where it came from (Sourced.jsx); on by default.
   const [showSources, setShowSources] = useState(true);
@@ -162,9 +186,13 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
     [listing, setListing] = useState(snapshot?.info || null),
     [listingVersion, setListingVersion] = useState(0),
     [staffVersion, setStaffVersion] = useState(0),
-    [website, setWebsite] = useState(null);
+    [loadedWebsite, setWebsite] = useState(null);
   const { slug, source, route } = where;
-  const demo = !snapshot && slug === DEMO_CHURCH;
+  // The editor shows a church's draft as a preview, so the demo church stays itself there.
+  const demo = editor ? slug === DEMO_CHURCH : !snapshot && slug === DEMO_CHURCH;
+  // The editor's draft site (menu, pages, theme, layout, wording) changes with every edit, without a reload.
+  const draftWebsite = useMemo(() => editor ? { site: snapshot?.church?.site || null, pages: snapshot?.church?.pages || [] } : null, [!!editor, snapshot]);
+  const website = draftWebsite || loadedWebsite;
   if (snapshot) startApiPreview(snapshot, draft?.id);
   // Every api() call from here down is for this church.
   setApiChurch(slug);
@@ -247,11 +275,15 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   // Lock page scroll behind the full-screen chat on phones.
   useEffect(() => { document.body.classList.toggle('chat-open', chatOpen); }, [chatOpen]);
 
+  // The visitor chat; the site editor has its own Ask Tekton in the toolbar.
+  const ask = () => { if (!editor) setChatOpen(true); };
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
     next = withDefault(['start', 'give/start', 'give/staff'].includes(next) ? 'staff' : next === 'prayer/map' ? 'prayer' : next, demo);
+    // Staff screens are not part of the site editor: they open on the live site.
+    if (editor && NOT_EDITABLE.includes(next.split('/')[0])) { window.location.hash = hashFor(slug, next); return; }
     // Drops any /give?session_id=… left over from a checkout return.
-    const hash = snapshot ? '#/new/preview' + (next ? '/' + next : '') : hashFor(slug, next, source);
+    const hash = editor ? '#/c/' + slug + '/edit' + (next ? '/' + next : '') : snapshot ? '#/new/preview' + (next ? '/' + next : '') : hashFor(slug, next, source);
     if (next !== route || window.location.search) window.history.pushState(null, '', '/' + hash);
     setWhere(w => ({ ...w, route: next }));
     setChatOpen(false);
@@ -309,7 +341,8 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
         if (live) retry = setTimeout(load, 2000);
       }
     }
-    if (ready && !demo) load();
+    // The demo church loads its site too, so wording and style its staff publish show for every visitor.
+    if (ready && !editor) load();
     return () => { live = false; clearTimeout(retry); };
   }, [slug, ready, demo, listingVersion]);
   // Its colors and fonts, until another church (or the demo church) is shown.
@@ -318,7 +351,7 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   const church = useMemo(() => ({
     slug, source, demo, preview: !!snapshot, name, city: currentListing?.city || '', missing: !!currentListing?.missing, ready, staff, choose, go,
     site: website?.site || null, pages: website?.pages || [],
-    provenance: snapshot?.provenance || null, showSources: !!snapshot && showSources,
+    provenance: snapshot?.provenance || null, showSources: !!snapshot && !editor && showSources,
     // After staff rename the church in Church setup.
     refresh: () => setListingVersion(v => v + 1),
   }), [slug, source, demo, name, listing?.city, listing?.missing, ready, staff, route, staffVersion, website, showSources]);
@@ -338,38 +371,37 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   if (currentListing?.missing && section !== 'platform') page = <ChurchMissing />;
   else if (blocked) page = <ChurchNotReady section={section} />;
   else page = <>
-    {section === '' && <Home go={go} onAsk={() => setChatOpen(true)} />}
+    {section === '' && <Home go={go} onAsk={ask} />}
     {/* Kept mounted so the saved/pending count stays live in the nav. */}
     {ready && <div hidden={section !== 'serve'}><Serve route={section === 'serve' ? route : 'serve'} go={go} /></div>}
     {section === 'about' && <div className="page">
-      <PageHeader eyebrow={ABOUT_PAGES[route]?.[0] ?? 'About'} title={ABOUT_PAGES[route]?.[1]}
-        text={ABOUT_PAGES[route]?.[2]?.replace('{name}', demo ? 'Grace Community Church' : name || 'our church')} />
+      <PageHeader {...pageHeader(website?.site, route, demo ? 'Grace Community Church' : name)} />
       <SubNav tabs={aboutTabsFor(demo, church.pages, church.site)} route={route} go={go} />
       {route === 'about/news' && <News go={go} />}
       {route === 'about' && (demo ? <About go={go} /> : <ChurchStory go={go} />)}
       {route === 'about/beliefs' && (demo ? <Beliefs /> : <ChurchBeliefs go={go} />)}
       {route === 'about/directory' && <Directory />}
-      {route === 'about/connect' && <Connect go={go} onAsk={() => setChatOpen(true)} />}
+      {route === 'about/connect' && <Connect go={go} onAsk={ask} />}
     </div>}
     {section === 'notes' && <div className="page">
-      <PageHeader eyebrow="Sermon Notes" title="Sermons you can ask." text="Every Sunday message, transcribed. Ask a question and get the pastor’s own words back, with timestamps." />
+      <PageHeader {...pageHeader(website?.site, 'notes', name)} />
       <PastorNotes route={route} go={go} />
     </div>}
     {(section === 'give' || section === 'staff') && <div className="page">
       <Give route={route} go={go} sessionId={giveSession} status={giveStatus} returnChurch={giveChurch} />
     </div>}
     {section === 'calendar' && <div className="page">
-      <PageHeader eyebrow="Calendar" title="Church Life & Gatherings." text="Explore upcoming gatherings, services, and outreach." />
+      <PageHeader {...pageHeader(website?.site, 'calendar', name)} />
       <Calendar />
     </div>}
     {section === 'guests' && <div className="page">
-      <PageHeader eyebrow="Guests" title={route === 'guests/plan' ? 'Plan your visit.' : 'Welcome team.'} text={route === 'guests/plan' ? 'Everything a first-time guest needs, and a way to let us know they’re coming.' : 'See who has arrived and get them to the right person.'} />
+      <PageHeader {...pageHeader(website?.site, route === 'guests/plan' ? 'guests/plan' : 'guests/welcome', name)} />
       <SubNav tabs={GUEST_TABS} route={route} go={go} />
       {route === 'guests/plan' && <VisitPage />}
       {route === 'guests/welcome' && <WelcomeTeam />}
     </div>}
     {section === 'prayer' && <div className="page">
-      <PageHeader eyebrow="Prayer map" title="Sharp facts. Soft people." text="Real news gets a real pin. People in sensitive places never do." />
+      <PageHeader {...pageHeader(website?.site, 'prayer', name)} />
       <PrayerMap />
     </div>}
     {section === 'p' && PAGE_ROUTE.test(route) && <SitePage slug={route.slice(2)} />}
@@ -377,22 +409,28 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
     {section === 'platform' && <div className="page"><Platform /></div>}
   </>;
 
+  // Heading and headline sizes the church picked (site.style); nothing when it has not.
+  const sizes = styleVariables(website?.site?.style);
   return <ChurchContext.Provider value={church}>
-    <div className={'app' + (snapshot ? ' site-preview' : '')}>
-      {snapshot && <div className="site-preview-banner" ref={previewBanner}>
+    <EditorContext.Provider value={editor}>
+    <div className={'app' + (snapshot ? ' site-preview' : '') + (editor ? ' site-editing' + (editor.clean ? ' editor-clean' : '') : '')}
+      style={Object.keys(sizes).length ? sizes : undefined}>
+      {/* The site editor's toolbar takes the preview banner's place. */}
+      {snapshot && editor && <div className="site-preview-banner editor-toolbar" ref={previewBanner}>{editor.toolbar(route, viewingName(route))}</div>}
+      {snapshot && !editor && <div className="site-preview-banner" ref={previewBanner}>
         <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
         {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
         {draft && <TektonAgent draftId={draft.id} steps={draft.custom_steps?.length || 0} viewing={viewingName(route)} lastResult={lastAsk} onChanged={(_, result) => onEdited?.(result)} />}
         <a href="#/new">Back to Tekton</a>
       </div>}
       <SiteNav route={route} go={go} />
-      <TopBar onAsk={() => setChatOpen(true)} />
+      <TopBar onAsk={ask} />
       <div className="content">
         {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
         <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
           {page}
           <footer className="site-footer">
-            <span>{name || 'Your church'} · Helping people find their people.</span>
+            <span>{name || 'Your church'} · <Editable path="copy.footer.tagline">{copyText(website?.site, 'footer.tagline', name)}</Editable></span>
             {/* The church's social accounts and app, from its imported website. */}
             {footerLinks(website?.site).length > 0 && <nav className="footer-links" aria-label="Follow us">
               {footerLinks(website?.site).map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}
@@ -403,8 +441,10 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
         </main>
       </div>
       <TabBar route={route} go={go} chatOpen={chatOpen} />
-      <FirstVisit route={route} go={go} />
-      <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onNavigate={go} />
+      {/* Staff editing their site get neither the first-visit welcome nor the visitor chat. */}
+      {!editor && <FirstVisit route={route} go={go} />}
+      {!editor && <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onNavigate={go} />}
     </div>
+    </EditorContext.Provider>
   </ChurchContext.Provider>;
 }

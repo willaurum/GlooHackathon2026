@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator, model_valida
 from datetime import date, datetime
 from typing import Literal
 
-from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, ratelimit, recommendations
+from . import ai_client, blog_ai, builder, chat, church_content, db, newsdata, pastor_notes, ratelimit, recommendations, site_editor
 from . import contact as contacts
 from .church_scope import ChurchScope
 
@@ -34,6 +34,7 @@ app = FastAPI(title="Tekton API", lifespan=lifespan)
 app.add_middleware(ChurchScope)
 app.include_router(pastor_notes.router)
 app.include_router(church_content.router)
+app.include_router(site_editor.router)
 app.include_router(builder.router)
 
 
