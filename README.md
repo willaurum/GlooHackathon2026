@@ -55,6 +55,7 @@ Tekton does not write theology or wording the church did not give, and a stateme
 
 - [docs/agentic-builder.md](docs/agentic-builder.md): how the builder decides what to trust, its limits, and what went wrong along the way
 - [docs/builder-api.md](docs/builder-api.md): the church content JSON and every builder route
+- [build-docs/Agent-Build-Doc.docx](build-docs/Agent-Build-Doc.docx): the Agent Build Document
 - [build-docs/evaluation.md](build-docs/evaluation.md): test cases, pass criteria, results on production, and token costs
 - [build-docs/session-logs/](build-docs/session-logs/): a full recorded run (each step, AI call, question, answer and edit)
 
@@ -205,7 +206,7 @@ The full list, the optional model variables, and who keeps copies of each key ar
 | [docs/architecture.md](docs/architecture.md) | Churches and isolation, staff accounts and permissions, who may call what, data storage, keys, subdomains |
 | [docs/features.md](docs/features.md) | Guests, Serve, Ask Tekton and which AI does what, Sermon Notes, Give, Calendar, Prayer map, News, with their routes |
 | [docs/local-development.md](docs/local-development.md) | Running locally, Ollama, the HPC tunnel, the team AI bridge |
-| [docs/Agent-Build-Doc.md](docs/Agent-Build-Doc.md) | Draft outline of the agent build doc |
+| [build-docs/Agent-Build-Doc.docx](build-docs/Agent-Build-Doc.docx) | The Agent Build Document for the hackathon |
 | [docs/qa/](docs/qa/) | Every test case and result from the team's Drive: the 44 builder cases and the 180-case platform suite, plus a website review |
 | [build-docs/](build-docs/) | The published build doc: [evaluation](build-docs/evaluation.md), [references](build-docs/references.md), [session logs](build-docs/session-logs/) |
 | [PREVIEWS.md](PREVIEWS.md) | How branch and PR previews work |
