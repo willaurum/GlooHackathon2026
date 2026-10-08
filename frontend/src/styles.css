@@ -142,12 +142,14 @@ fieldset > p { font-size: 14px; margin: 4px 0 12px; }
 /* Desktop: one top bar, pinned while the page scrolls. The church on the left, the main
    navigation in the middle, staff sign-in on the right. */
 .site-nav {
-  position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px;
+  /* Three columns: the outer two always match, so the menu stays centered on the page whatever the name's length. */
+  position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center; gap: 16px;
   height: var(--sitenav); padding: 0 28px; background: rgb(255 255 255 / .94);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line);
 }
 .site-nav-links { display: flex; justify-content: center; flex: 1; min-width: 0; height: 100%; }
-.site-account { display: flex; align-items: center; gap: 10px; flex: none; }
+.site-account { display: flex; align-items: center; gap: 10px; flex: none; justify-self: end; }
 .site-user { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
 .site-user strong { font-size: 13px; color: var(--ink); }
 .site-staff { gap: 4px; margin-top: 2px; font-size: 12px; white-space: nowrap; }
@@ -1070,11 +1072,14 @@ main { max-width: 1180px; margin: 0 auto; padding: 40px 40px 32px; }
 /* ---------- Your church: the church this site is for (no picker; churches do not see each other) ---------- */
 .church-name { margin: 22px 0 16px; }
 /* The church sits at the left of the top bar in place of a site logo, without a box around it. */
-.site-nav .church-name { margin: 0; flex: 0 1 auto; min-width: 0; max-width: 240px; }
+.site-nav .church-name { margin: 0; justify-self: start; min-width: 0; max-width: 320px; }
 .site-nav .church-name .church { border: 0; padding: 0; background: transparent; }
 .site-nav .church-name .church > span { width: 32px; height: 32px; font-size: 18px; }
 .site-nav .church-name .church strong { font-family: var(--display); font-size: 16px; }
-@media (max-width: 1024px) { .site-nav .church-name { max-width: 150px; } }
+/* A long name wraps to a second line in the top bar; only a name longer than two lines is cut. */
+.site-nav .church-name .church strong { white-space: normal; line-height: 1.15; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+@media (max-width: 1024px) { .site-nav .church-name { max-width: 220px; } }
 .church-name .church-staff { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-top: 2px; font-size: 12px; font-weight: 600; }
 .church-name.compact { display: none; margin: 0; }
 .church-link { margin-bottom: 18px; }
