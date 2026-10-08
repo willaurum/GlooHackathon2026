@@ -32,7 +32,7 @@ Grace Community is the fictional demo of the base template. Existing church site
 
 `frontend/src/church.js` picks the church, in this order:
 
-1. **Subdomain**: `<slug>.<VITE_BASE_DOMAIN>` (for example `hope-chapel.belong.example.org`), when the build sets `VITE_BASE_DOMAIN`. Off until there is a domain.
+1. **Subdomain**: `<slug>.<VITE_BASE_DOMAIN>` (for example `hope-chapel.tekton.example.org`), when the build sets `VITE_BASE_DOMAIN`. Off until there is a domain.
 2. **Link**: a hash that names the church, `#/c/<slug>/serve`. The older giving link `#/give/c/<slug>` is rewritten to `#/c/<slug>/give`.
 3. **Saved**: the church this browser picked last (localStorage `belong-church`). Opening a church link also saves it.
 4. **Demo**: `grace-community`.
@@ -119,12 +119,12 @@ Nothing extra: any endpoint that goes through `db.py` already runs against the c
 
 ### Subdomains, once there is a domain
 
-Nothing here buys or sets up a domain. When there is one (say `belong.example.org`):
+Nothing here buys or sets up a domain. When there is one (say `tekton.example.org`):
 
-1. DNS: add the domain to Cloudflare and a proxied wildcard record `*.belong.example.org` (and the apex), pointing at the frontend Worker.
-2. Frontend Worker (repo root `wrangler.jsonc`): add routes `belong.example.org/*` and `*.belong.example.org/*` with `zone_name`, and build with `VITE_BASE_DOMAIN=belong.example.org`. Then `hope-chapel.belong.example.org` shows Hope Chapel, the demo church is `grace-community.belong.example.org`, the picker moves between subdomains, and shared links use them.
-3. APIs: set the `BASE_DOMAIN` var to `belong.example.org` in both `api/wrangler.jsonc` and `api-giving/wrangler.jsonc`. Their CORS check then accepts `https://belong.example.org` and `https://<slug>.belong.example.org` on top of `ALLOWED_ORIGIN`. Optionally give the APIs their own hostnames (`api.belong.example.org`, `giving.belong.example.org`) and update `VITE_API_BASE` and `VITE_GIVING_API_BASE`.
-4. Stripe: checkout returns to the origin that started the gift, so a gift from `hope-chapel.belong.example.org` comes back there once that origin is allowed (step 3). Set `PUBLIC_ORIGIN` in `api-giving/` to the giving API hostname and press "Re-run Stripe setup" for each connected church so its webhook points at the new address.
+1. DNS: add the domain to Cloudflare and a proxied wildcard record `*.tekton.example.org` (and the apex), pointing at the frontend Worker.
+2. Frontend Worker (repo root `wrangler.jsonc`): add routes `tekton.example.org/*` and `*.tekton.example.org/*` with `zone_name`, and build with `VITE_BASE_DOMAIN=tekton.example.org`. Then `hope-chapel.tekton.example.org` shows Hope Chapel, the demo church is `grace-community.tekton.example.org`, the picker moves between subdomains, and shared links use them.
+3. APIs: set the `BASE_DOMAIN` var to `tekton.example.org` in both `api/wrangler.jsonc` and `api-giving/wrangler.jsonc`. Their CORS check then accepts `https://tekton.example.org` and `https://<slug>.tekton.example.org` on top of `ALLOWED_ORIGIN`. Optionally give the APIs their own hostnames (`api.tekton.example.org`, `giving.tekton.example.org`) and update `VITE_API_BASE` and `VITE_GIVING_API_BASE`.
+4. Stripe: checkout returns to the origin that started the gift, so a gift from `hope-chapel.tekton.example.org` comes back there once that origin is allowed (step 3). Set `PUBLIC_ORIGIN` in `api-giving/` to the giving API hostname and press "Re-run Stripe setup" for each connected church so its webhook points at the new address.
 5. Slugs: a subdomain is the church slug, so slugs are already DNS-safe (lowercase letters, digits and dashes, up to 40 characters), and the registry never hands out names like `www`, `api`, `app`, `admin` or `mail`.
 
 ### Testing churches locally

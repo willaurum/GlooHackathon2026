@@ -22,7 +22,7 @@
     "PUBLIC_ORIGIN": "https://gloo-hackathon2026-api-donate-giving.jaronwilson2025.workers.dev",
     // Staff password for the built-in demo church only. Real churches set their own at sign-up.
     "ADMIN_KEY": "gloo-donate-demo"
-    // Once churches have subdomains, add "BASE_DOMAIN": "belong.example.org" so https://<slug>.belong.example.org is allowed too.
+    // Once churches have subdomains, add "BASE_DOMAIN": "tekton.example.org" so https://<slug>.tekton.example.org is allowed too.
   },
   // Secrets (npx wrangler secret put NAME):
   //   STRIPE_KEY_ENCRYPTION_KEY  32 random bytes, base64. Encrypts each church's Stripe key at rest.
