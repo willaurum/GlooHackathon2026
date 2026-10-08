@@ -4,7 +4,7 @@ import ChurchMap from './ChurchMap.jsx';
 import ContactInput from './ContactInput.jsx';
 import { useChurch } from './ChurchContext.js';
 import { directionsHref, nextSteps as pickNextSteps } from './churchSite.js';
-import { Editable, SectionFrame, SetupFact, sectionKeys, useEditor } from './Editable.jsx';
+import { Editable, INERT, SectionFrame, SetupFact, sectionKeys, useEditor } from './Editable.jsx';
 import { copyText } from './siteCopy.js';
 import Sourced from './Sourced.jsx';
 import { ALLOWED_PARKING_IDS, EXAMPLE_CAMPUS, MAP_SPOTS, geocodeAddress, parkingFaq } from './visitMap.js';
@@ -227,7 +227,8 @@ export default function VisitPage() {
         {!visit ? <>
           {eyebrow('visit.signup_eyebrow')}
           {heading('visit.signup_title')}
-          <form className="visit-form" onSubmit={signUp}>
+          {/* In the editor the form is only shown: signing up would plan a real visit. */}
+          <form className="visit-form" onSubmit={editor ? e => e.preventDefault() : signUp}>
             <label className="field">Name
               <input required maxLength={100} value={name} onChange={e => setName(e.target.value)} placeholder="Jamie Parker" />
             </label>
@@ -249,7 +250,8 @@ export default function VisitPage() {
               <input type="checkbox" checked={wantsHost} onChange={e => setWantsHost(e.target.checked)} />
               I'd like someone to meet me
             </label>
-            <button className="primary wide" disabled={busy}>{busy ? 'Working…' : "I'm coming"}</button>
+            <button className={'primary wide' + (editor ? ' editor-inert' : '')} disabled={busy} aria-disabled={editor ? true : undefined}
+              title={editor ? INERT : undefined}>{busy ? 'Working…' : "I'm coming"}</button>
           </form>
         </> : <div className="visit-status" aria-live="polite">
           {visit.status === 'planned' && <>

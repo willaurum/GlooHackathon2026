@@ -275,8 +275,8 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited, editor = null }) {
   // Lock page scroll behind the full-screen chat on phones.
   useEffect(() => { document.body.classList.toggle('chat-open', chatOpen); }, [chatOpen]);
 
-  // The visitor chat; the site editor has its own Ask Tekton in the toolbar.
-  const ask = () => { if (!editor) setChatOpen(true); };
+  // The visitor chat; in the site editor the site's Ask Tekton buttons open the editor's own Ask Tekton.
+  const ask = () => { if (editor) editor.openAsk?.(); else setChatOpen(true); };
   // sectionId (from a chat suggestion) scrolls to that element instead of the top of the page.
   function go(next, sectionId) {
     next = withDefault(['start', 'give/start', 'give/staff'].includes(next) ? 'staff' : next === 'prayer/map' ? 'prayer' : next, demo);
@@ -413,7 +413,7 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited, editor = null }) {
   const sizes = styleVariables(website?.site?.style);
   return <ChurchContext.Provider value={church}>
     <EditorContext.Provider value={editor}>
-    <div className={'app' + (snapshot ? ' site-preview' : '') + (editor ? ' site-editing' + (editor.clean ? ' editor-clean' : '') : '')}
+    <div className={'app' + (snapshot ? ' site-preview' : '') + (editor ? ' site-editing' + (editor.clean ? ' editor-clean' : '') + (editor.outlines ? ' editor-outlines' : '') : '')}
       style={Object.keys(sizes).length ? sizes : undefined}>
       {/* The site editor's toolbar takes the preview banner's place. */}
       {snapshot && editor && <div className="site-preview-banner editor-toolbar" ref={previewBanner}>{editor.toolbar(route, viewingName(route))}</div>}

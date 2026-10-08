@@ -7,6 +7,7 @@ import { loadChurch, percent } from './giving.js';
 import Icon from './Icon.jsx';
 import { safeHref } from './site.js';
 import { copyText } from './siteCopy.js';
+import { INFO_DEFAULTS } from './siteDraft.js';
 import { Editable, SectionFrame, SetupFact, sectionKeys, useEditor } from './Editable.jsx';
 import Sourced from './Sourced.jsx';
 import SiteImage from './SiteImage.jsx';
@@ -17,8 +18,8 @@ export const HOME_SECTIONS = ['features', 'about', 'ministries', 'sermons', 'ser
 
 // The three steps of the bottom section (site copy keys home.leaders_step<n>_title and _text).
 const STEPS = [1, 2, 3];
-const DEFAULT_TAGLINE = 'A place to belong, grow and give.';
-const DEFAULT_ABOUT = 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.';
+// The template's own headline and text, shown while the church has none (the editor's review shows them too).
+const { tagline: DEFAULT_TAGLINE, about: DEFAULT_ABOUT } = INFO_DEFAULTS;
 
 export default function Home({ go, onAsk }) {
   const church = useChurch();

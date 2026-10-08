@@ -4,7 +4,7 @@ import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 import { pageHidden, pageOfType } from './churchSite.js';
 import { siteMenu } from './site.js';
-import { Editable } from './Editable.jsx';
+import { Editable, useEditor } from './Editable.jsx';
 
 // One navigation for every screen size: a top navigation bar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
@@ -33,14 +33,16 @@ export const aboutTabsFor = (demo, pages, site) => ABOUT_TABS.filter(([r]) => sh
 
 const sectionOf = route => route.split('/')[0];
 
-// Public visitors have no user account; staff sign in for the current church.
+// Public visitors have no user account; staff sign in for the current church. Staff in the site editor see the site
+// as visitors do, but are still staff.
 function identity(staff) {
   return staff ? { initials: 'ST', name: 'Church staff', role: 'Admin mode' }
     : { initials: 'V', name: 'Visitor', role: 'Browsing without sign-in' };
 }
 
 export function Avatar() {
-  const user = identity(useChurch().staff);
+  const { staff } = useChurch(), editor = useEditor();
+  const user = identity(staff || !!editor);
   return <span className="avatar" role="img" aria-label={user.name}>{user.initials}</span>;
 }
 
@@ -56,6 +58,7 @@ const flatMenu = items => items.flatMap(item => [item, ...flatMenu(item.children
 // the section itself still opens its first page.
 export function SiteNav({ route, go }) {
   const church = useChurch();
+  const editor = useEditor();
   const { demo, staff, pages } = church;
   const current = sectionOf(route);
   const website = flatMenu(siteMenu(church.site, pages));
@@ -97,10 +100,11 @@ export function SiteNav({ route, go }) {
     <div className="site-account">
       {/* Who is browsing, with the staff sign-in (or Church setup, once signed in) just below. */}
       <div className="site-user">
-        <strong>{identity(staff).name}</strong>
-        {!church.missing && <button className="link site-staff" onClick={e => pick(e, 'setup')}>
-          <Icon name="lock" size={13} />{staff ? 'Church setup' : 'Staff sign in'}
-        </button>}
+        <strong>{identity(staff || !!editor).name}</strong>
+        {editor ? <span className="site-staff editing"><Icon name="sparkle" size={13} />Editing your site</span>
+          : !church.missing && <button className="link site-staff" onClick={e => pick(e, 'setup')}>
+            <Icon name="lock" size={13} />{staff ? 'Church setup' : 'Staff sign in'}
+          </button>}
       </div>
       <Avatar />
     </div>

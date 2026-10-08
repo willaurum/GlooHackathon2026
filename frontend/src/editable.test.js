@@ -14,7 +14,7 @@ after(async () => { await server.close(); rmSync(cacheDir, { recursive: true, fo
 const { ChurchContext } = await server.ssrLoadModule('/src/ChurchContext.js');
 const { EditorContext } = await server.ssrLoadModule('/src/Editable.jsx');
 const { default: Home } = await server.ssrLoadModule('/src/Home.jsx');
-const { PageHeader } = await server.ssrLoadModule('/src/Layout.jsx');
+const { PageHeader, SiteNav, TopBar } = await server.ssrLoadModule('/src/Layout.jsx');
 const { readPath } = await server.ssrLoadModule('/src/siteDraft.js');
 
 const site = { copy: { 'home.serve_title': 'Volunteer' }, layout: { hidden: ['home:leaders'] } };
@@ -45,4 +45,14 @@ test('in the editor text is editable, drafts show, and hidden sections stay as p
   const clean = render(Home, { go() {}, onAsk() {} }, { ...editor, clean: true });
   assert.doesNotMatch(clean, /editable|editor-|For church leaders/);
   assert.match(clean, /<h1>Draft headline<\/h1>/);
+});
+
+test('in the editor the site header shows staff editing, never the visitor sign-in', () => {
+  for (const html of [render(SiteNav, { route: '', go() {} }, editor), render(TopBar, { onAsk() {} }, editor)]) {
+    assert.match(html, /Editing your site/);
+    assert.doesNotMatch(html, /Staff sign in|>Visitor</);
+  }
+  assert.match(render(SiteNav, { route: '', go() {} }, editor), /Church staff/);
+  // Visitors still see the sign-in.
+  assert.match(render(SiteNav, { route: '', go() {} }), /Staff sign in/);
 });

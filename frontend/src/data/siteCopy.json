@@ -224,7 +224,7 @@
   },
   "header.about.title": {
     "page": "about",
-    "label": "Our story page: heading",
+    "label": "About page: heading",
     "default": "Who we are.",
     "max": 160
   },
