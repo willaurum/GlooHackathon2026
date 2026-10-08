@@ -154,8 +154,8 @@ function withCors(response: Response, env: AppEnv, request: Request): Response {
 
 // Notes routes that can start a transcription; the container is kept awake for that church.
 const STARTS_NOTE = /^\/api\/notes(\/upload|\/[0-9a-f-]{36}\/retry)?$/;
-// The content import carries a whole church (FAQs, ministries, calendar), so it may be larger.
-const MAX_IMPORT_BYTES = 512 * 1024;
+// The content import and visual editor carry a whole church (FAQs, ministries, calendar, pages), so it may be larger.
+const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 // Builder uploads: 10 MB of files plus multipart overhead; the container enforces the exact limits.
 const MAX_BUILDER_UPLOAD_BYTES = 11 * 1024 * 1024;
 
@@ -193,7 +193,8 @@ async function route(request: Request, env: AppEnv, url: URL): Promise<Response>
 		}
 	}
 	if (path !== '/api/notes/upload') {
-		const rejected = tooLarge(request, path === '/api/church/content' ? MAX_IMPORT_BYTES : path === '/api/builder/drafts/upload' ? MAX_BUILDER_UPLOAD_BYTES : undefined);
+		const isChurchContent = path === '/api/church/content' || path.startsWith('/api/church/edit-assist') || path.startsWith('/api/church/preview');
+		const rejected = tooLarge(request, isChurchContent ? MAX_IMPORT_BYTES : path === '/api/builder/drafts/upload' ? MAX_BUILDER_UPLOAD_BYTES : undefined);
 		if (rejected) return rejected;
 	}
 

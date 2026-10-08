@@ -82,6 +82,43 @@ class VisualEditorTests(unittest.TestCase):
             clean_op, content = visual_editor.builder_customize.check(content, op)
         self.assertEqual(content['staff'][0]['name'], 'Pastor John')
 
+    def test_change_serve_section_text(self):
+        request_text = 'Can you please change the serve section to say "serve with your community" instead of the current sub-text'
+        ops = visual_editor._custom_rule_ops(request_text, self.sample_content)
+        self.assertIsNotNone(ops)
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0]['op'], 'set_section_text')
+        self.assertEqual(ops[0]['section'], 'serve')
+        self.assertEqual(ops[0]['text'], 'serve with your community')
+
+        # Apply special op
+        desc = visual_editor._apply_special_op(self.sample_content, ops[0])
+        self.assertIn('serve with your community', desc)
+        self.assertEqual(
+            self.sample_content['site']['feature_text']['serve'],
+            'serve with your community',
+        )
+
+    def test_builder_haiku_model_resolution(self):
+        import unittest.mock as mock
+        # When Gloo endpoint is configured (with default chat model gloo-qwen-3.7-flash)
+        with mock.patch.object(
+            visual_editor.ai_client,
+            'endpoint',
+            return_value={
+                'provider': 'gloo',
+                'model': 'gloo-qwen-3.7-flash',
+                'base_url': 'https://platform.ai.gloo.com/ai/v2/guarded',
+                'api_key': 'test-gloo-key',
+                'extra_body': {'auto_routing': False},
+            },
+        ):
+            provider, model, extra_body, api_key = visual_editor.get_visual_editor_model()
+            self.assertEqual(provider, 'gloo')
+            # Must resolve to the builder model of Haiku, NOT the chat model of Qwen!
+            self.assertEqual(model, 'gloo-anthropic-claude-haiku-4.5')
+
 
 if __name__ == '__main__':
     unittest.main()
+
