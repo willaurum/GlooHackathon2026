@@ -11,3 +11,8 @@ can reuse it with credit. The Tekton software itself is not: all rights in it ar
 Put build documents here. The draft outline currently lives at `docs/Agent-Build-Doc.md`; move it
 here when it is ready to publish, and keep anything that should not be shared openly (keys, private
 notes, real people's information) out of this folder.
+
+## Contents
+
+- [`evaluation.md`](evaluation.md): Section 7, Evaluation: test cases, pass criteria, results, failures and fixes, and a session log.
+- [`session-logs/`](session-logs/): recorded runs on the production deployment (fictional church sites only).
