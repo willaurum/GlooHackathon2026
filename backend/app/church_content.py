@@ -17,7 +17,9 @@ later) can set up a church. Every section is optional; one that is sent replaces
 section. Items without an id get one.
 """
 
+import json
 import re
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -338,6 +340,17 @@ class Layout(Strict):
         return list(dict.fromkeys(key for key in value if key in HIDEABLE_PAGES))
 
 
+# The template's fixed wording a church may reword in the site editor (site_editor.py): key -> page, label, default,
+# max and multiline. frontend/src/data/siteCopy.json is the same file.
+SITE_COPY = json.loads(Path(__file__).with_name('site_copy.json').read_text(encoding='utf-8'))
+# Heading sizes (site.style) and their bounds; a missing one is the template's own size, 1.
+STYLE_SCALES = {'heading_scale': (0.8, 1.3), 'hero_scale': (0.7, 1.3)}
+
+
+def round_scale(value):
+    return round(round(float(value) / 0.05) * 0.05, 2)
+
+
 class Site(Strict):
     navigation: Navigation = Field(default_factory=Navigation)
     layout: Layout | None = None
@@ -347,6 +360,39 @@ class Site(Strict):
     theme: Theme = Field(default_factory=Theme)
     assets: list[Asset] = Field(default_factory=list, max_length=40)
     source_url: str = WebUrl()
+    # site.copy: the church's own wording for SITE_COPY keys (named `wording` here, as BaseModel has a copy method).
+    wording: dict[str, str] | None = Field(default=None, alias='copy')
+    style: dict[str, float] | None = None
+
+    @field_validator('wording')
+    @classmethod
+    def _copy(cls, value):
+        if value is None:
+            return None
+        out = {}
+        for key, text in value.items():
+            if key not in SITE_COPY or not text.strip():
+                continue  # wording a newer template dropped, or back to the default
+            if len(text.strip()) > SITE_COPY[key]['max']:
+                raise ValueError(f'{SITE_COPY[key]["label"]} can be at most {SITE_COPY[key]["max"]} characters.')
+            out[key] = text.strip()
+        return out or None
+
+    @field_validator('style')
+    @classmethod
+    def _style(cls, value):
+        if value is None:
+            return None
+        out = {}
+        for key, scale in value.items():
+            if key not in STYLE_SCALES:
+                continue
+            low, high = STYLE_SCALES[key]
+            if not low <= scale <= high:
+                raise ValueError(f'{key} must be between {low} and {high}.')
+            if round_scale(scale) != 1:
+                out[key] = round_scale(scale)
+        return out or None
 
 
 class ChurchContent(BaseModel):
@@ -429,6 +475,13 @@ def with_ids(items, label):
 def normalize(body):
     """The validated document as plain data with ids, ready for db.replace_content."""
     content = {key: value for key, value in body.model_dump().items() if value is not None}
+    site = content.get('site')
+    if site:
+        # Stored as site.copy, and left out when unset so a site without them reads as before.
+        site['copy'] = site.pop('wording', None)
+        for key in ('copy', 'style'):
+            if site[key] is None:
+                del site[key]
     if 'info' in content:
         info = content['info']
         info['map_query'] = info['map_query'] or info['address'] or info['city']
