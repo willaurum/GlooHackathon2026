@@ -975,6 +975,13 @@ def list_planned_visits(limit=20):
         ORDER BY created_at DESC LIMIT ?""", (limit,))
 
 
+def check_in_visit(visit_id):
+    """Staff check in a planned guest at the door, as if they had tapped "I'm here"."""
+    return one(f"""UPDATE visits SET status = 'arrived', arrived_at = {NOW}
+        WHERE visit_id = ? AND status = 'planned'
+        RETURNING {STAFF_VISIT_COLUMNS}""", (visit_id,))
+
+
 def set_visit_host(visit_id, host):
     return one(f"""UPDATE visits SET status = 'on_the_way', host = ?
         WHERE visit_id = ? AND status = 'arrived'

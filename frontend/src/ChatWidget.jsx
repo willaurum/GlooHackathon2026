@@ -27,7 +27,9 @@ export default function ChatWidget({ open, setOpen, onNavigate }) {
     [busy, setBusy] = useState(false),
     [configured, setConfigured] = useState(true),
     [sessionId] = useState(newSessionId),
-    log = useRef(null);
+    log = useRef(null), box = useRef(null);
+  // An empty box (after sending) shrinks back to one line.
+  useEffect(() => { if (box.current && !input) box.current.style.height = ''; }, [input]);
   useEffect(() => {
     if (!church.ready) return;
     api('/chat/status').then(s => setConfigured(s.configured)).catch(() => {});
@@ -72,7 +74,10 @@ export default function ChatWidget({ open, setOpen, onNavigate }) {
         {!messages.length && church.ready && <div className="chat-starters">{starters.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}</div>}
       </div>
       <form className="chat-input" onSubmit={e => { e.preventDefault(); send(input); }}>
-        <input aria-label="Message" value={input} maxLength={2000} onChange={e => setInput(e.target.value)} placeholder="Ask a question…" disabled={busy || !church.ready} />
+        {/* Grows upward as the question gets longer (up to about five lines). Enter sends; Shift+Enter starts a new line. */}
+        <textarea ref={box} aria-label="Message" rows={1} value={input} maxLength={2000} placeholder="Ask a question…" disabled={busy || !church.ready}
+          onChange={e => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 132) + 'px'; }}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form.requestSubmit(); } }} />
         <button className="primary" aria-label="Send" disabled={busy || !input.trim()}><Icon name="arrow" size={18} /></button>
       </form>
       <small className="chat-note">Not for emergencies. In a crisis call or text 988, or call 911.</small>

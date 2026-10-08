@@ -150,7 +150,7 @@ const PUBLIC_BUILDER_ROUTES: Route[] = [
 const STAFF_WORK_ROUTES: Route[] = [
 	['GET', /^\/api\/(connections|requests|visits|volunteers)$/],
 	['PUT', new RegExp(`^/api/volunteers/${ID}$`)],
-	['POST', new RegExp(`^/api/visits/${ID}/(claim|met)$`)],
+	['POST', new RegExp(`^/api/visits/${ID}/(checkin|claim|met)$`)],
 	['POST', /^\/api\/events$/],
 	['POST', new RegExp(`^/api/events/${ID}/summarize$`)],
 	['POST', /^\/api\/events\/summarize-all$/],
