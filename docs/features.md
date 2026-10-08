@@ -4,7 +4,7 @@ Each area of a church site, how it behaves and the routes behind it. [Back to th
 
 ## First-time guests
 
-A guest opens "Plan your visit" (service times, what to expect, parking/kids/accessibility FAQs, a map, and upcoming newcomer events), then fills out "Let us know you're coming." On the day, tapping **"I'm here"** flips their visit to `arrived`; the "Welcome team" screen shows them in the waiting queue. A greeter taps **"On my way"** to claim them (status `on_the_way`), which updates the guest's own screen to "<host> is coming to meet you at the main entrance." A guest who arrives without their phone can be checked in by a greeter from the planned list with **"They're here"**. The greeter then taps **"Met them"** to clear them (status `met`). Guests who untick "I'd like someone to meet me" still tap "I'm here"; greeters see them as "Prefers not to be met" and just tap **"Got it"**.
+A guest opens "Plan your visit" (service times, what to expect, parking/kids/accessibility FAQs, a map, and upcoming newcomer events), then fills out "Let us know you're coming." On the day, tapping **"I'm here"** flips their visit to `arrived`; the "Welcome team" screen shows them in the waiting queue. A greeter taps **"On my way"** to claim them (status `on_the_way`), which updates the guest's own screen to "<host> is coming to meet you at the main entrance." A guest who arrives without their phone can be checked in by a greeter from the planned list with **"They're here"**, or by typing their name under **"Check in a guest"**: matching sign-ups get a **"Check in <name>"** button, and a name nobody signed up with can be checked in as a new guest (a walk-in). The greeter then taps **"Met them"** to clear them (status `met`). Guests who untick "I'd like someone to meet me" still tap "I'm here"; greeters see them as "Prefers not to be met" and just tap **"Got it"**.
 
 - `GET /api/church`: church info, FAQs, and events for the visit page.
 - `POST /api/visits`: sign up; returns the visit with a `token` used to check its own status (no login). 400 if `service` isn't one of the church's service times.
@@ -12,6 +12,7 @@ A guest opens "Plan your visit" (service times, what to expect, parking/kids/acc
 - `POST /api/visits/{token}/arrive`: mark `arrived` (409 if not `planned`).
 - `GET /api/visits`: staff queue, `{ waiting: [...arrived/on_the_way], planned: [...last 7 days] }`. Staff endpoints never return guest tokens.
 - `POST /api/visits/{visit_id}/checkin` (staff): check in a planned guest at the door (409 if not `planned`).
+- `POST /api/visits/new/checkin` (staff): check in a walk-in by name (`{name, party_size?}`); creates an `arrived` visit with service "Walk-in".
 - `POST /api/visits/{visit_id}/claim`: a greeter claims a waiting guest with `{ host }` (409 if not `arrived`).
 - `POST /api/visits/{visit_id}/met`: clear a guest once greeted (409 if invalid).
 
