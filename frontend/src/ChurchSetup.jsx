@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, whenCapabilitiesKnown } from './api.js';
-import { setStaffToken } from './church.js';
+import { hashFor, setStaffToken } from './church.js';
 import { useChurch } from './ChurchContext.js';
 import { churchApi, friendly, givingCapabilities, signOutStaff, staffApi } from './giving.js';
 import { EMAIL_HINT, PHONE_HINT, isEmail, isPhone } from './contact.js';
@@ -34,6 +34,13 @@ export default function ChurchSetup() {
     <PageHeader eyebrow="Church setup" title={'Set up ' + church.name + '.'} text="Fill in what you can. Each part saves on its own, and visitors see it right away."
       action={<button className="secondary" disabled={signingOut} onClick={signOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>} />
     {signOutError && <div className="banner error" role="alert">{signOutError}</div>}
+    <section className="card give-pad edit-site-card">
+      <div className="form-title"><span className="icon color3"><Icon name="sparkle" size={22} /></span><div>
+        <h2>Edit your site</h2>
+        <p>Change wording, headings, colors and the order of sections on your site, see a preview, then publish.</p>
+      </div></div>
+      <a className="btn primary" href={hashFor(church.slug, 'edit')}>Edit your site<Icon name="arrow" size={18} /></a>
+    </section>
     <ChurchLink />
     {church.ready ? <SetupForms /> : <div className="card give-pad" role="status"><h2>Almost ready.</h2><p>You are signed in. These setup screens open as soon as the updated church service is deployed. Giving and Stripe already work under Church staff.</p></div>}
   </>;

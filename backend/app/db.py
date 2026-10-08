@@ -573,11 +573,12 @@ def export_content():
             'calendar': list_events(), 'regions': list_regions()}
 
 
-def replace_content(content):
+def replace_content(content, also=()):
     """Replace the sections present in `content` (info, faqs, events, groups, staff, locations, sermons, ministries,
     calendar, regions)
     in one transaction. Sections left out are not touched. Items need ids (see church_content.py).
-    A ministry that saved connections or requests still point at is kept, so they stay readable."""
+    A ministry that saved connections or requests still point at is kept, so they stay readable.
+    `also` are more statements to run in the same transaction (the site editor's bookkeeping)."""
     statements = []
     if 'info' in content:
         statements += [
@@ -615,6 +616,7 @@ def replace_content(content):
             statements += [("INSERT INTO field_updates (id, region_id, date, title, body, author) VALUES (?, ?, ?, ?, ?, ?)",
                             (u.get('id'), region['id'], u['date'], u['title'], u['body'], u['author']))
                            for u in region['updates']]
+    statements += list(also)
     if statements:
         run(*statements)
     return export_content()
@@ -749,6 +751,26 @@ def update_config(fields):
     merged = {**get_config(), **{k: v for k, v in fields.items() if k in CONFIG_FIELDS}}
     query("UPDATE config SET data = ? WHERE key = 'church'", (json.dumps(merged),))
     return merged
+
+
+# Other JSON values a church keeps in its config table (the site editor's draft, for one).
+
+def get_value(key, default=None):
+    row = one("SELECT data FROM config WHERE key = ?", (key,))
+    return _data(row) if row else default
+
+
+def set_value_statement(key, value):
+    """The statement that stores `value` under `key`, to run with others in one transaction."""
+    return ("INSERT INTO config VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET data = excluded.data", (key, json.dumps(value)))
+
+
+def set_value(key, value):
+    run(set_value_statement(key, value))
+
+
+def delete_value(key):
+    run(("DELETE FROM config WHERE key = ?", (key,)))
 
 
 # --- Pastor Notes ---

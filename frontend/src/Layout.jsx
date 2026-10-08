@@ -4,6 +4,7 @@ import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 import { pageHidden, pageOfType } from './churchSite.js';
 import { siteMenu } from './site.js';
+import { Editable } from './Editable.jsx';
 
 // One navigation for every screen size: a top navigation bar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
@@ -203,9 +204,10 @@ export function TabBar({ route, go, chatOpen }) {
   </>;
 }
 
-export function PageHeader({ eyebrow, title, text, action }) {
+// `paths` names the draft paths of the eyebrow, title and text, so staff can change them in the site editor.
+export function PageHeader({ eyebrow, title, text, action, paths = {} }) {
   return <div className="page-header">
-    <div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1>{text && <p>{text}</p>}</div>
+    <div><Editable as="div" className="eyebrow" path={paths.eyebrow}>{eyebrow}</Editable><Editable as="h1" path={paths.title}>{title}</Editable>{text && <Editable as="p" path={paths.text}>{text}</Editable>}</div>
     {action}
   </div>;
 }
