@@ -8,10 +8,27 @@ import Icon from './Icon.jsx';
 import { safeHref } from './site.js';
 import Sourced from './Sourced.jsx';
 import SiteImage from './SiteImage.jsx';
+import { useVisualEditor } from './VisualEditorContext.jsx';
+import EditableText from './EditableText.jsx';
+import SectionControls from './SectionControls.jsx';
 
 // The Home sections in their usual order; a church can reorder or hide them by asking Tekton (site.layout, the keys
 // of backend builder_edit.PAGES['home']).
 export const HOME_SECTIONS = ['features', 'about', 'ministries', 'sermons', 'service_times', 'leaders'];
+
+const SECTION_LABELS = {
+  features: 'Key Features (Serve, Notes, Give)',
+  about: 'Get to know us',
+  ministries: 'Ministries',
+  sermons: 'Recent sermons',
+  service_times: 'Service times',
+  leaders: 'For church leaders',
+};
+
+const SETUP_LINKS = {
+  service_times: 'setup-services',
+  ministries: 'setup-teams',
+};
 
 const STEPS = [
   ['See the need', 'A shared view of volunteer coverage and what each team does.'],
@@ -21,6 +38,7 @@ const STEPS = [
 
 export default function Home({ go, onAsk }) {
   const church = useChurch();
+  const editor = useVisualEditor();
   const [info, setInfo] = useState(null), [giving, setGiving] = useState(null), [sermons, setSermons] = useState([]);
   const [ministries, setMinistries] = useState([]);
   useEffect(() => {
@@ -30,21 +48,66 @@ export default function Home({ go, onAsk }) {
     // Sermons the church publishes on its website (imported by Tekton or added in Church setup).
     if (!church.demo) api('/church').then(c => setSermons((c.sermons || []).filter(s => safeHref(s.url)))).catch(() => {});
   }, []);
+
+  const effectiveInfo = editor?.content?.info || info;
+  const currentLayout = editor?.content?.site?.layout || church.site?.layout;
+  const isEditing = editor?.isEditing && !editor?.isPreviewing;
+
   const live = livestreamLink(church.site);
   const hero = siteImage(church.site, 'hero');
   const recent = [...sermons].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3);
   // The first fund with a goal gets the progress bar on the Give card.
   const goal = giving && [...giving.funds, ...giving.trips].find(f => f.goal > 0);
-  const newChurch = !church.demo && info && !info.services?.length;
+  const newChurch = !church.demo && effectiveInfo && !effectiveInfo.services?.length;
   // Up to six teams on Home; the demo church shows its own on Serve.
   const shownMinistries = church.demo ? [] : ministries.slice(0, 6);
+
+  // In edit mode show all sections with hidden indicator; otherwise use orderedSections
+  const sectionsToRender = isEditing
+    ? (currentLayout?.home?.length ? [...new Set([...currentLayout.home, ...HOME_SECTIONS])] : HOME_SECTIONS)
+    : orderedSections(currentLayout, 'home', HOME_SECTIONS);
+
+  function moveSection(key, dir) {
+    const list = [...(currentLayout?.home?.length ? currentLayout.home : HOME_SECTIONS)];
+    const i = list.indexOf(key);
+    if (i === -1) return;
+    const target = i + dir;
+    if (target < 0 || target >= list.length) return;
+    const [item] = list.splice(i, 1);
+    list.splice(target, 0, item);
+    editor?.reorderHomeSections(list);
+  }
+
+  function isSectionHidden(key) {
+    return (currentLayout?.hidden || []).includes(`home:${key}`);
+  }
 
   return <div className="page home">
     <section className={'home-hero' + (hero ? ' has-image' : '')}>
       <div className="home-hero-copy">
-      <div className="eyebrow">{info?.name || church.name}</div>
-      <h1>{info?.tagline || <>A place to belong,<br />grow and give.</>}</h1>
-      <p>{info?.about ? <Sourced field="about">{info.about}</Sourced> : 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.'}</p>
+      <div className="eyebrow">{effectiveInfo?.name || church.name}</div>
+      {isEditing ? (
+        <EditableText
+          value={effectiveInfo?.tagline || ''}
+          placeholder="A place to belong, grow and give."
+          onChange={val => editor?.updateInfo('tagline', val)}
+          isHeading
+          level={1}
+        />
+      ) : (
+        <h1>{effectiveInfo?.tagline || <>A place to belong,<br />grow and give.</>}</h1>
+      )}
+      {isEditing ? (
+        <EditableText
+          value={effectiveInfo?.about || ''}
+          placeholder="Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place."
+          onChange={val => editor?.updateInfo('about', val)}
+          tag="p"
+          multiline
+        />
+      ) : (
+        <p>{effectiveInfo?.about ? <Sourced field="about">{effectiveInfo.about}</Sourced> : 'Find where your gifts fit, catch up on Sunday’s message, and support the mission. All in one place.'}</p>
+      )}
       <div className="hero-actions">
         <button className="primary" onClick={() => go('serve/find')}>Find a place to serve<Icon name="arrow" size={18} /></button>
         <button className="secondary" onClick={() => go('guests/plan')}>Planning your first visit?<Icon name="arrow" size={18} /></button>
@@ -62,9 +125,24 @@ export default function Home({ go, onAsk }) {
       {(church.staff || !pageHidden(church.site, 'give')) && <button className="primary" onClick={() => go(church.staff ? 'setup' : 'give')}>{church.staff ? 'Open church setup' : 'Give online'}<Icon name="arrow" size={18} /></button>}
     </section>}
 
-    {/* In the order the church asked Tekton for (site.layout). */}
-    {orderedSections(church.site?.layout, 'home', HOME_SECTIONS).map(key => <Fragment key={key}>{{
-      features: <div className="features">
+    {/* In the order the church asked Tekton for (site.layout), with Visual Editor section controls in Edit Mode. */}
+    {sectionsToRender.map((key, secIndex) => <Fragment key={key}>
+      {isEditing && (
+        <SectionControls
+          sectionKey={key}
+          sectionLabel={SECTION_LABELS[key] || key}
+          canMoveUp={secIndex > 0}
+          canMoveDown={secIndex < sectionsToRender.length - 1}
+          onMoveUp={() => moveSection(key, -1)}
+          onMoveDown={() => moveSection(key, 1)}
+          isHidden={isSectionHidden(key)}
+          onToggleHide={() => editor?.toggleSectionVisibility('home', key)}
+          setupLink={SETUP_LINKS[key]}
+          onOpenSetup={() => go('setup')}
+        />
+      )}
+      {{
+      features: <div className={`features ${isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}`}>
         {!pageHidden(church.site, 'serve') && <a className="card feature" href={hashFor(church.slug, 'serve')} onClick={e => { e.preventDefault(); go('serve'); }}>
           <span className="icon color1"><Icon name="users" size={22} /></span>
           <h2>Serve</h2>
@@ -87,7 +165,7 @@ export default function Home({ go, onAsk }) {
           <span className="link">Give online<Icon name="arrow" size={16} /></span>
         </a>}
       </div>,
-      about: <>{/* Beliefs is Grace Community's own statement; other churches show it when Tekton imported theirs. */}
+      about: <div className={isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}>
       <section className="know-us" aria-label="Get to know us">
         <div className="eyebrow">Get to know us</div>
         <div className="know-links">
@@ -97,8 +175,8 @@ export default function Home({ go, onAsk }) {
           <button className="secondary" onClick={() => go('about/directory')}><Icon name="phone" size={18} />Contact directory</button>
           <button className="primary" onClick={() => go('about/connect')}><Icon name="mail" size={18} />Connect with us</button>
         </div>
-      </section></>,
-      ministries: (shownMinistries.length > 0 && <section className="card week home-ministries" id="home-ministries">
+      </section></div>,
+      ministries: ((shownMinistries.length > 0 || isEditing) && <section className={`card week home-ministries ${isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}`} id="home-ministries">
         <div className="week-head">
           <div><div className="eyebrow">Get involved</div><h2>Ministries</h2></div>
           {!pageHidden(church.site, 'serve') && <button className="link" onClick={() => go('serve')}>Find a place to serve<Icon name="arrow" size={16} /></button>}
@@ -108,7 +186,7 @@ export default function Home({ go, onAsk }) {
           {m.description && <small>{m.description}</small>}
         </li>)}</ul>
       </section>),
-      sermons: (recent.length > 0 && <section className="card week home-sermons" id="home-sermons">
+      sermons: ((recent.length > 0 || isEditing) && <section className={`card week home-sermons ${isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}`} id="home-sermons">
         <div className="week-head">
           <div><div className="eyebrow">Watch &amp; listen</div><h2>Recent sermons</h2></div>
           {!pageHidden(church.site, 'notes') && <button className="link" onClick={() => go('notes')}>All sermons<Icon name="arrow" size={16} /></button>}
@@ -118,19 +196,19 @@ export default function Home({ go, onAsk }) {
           <small>{[s.date, s.speaker, s.series, s.scripture].filter(Boolean).join(' · ')}</small>
         </li>)}</ul>
       </section>),
-      service_times: (info?.services?.length > 0 && <section className="card week" id="home-service-times">
+      service_times: ((effectiveInfo?.services?.length > 0 || isEditing) && <section className={`card week ${isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}`} id="home-service-times">
         <div className="week-head">
           <div><div className="eyebrow">Join us</div><h2>Service times</h2></div>
-          {info.address && <small><Icon name="pin" size={16} /><Sourced field="address">{info.address}</Sourced></small>}
+          {effectiveInfo?.address && <small><Icon name="pin" size={16} /><Sourced field="address">{effectiveInfo.address}</Sourced></small>}
         </div>
         <div className="services">
-          {info.services.map(s => <div className="service" key={s.day + s.time}>
+          {(effectiveInfo?.services || []).map(s => <div className="service" key={s.day + s.time}>
             <strong><Sourced field="services">{s.day} · {s.time}</Sourced></strong>
             <p>{s.note}</p>
           </div>)}
         </div>
       </section>),
-      leaders: <section className="leaders">
+      leaders: <section className={`leaders ${isEditing && isSectionHidden(key) ? 'is-hidden-section' : ''}`}>
         <div>
           <div className="eyebrow">For church leaders</div>
           <h2>A big church can still feel personal.</h2>

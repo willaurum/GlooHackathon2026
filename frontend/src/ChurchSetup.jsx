@@ -8,6 +8,7 @@ import ContactInput from './ContactInput.jsx';
 import Icon from './Icon.jsx';
 import ChurchLink from './ChurchLink.jsx';
 import { PageHeader } from './Layout.jsx';
+import { useVisualEditor } from './VisualEditorContext.jsx';
 import countryBorders from './data/countryBorders.json';
 
 // Countries the Prayer map can outline, from its border data.
@@ -91,7 +92,31 @@ function SetupForms() {
     ['Prayer map places', content.regions.length > 0, 'setup-places'],
   ];
   const done = steps.filter(s => s[1]).length;
+  const editor = useVisualEditor();
   return <div className="setup">
+    <section className="card give-pad setup-visual-editor-card">
+      <div className="form-title">
+        <span className="icon color3"><Icon name="sparkle" size={24} /></span>
+        <div>
+          <h2>Visual Website Editor</h2>
+          <p>Edit your site visually with a no-code experience: customize headers, adjust fonts, reorder home sections, or ask the AI assistant to make edits for you with live preview verification before publishing.</p>
+        </div>
+      </div>
+      <div className="give-row">
+        <button
+          type="button"
+          className="primary"
+          onClick={async () => {
+            if (editor) {
+              await editor.enterEditor();
+              church.go('');
+            }
+          }}
+        >
+          <Icon name="sparkle" size={18} /> Open Visual Editor
+        </button>
+      </div>
+    </section>
     <section className="card give-pad setup-progress">
       <div className="eyebrow">{done} of {steps.length} done</div>
       <div className="give-progress" aria-hidden="true"><span style={{ width: (done / steps.length) * 100 + '%' }} /></div>

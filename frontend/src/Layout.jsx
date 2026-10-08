@@ -4,6 +4,7 @@ import ChurchName from './ChurchName.jsx';
 import Icon from './Icon.jsx';
 import { pageHidden, pageOfType } from './churchSite.js';
 import { siteMenu } from './site.js';
+import { useVisualEditor } from './VisualEditorContext.jsx';
 
 // One navigation for every screen size: a top navigation bar on desktop; on phones, a tab bar holds the
 // sections marked `tab` and everything else sits in the Menu (burger) sheet.
@@ -55,6 +56,7 @@ const flatMenu = items => items.flatMap(item => [item, ...flatMenu(item.children
 // the section itself still opens its first page.
 export function SiteNav({ route, go }) {
   const church = useChurch();
+  const editor = useVisualEditor();
   const { demo, staff, pages } = church;
   const current = sectionOf(route);
   const website = flatMenu(siteMenu(church.site, pages));
@@ -97,9 +99,22 @@ export function SiteNav({ route, go }) {
       {/* Who is browsing, with the staff sign-in (or Church setup, once signed in) just below. */}
       <div className="site-user">
         <strong>{identity(staff).name}</strong>
-        {!church.missing && <button className="link site-staff" onClick={e => pick(e, 'setup')}>
-          <Icon name="lock" size={13} />{staff ? 'Church setup' : 'Staff sign in'}
-        </button>}
+        {!church.missing && <div className="site-staff-actions">
+          <button className="link site-staff" onClick={e => pick(e, 'setup')}>
+            <Icon name="lock" size={13} />{staff ? 'Church setup' : 'Staff sign in'}
+          </button>
+          {staff && !church.preview && (
+            <button
+              className={`link site-visual-edit ${editor?.isEditing ? 'active' : ''}`}
+              onClick={() => {
+                if (editor?.isEditing) editor.exitEditor();
+                else editor?.enterEditor();
+              }}
+            >
+              <Icon name="sparkle" size={13} />{editor?.isEditing ? 'Exit Editor' : 'Visual Editor'}
+            </button>
+          )}
+        </div>}
       </div>
       <Avatar />
     </div>
@@ -107,8 +122,23 @@ export function SiteNav({ route, go }) {
 }
 
 export function TopBar({ onAsk }) {
+  const church = useChurch();
+  const editor = useVisualEditor();
   return <header className="topbar">
     <ChurchName compact />
+    {church.staff && !church.preview && (
+      <button
+        className="icon-btn"
+        aria-label="Visual Editor"
+        title={editor?.isEditing ? 'Exit Visual Editor' : 'Open Visual Editor'}
+        onClick={() => {
+          if (editor?.isEditing) editor.exitEditor();
+          else editor?.enterEditor();
+        }}
+      >
+        <Icon name="sparkle" />
+      </button>
+    )}
     <button className="icon-btn" aria-label="Ask Tekton" onClick={onAsk}><Icon name="chat" /></button>
     <Avatar />
   </header>;

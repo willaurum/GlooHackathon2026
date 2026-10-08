@@ -28,6 +28,11 @@ import { footerLinks, pageHidden } from './churchSite.js';
 import { PAGE_ROUTE, safeHref } from './site.js';
 import { applyTheme } from './theme.js';
 import TektonAgent from './TektonAgent.jsx';
+import { VisualEditorProvider, useVisualEditor } from './VisualEditorContext.jsx';
+import EditToolbar from './EditToolbar.jsx';
+import EditAssistant from './EditAssistant.jsx';
+import ThemePicker from './ThemePicker.jsx';
+import DiffModal from './DiffModal.jsx';
 
 const ROUTES = ['', 'serve', 'serve/find', 'about', 'about/beliefs', 'about/news', 'about/directory', 'about/connect', 'notes', 'give', 'give/trips', 'staff', 'calendar', 'guests', 'guests/plan', 'guests/welcome', 'prayer', 'setup', 'new', 'platform'];
 // One sermon has its own route (#/notes/<id>), so it can be opened full-page and linked to.
@@ -378,33 +383,47 @@ function SiteApp({ snapshot, draft, lastAsk, onEdited }) {
   </>;
 
   return <ChurchContext.Provider value={church}>
-    <div className={'app' + (snapshot ? ' site-preview' : '')}>
-      {snapshot && <div className="site-preview-banner" ref={previewBanner}>
-        <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
-        {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
-        {draft && <TektonAgent draftId={draft.id} steps={draft.custom_steps?.length || 0} viewing={viewingName(route)} lastResult={lastAsk} onChanged={(_, result) => onEdited?.(result)} />}
-        <a href="#/new">Back to Tekton</a>
-      </div>}
-      <SiteNav route={route} go={go} />
-      <TopBar onAsk={() => setChatOpen(true)} />
-      <div className="content">
-        {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
-        <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
-          {page}
-          <footer className="site-footer">
-            <span>{name || 'Your church'} · Helping people find their people.</span>
-            {/* The church's social accounts and app, from its imported website. */}
-            {footerLinks(website?.site).length > 0 && <nav className="footer-links" aria-label="Follow us">
-              {footerLinks(website?.site).map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}
-            </nav>}
-            {demo && <small>Demo site. Church details, people and contacts are fictional.</small>}
-            <small className="powered-by">Powered by Tekton</small>
-          </footer>
-        </main>
+    <VisualEditorProvider>
+      <div className={'app' + (snapshot ? ' site-preview' : '')}>
+        <VisualEditorOverlay route={route} />
+        {snapshot && <div className="site-preview-banner" ref={previewBanner}>
+          <span>Preview of {name || 'Your church'}. Nothing here is live yet.</span>
+          {snapshot.provenance && <button type="button" className={showSources ? 'primary' : 'secondary'} aria-pressed={showSources} onClick={() => setShowSources(v => !v)}>{showSources ? 'Sources shown' : 'Show sources'}</button>}
+          {draft && <TektonAgent draftId={draft.id} steps={draft.custom_steps?.length || 0} viewing={viewingName(route)} lastResult={lastAsk} onChanged={(_, result) => onEdited?.(result)} />}
+          <a href="#/new">Back to Tekton</a>
+        </div>}
+        <SiteNav route={route} go={go} />
+        <TopBar onAsk={() => setChatOpen(true)} />
+        <div className="content">
+          {/* Reload pages when the church or access changes, so staff data is cleared on sign-out. */}
+          <main key={slug + ':' + (staff ? 'staff' : 'visitor')}>
+            {page}
+            <footer className="site-footer">
+              <span>{name || 'Your church'} · Helping people find their people.</span>
+              {/* The church's social accounts and app, from its imported website. */}
+              {footerLinks(website?.site).length > 0 && <nav className="footer-links" aria-label="Follow us">
+                {footerLinks(website?.site).map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}
+              </nav>}
+              {demo && <small>Demo site. Church details, people and contacts are fictional.</small>}
+              <small className="powered-by">Powered by Tekton</small>
+            </footer>
+          </main>
+        </div>
+        <TabBar route={route} go={go} chatOpen={chatOpen} />
+        <FirstVisit route={route} go={go} />
+        <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onNavigate={go} />
       </div>
-      <TabBar route={route} go={go} chatOpen={chatOpen} />
-      <FirstVisit route={route} go={go} />
-      <ChatWidget key={slug} open={chatOpen} setOpen={setChatOpen} onNavigate={go} />
-    </div>
+    </VisualEditorProvider>
   </ChurchContext.Provider>;
+}
+
+function VisualEditorOverlay({ route }) {
+  const editor = useVisualEditor();
+  if (!editor?.isEditing) return null;
+  return <>
+    <EditToolbar currentRoute={route} />
+    {editor.aiOpen && <EditAssistant viewing={route} onClose={() => editor.setAiOpen(false)} />}
+    {editor.themeOpen && <ThemePicker onClose={() => editor.setThemeOpen(false)} />}
+    {editor.diffOpen && <DiffModal onClose={() => editor.setDiffOpen(false)} />}
+  </>;
 }
